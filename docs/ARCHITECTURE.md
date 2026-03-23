@@ -70,9 +70,14 @@ Parsuje `.pix` soubory z LittleFS a řídí APA102.
 
 **Multi-command:** program může obsahovat více `picture_command` záznamů; přehrávač je postupně prochází. Po posledním se chování řídí `progEndBehavior` (Repeat / Keep / Exit).
 
-**Provozní módy:**
-- `player.update()` — volat z `loop()` co nejrychleji; vrátí `false` při konci přehrávání (Exit)
-- `player.startTask(core)` — spustí FreeRTOS task na zadaném jádře
+**Provozní mód — FreeRTOS task (doporučeno):**
+Přehrávač běží jako dedikovaný task na core 1 s prioritou 5. `loop()` parkuje na `vTaskDelay(portMAX_DELAY)`. Core 0 zůstává volný pro WiFi a jiné úlohy.
+
+Strategie čekání v `runTask()`:
+- `> 10 ms` do dalšího snímku → `vTaskDelay` (uvolní CPU)
+- `< 10 ms` → spinování s `taskYIELD()`, přesnost řídí `esp_timer_get_time()` (µs)
+
+Tím je dosažitelná frekvence přehrávání 1000+ řádků/s bez závislosti na FreeRTOS tick rate.
 
 **Přímá cesta (hot path):**
 Pixel v `.pix` souboru má formát `[0xE0, B, G, R]` = přesně APA102 drátový formát → `showColumnDirect()` dělá jen `memcpy` do DMA bufferu, žádná konverze barev.
