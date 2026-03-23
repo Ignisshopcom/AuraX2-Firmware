@@ -258,10 +258,16 @@ void PixPlayer::taskEntry(void* arg) {
 void PixPlayer::runTask() {
     while (_taskRunning) {
         if (!update()) break;
-        // Yield when there's time left before next frame
         int64_t remaining = _nextFrameUs - esp_timer_get_time();
-        if (remaining > 1000) vTaskDelay(pdMS_TO_TICKS(remaining / 1000));
-        else                  taskYIELD();
+        if (remaining > 10000) {
+            // > 10 ms: sleep, uvolni CPU ostatním taskům
+            vTaskDelay(pdMS_TO_TICKS(remaining / 1000 - 5));  // -5 ms jako margin
+        } else {
+            // < 10 ms: spinovat s přesností esp_timer, ne vTaskDelay
+            while (_taskRunning && esp_timer_get_time() < _nextFrameUs) {
+                taskYIELD();
+            }
+        }
     }
     _taskRunning = false;
 }
