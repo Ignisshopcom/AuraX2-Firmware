@@ -45,7 +45,7 @@ Piny GPIO6/5 procházejí GPIO matrix (ne nativní SPI linka), rozdíl výkonu j
 **API:**
 ```cpp
 APA102 leds(dataPin, clkPin, numLeds, host = SPI2_HOST);
-leds.begin(freqHz = 20000000);         // inicializace
+bool ok = leds.begin(freqHz = 20000000); // false = SPI init selhal
 leds.setPixel(i, r, g, b, bri = 31);  // brightness 0–31
 leds.fill(r, g, b, bri = 31);
 leds.clear();
@@ -134,6 +134,8 @@ APA102::showColumnDirect()
     └── spi_device_queue_trans()  → SPI hardware → LED pásek
 ```
 
+Binární formát `.pix` souborů: viz [pix-format.md](pix-format.md).
+
 ---
 
 ## Build
@@ -144,7 +146,7 @@ pio run --target upload        # nahrání firmware
 pio run --target uploadfs      # nahrání LittleFS (soubory z data/)
 ```
 
-`.pix` soubory patří do složky `data/` v kořeni projektu. Pojmenovat `/test.pix` nebo upravit cestu v `main.cpp`.
+`.pix` soubory patří do složky `data/` v kořeni projektu. Výchozí cesta je `PIX_FILE = "/show.pix"` definovaná v `src/config.h`.
 
 ### Partition tabulka (`partitions_8MB.csv`)
 
