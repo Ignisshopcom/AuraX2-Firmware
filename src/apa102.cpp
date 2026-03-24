@@ -145,7 +145,7 @@ void APA102::showColumnDirect(const uint8_t* pixData, uint16_t count) {
 
     // bri=0 in .pix means "no brightness scaling" (WS281x convention) — map to APA102 full brightness
     for (uint16_t i = 0; i < n; i++, pixData += 4, dst += 4) {
-        dst[0] = (pixData[0] == 0xE0) ? 0xFF : pixData[0];
+        dst[0] = (pixData[0] == 0xE0) ? 0xE6 : pixData[0];  // bri=0 → 20% (6/31)
         dst[1] = pixData[1];
         dst[2] = pixData[2];
         dst[3] = pixData[3];
