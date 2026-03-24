@@ -261,7 +261,7 @@ bool PixPlayer::update() {
     const uint8_t* col = fetchColumn(_curCmd, _curCol);
     if (col) {
 #ifdef PIX_DEBUG
-        if (_curCmd == 0 && _curCol == 0) {
+        if (_curCmd == 0 && _curCol == 0 && programUs < 2000000LL / (int64_t)cmd.frequency) {
             uint8_t maxBri = 0, maxR = 0, maxG = 0, maxB = 0;
             for (int i = 0; i < (int)cmd.width; i++) {
                 if ((col[i*4] & 0x1F) > maxBri) maxBri = col[i*4] & 0x1F;
