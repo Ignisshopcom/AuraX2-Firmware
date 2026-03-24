@@ -1,6 +1,7 @@
 #include <Arduino.h>
 #include "config.h"
 #include "pix_player.h"
+#include "wifi_control.h"
 
 #if LED_TYPE == LED_TYPE_WS281X
   #include "ws281x.h"
@@ -10,7 +11,8 @@
   APA102    leds(LED_DATA_PIN, LED_CLK_PIN, NUM_LEDS);
 #endif
 
-PixPlayer player(leds);
+PixPlayer   player(leds);
+WifiControl wifi(player, WIFI_SSID, WIFI_PASSWORD);
 
 void setup() {
     Serial.begin(115200);
@@ -43,8 +45,17 @@ if (!LittleFS.begin(true)) {
     } else {
         Serial.printf("[pix] soubor nenalezen: %s\n", PIX_FILE);
     }
+
+    wifi.begin();
+    xTaskCreatePinnedToCore(
+        [](void* arg) {
+            auto* w = static_cast<WifiControl*>(arg);
+            while (true) { w->handle(); vTaskDelay(1); }
+        },
+        "wifi_ctrl", 4096, &wifi, 2, nullptr, 0  // core 0, priorita 2
+    );
 }
 
 void loop() {
-    vTaskDelay(portMAX_DELAY);  // loop() nemá co dělat
+    vTaskDelay(portMAX_DELAY);
 }

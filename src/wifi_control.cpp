@@ -132,17 +132,18 @@ void WifiControl::handleRoot() {
 }
 
 void WifiControl::handlePlay() {
-    if (!_player.isLoaded()) {
-        int err = _player.load(PIX_FILE);
-        if (err) {
-            _server.send(500, "text/plain", "load failed: " + String(err));
-            return;
-        }
+    _player.stopTask();
+    int err = _player.load(PIX_FILE);
+    if (err) {
+        _server.send(500, "text/plain", "load failed: " + String(err));
+        return;
     }
+    _player.startTask(1);
     _server.send(200, "text/plain", "OK");
 }
 
 void WifiControl::handleStop() {
+    _player.stopTask();
     _player.unload();
     _server.send(200, "text/plain", "OK");
 }
