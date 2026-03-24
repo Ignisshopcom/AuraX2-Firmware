@@ -1,4 +1,5 @@
 #include "pix_player.h"
+#include "config.h"
 #include <esp_heap_caps.h>
 #include <esp_timer.h>
 #include <string.h>
@@ -42,7 +43,7 @@ static void splitDW(uint32_t dw, uint8_t& label, uint8_t& type, uint16_t& size) 
 
 // ── PixPlayer ─────────────────────────────────────────────────────────────────
 
-PixPlayer::PixPlayer(APA102& leds) : _leds(leds) {}
+PixPlayer::PixPlayer(ILedDriver& leds) : _leds(leds) {}
 
 PixPlayer::~PixPlayer() {
     stopTask();
@@ -156,6 +157,11 @@ int PixPlayer::load(const char* path) {
     // Validate
     for (int i = 0; i < _numCmds; i++) {
         if (_cmds[i].width == 0 || _cmds[i].height == 0 || _cmds[i].frequency == 0) return 2;
+#ifdef PIX_DEBUG
+        Serial.printf("[pix] cmd %d: %dx%d @ %d Hz, t=%u-%u ms\n",
+            i, _cmds[i].width, _cmds[i].height, _cmds[i].frequency,
+            _cmds[i].startTime, _cmds[i].endTime);
+#endif
     }
 
     // Calculate total image data size across all commands
@@ -199,10 +205,11 @@ int PixPlayer::load(const char* path) {
         Serial.printf("[pix] streaming mode, %d commands\n", _numCmds);
     }
 
-    _loaded      = true;
-    _curCmd      = 0;
-    _curCol      = 0;
-    _nextFrameUs = esp_timer_get_time();
+    _loaded         = true;
+    _curCmd         = 0;
+    _curCol         = 0;
+    _programStartUs = esp_timer_get_time();
+    _nextFrameUs    = _programStartUs;
     return 0;
 }
 
@@ -226,24 +233,52 @@ bool PixPlayer::update() {
     int64_t now = esp_timer_get_time();
     if (now < _nextFrameUs) return true;
 
+    int64_t programUs = now - _programStartUs;
+
+    // Advance past any commands whose endTime has passed
+    while (programUs >= (int64_t)_cmds[_curCmd].endTime * 1000) {
+        _curCmd++;
+        _curCol = 0;
+        if (_curCmd >= _numCmds) {
+            if (_endBehavior == PixEndBehavior::Exit) {
+                _loaded = false;
+                return false;
+            }
+            _curCmd = 0;
+            _programStartUs = now;
+            programUs = 0;
+        }
+    }
+
+    // Wait for this command's startTime gap
+    int64_t cmdStartUs = _programStartUs + (int64_t)_cmds[_curCmd].startTime * 1000;
+    if (now < cmdStartUs) {
+        _nextFrameUs = cmdStartUs;
+        return true;
+    }
+
     const Command& cmd = _cmds[_curCmd];
     const uint8_t* col = fetchColumn(_curCmd, _curCol);
     if (col) {
+#ifdef PIX_DEBUG
+        if (_curCmd == 0 && _curCol == 0) {
+            uint8_t maxBri = 0, maxR = 0, maxG = 0, maxB = 0;
+            for (int i = 0; i < (int)cmd.width; i++) {
+                if ((col[i*4] & 0x1F) > maxBri) maxBri = col[i*4] & 0x1F;
+                if (col[i*4+1] > maxB) maxB = col[i*4+1];
+                if (col[i*4+2] > maxG) maxG = col[i*4+2];
+                if (col[i*4+3] > maxR) maxR = col[i*4+3];
+            }
+            Serial.printf("[pix] col0 max: bri=%d B=%d G=%d R=%d\n", maxBri, maxB, maxG, maxR);
+        }
+#endif
         _leds.showColumnDirect(col, cmd.width);
     }
 
     _nextFrameUs = now + 1000000LL / (int64_t)cmd.frequency;
 
     if (++_curCol >= (int)cmd.height) {
-        _curCol = 0;
-        _curCmd++;
-        if (_curCmd >= _numCmds) {
-            if (_endBehavior == PixEndBehavior::Exit) {
-                _loaded = false;
-                return false;
-            }
-            _curCmd = 0;   // Repeat or Keep
-        }
+        _curCol = 0;  // loop frames within the time window
     }
     return true;
 }

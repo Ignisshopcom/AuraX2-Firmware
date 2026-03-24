@@ -2,8 +2,9 @@
 
 #include <driver/spi_master.h>
 #include <stdint.h>
+#include "led_driver.h"
 
-class APA102 {
+class APA102 : public ILedDriver {
 public:
     // dataPin = MOSI, clkPin = SCK
     // XIAO ESP32S3 default SPI: dataPin=9 (D10), clkPin=7 (D8)
@@ -31,9 +32,9 @@ public:
     // Direct path for pix player — pixData is [0xE0|dim, B, G, R] per LED,
     // exactly the format stored in .pix files. No conversion needed.
     // count: number of LEDs in pixData (clamped to numLeds).
-    void showColumnDirect(const uint8_t* pixData, uint16_t count);
+    void showColumnDirect(const uint8_t* pixData, uint16_t count) override;
 
-    uint16_t numLeds() const { return _numLeds; }
+    uint16_t numLeds() const override { return _numLeds; }
 
 private:
     void buildTxBuffer(uint8_t* dst);

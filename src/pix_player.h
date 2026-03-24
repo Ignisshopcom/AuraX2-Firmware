@@ -2,7 +2,7 @@
 
 #include <Arduino.h>
 #include <LittleFS.h>
-#include "apa102.h"
+#include "led_driver.h"
 
 // progEndBehavior values
 enum class PixEndBehavior : uint8_t {
@@ -13,7 +13,7 @@ enum class PixEndBehavior : uint8_t {
 
 class PixPlayer {
 public:
-    explicit PixPlayer(APA102& leds);
+    explicit PixPlayer(ILedDriver& leds);
     ~PixPlayer();
 
     // Mount LittleFS (if not already mounted) and load the file.
@@ -37,8 +37,8 @@ private:
     static constexpr int MAX_CMDS = 64;
 
     struct Command {
-        uint32_t startTime;   // ms (informational)
-        uint32_t endTime;     // ms (informational)
+        uint32_t startTime;   // ms — when this command starts in the program timeline
+        uint32_t endTime;     // ms — when this command ends (loop until here)
         uint32_t offset;      // byte offset of image data in file
         uint32_t width;       // pixels per column = numLeds
         uint32_t height;      // number of columns
@@ -54,7 +54,7 @@ private:
     static void taskEntry(void* arg);
     void        runTask();
 
-    APA102& _leds;
+    ILedDriver& _leds;
 
     Command _cmds[MAX_CMDS];
     int     _numCmds     = 0;
@@ -72,9 +72,10 @@ private:
     uint8_t* _colBuf     = nullptr;           // single-column scratch buffer (internal DRAM)
 
     // Playback state
-    int     _curCmd       = 0;
-    int     _curCol       = 0;
-    int64_t _nextFrameUs  = 0;
+    int     _curCmd         = 0;
+    int     _curCol         = 0;
+    int64_t _nextFrameUs    = 0;
+    int64_t _programStartUs = 0;  // esp_timer time when program playback began
 
     TaskHandle_t     _taskHandle  = nullptr;
     volatile bool    _taskRunning = false;

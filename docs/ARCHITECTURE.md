@@ -2,7 +2,7 @@
 
 ## Přehled
 
-Firmware pro ESP32-S3 (Seeed Studio XIAO ESP32S3) přehrávající animace ve formátu `.pix` na pásku LED APA102.
+Firmware pro ESP32-S3 (Seeed Studio XIAO ESP32S3) přehrávající animace ve formátu `.pix` na LED pásku. Podporuje **APA102** (SPI+DMA) a **WS281x / WS2812B** (RMT). Volba driveru: `LED_TYPE` v `src/config.h`.
 
 ---
 
@@ -14,15 +14,32 @@ Firmware pro ESP32-S3 (Seeed Studio XIAO ESP32S3) přehrávající animace ve fo
 | Board | Seeed Studio XIAO ESP32S3 |
 | Flash | 8 MB (QIO, 80 MHz) |
 | PSRAM | 8 MB OPI |
-| LED protokol | APA102 (SPI: data + clock) |
-| Výchozí piny (testovací deska) | DATA = GPIO6, CLK = GPIO5 |
-| Výchozí piny (XIAO header) | DATA = GPIO9 (D10), CLK = GPIO7 (D8) |
+| LED protokol | APA102 (SPI) nebo WS281x (RMT) — volba v `src/config.h` |
+| APA102 piny (testovací deska) | DATA = GPIO6, CLK = GPIO5 |
+| APA102 piny (XIAO header) | DATA = GPIO9 (D10), CLK = GPIO7 (D8) |
+| WS281x pin | DATA = GPIO6 (výchozí, konfig. `WS_DATA_PIN`) |
 
 Piny GPIO6/5 procházejí GPIO matrix (ne nativní SPI linka), rozdíl výkonu je zanedbatelný.
 
 ---
 
 ## Moduly
+
+### `led_driver.h` — abstraktní interface
+
+`ILedDriver` je společný interface pro všechny LED drivery:
+
+```cpp
+class ILedDriver {
+public:
+    virtual uint16_t numLeds() const = 0;
+    virtual void showColumnDirect(const uint8_t* pixData, uint16_t count) = 0;
+};
+```
+
+`PixPlayer` pracuje s `ILedDriver&` — nezávisí na konkrétním driveru. Aktuální implementace: `APA102`, `WS281x`.
+
+---
 
 ### `apa102.h / apa102.cpp` — driver APA102
 
@@ -58,9 +75,39 @@ leds.numLeds();                        // počet LED
 
 ---
 
+### `ws281x.h / ws281x.cpp` — driver WS281x (WS2812B)
+
+Řídí WS281x LED pásek přes ESP32 RMT peripheral.
+
+**Klíčové vlastnosti:**
+- ESP-IDF v4 RMT API (`driver/rmt.h`), kanál `RMT_CHANNEL_0`
+- Clock: 40 MHz (clk_div=2), 25 ns/tick
+- Double buffering — stejný async pattern jako APA102 (wait-at-start-of-next-call)
+- Pixel encoding: `.pix` `[0xE0|bri, B, G, R]` → brightness scaling → GRB bity přes RMT
+
+**WS2812B timing:**
+```
+Bit 1: 800 ns HIGH (32 ticks), 450 ns LOW (18 ticks)
+Bit 0: 400 ns HIGH (16 ticks), 850 ns LOW (34 ticks)
+Reset: 50 µs LOW (2000 ticks)
+```
+
+**Rychlostní strop:** 144 LED × 24 bit @ 800 kHz = ~4,3 ms/snímek → max **~230 řádků/s**. Nelze překonat bez změny protokolu.
+
+**API:**
+```cpp
+WS281x leds(dataPin, numLeds, channel = RMT_CHANNEL_0);
+bool ok = leds.begin();
+leds.showColumnDirect(ptr, count);  // async, encodes brightness + GRB
+leds.waitForShow();
+leds.numLeds();
+```
+
+---
+
 ### `pix_player.h / pix_player.cpp` — přehrávač .pix souborů
 
-Parsuje `.pix` soubory z LittleFS a řídí APA102.
+Parsuje `.pix` soubory z LittleFS a řídí LED pásek přes `ILedDriver`.
 
 **Módy načítání:**
 1. **Preload (PSRAM)** — celý obrazový obsah se načte do PSRAM (`MALLOC_CAP_SPIRAM`). Při 144 LED × 1000 sloupců ≈ 576 KB; 8MB PSRAM to bez problémů pojme. Čtení sloupce = pointer aritmetika, žádné I/O.
@@ -77,10 +124,13 @@ Strategie čekání v `runTask()`:
 - `> 10 ms` do dalšího snímku → `vTaskDelay` (uvolní CPU)
 - `< 10 ms` → spinování s `taskYIELD()`, přesnost řídí `esp_timer_get_time()` (µs)
 
-Tím je dosažitelná frekvence přehrávání 1000+ řádků/s bez závislosti na FreeRTOS tick rate.
+Tím je u APA102 dosažitelná frekvence přehrávání **1000+ řádků/s** bez závislosti na FreeRTOS tick rate. U WS281x platí jiný protokolový limit (~230 řádků/s).
 
-**Přímá cesta (hot path):**
-Pixel v `.pix` souboru má formát `[0xE0, B, G, R]` = přesně APA102 drátový formát → `showColumnDirect()` dělá jen `memcpy` do DMA bufferu, žádná konverze barev.
+**Přímá cesta (hot path) — APA102:**
+Pixel v `.pix` souboru má formát `[0xE0|bri, B, G, R]` = přesně APA102 drátový formát → `showColumnDirect()` dělá jen `memcpy` do DMA bufferu, žádná konverze.
+
+**Přímá cesta (hot path) — WS281x:**
+`showColumnDirect()` volá `encodePixels()`: aplikuje brightness scaling (`R = R*bri/31`) a konvertuje na 24 RMT položek na LED v pořadí GRB, MSB first.
 
 **`PixEndBehavior` enum:**
 ```cpp
@@ -92,8 +142,8 @@ Hodnota se čte ze souboru; nelze přepsat z kódu.
 
 **API:**
 ```cpp
-PixPlayer player(leds);
-player.load("/test.pix");              // 0 = OK, jinak chybový kód
+PixPlayer player(leds);               // leds: ILedDriver& (APA102 nebo WS281x)
+player.load("/show.pix");             // 0 = OK, jinak chybový kód
 player.update();                       // volat z loop(); false = konec
 player.startTask(core = 1, stackSize = 4096); // FreeRTOS task
 player.stopTask();
@@ -129,9 +179,9 @@ PixPlayer::update()  [každých 1/frequency sekund]
     └── fetchColumn()     → ptr na [0xE0,B,G,R] × numLeds
     │
     ▼
-APA102::showColumnDirect()
-    └── memcpy → DMA tx buffer
-    └── spi_device_queue_trans()  → SPI hardware → LED pásek
+ILedDriver::showColumnDirect()
+    ├── APA102: memcpy → DMA tx buffer → spi_device_queue_trans() → SPI → LED
+    └── WS281x: encodePixels() → RMT items → rmt_write_items() → RMT → LED
 ```
 
 Binární formát `.pix` souborů: viz [pix-format.md](pix-format.md).
