@@ -50,13 +50,12 @@ if (!LittleFS.begin(true)) {
 
     xTaskCreatePinnedToCore(
         [](void* arg) {
-            WiFi.mode(WIFI_STA);
-            syncCtrl.begin();
             auto* w = static_cast<WifiControl*>(arg);
             if (w->begin())
                 Serial.println("[wifi] server ready");
             else
                 Serial.println("[wifi] offline — server not started");
+            syncCtrl.begin();  // after WiFi is up — channel is known, stack stable
             while (true) { syncCtrl.process(); w->handle(); vTaskDelay(1); }
         },
         "wifi_ctrl", 4096, &wifi, 2, nullptr, 0  // core 0, priorita 2
