@@ -49,7 +49,10 @@ if (!LittleFS.begin(true)) {
     xTaskCreatePinnedToCore(
         [](void* arg) {
             auto* w = static_cast<WifiControl*>(arg);
-            w->begin();
+            if (w->begin())
+                Serial.println("[wifi] server ready");
+            else
+                Serial.println("[wifi] offline — server not started");
             while (true) { w->handle(); vTaskDelay(1); }
         },
         "wifi_ctrl", 4096, &wifi, 2, nullptr, 0  // core 0, priorita 2
