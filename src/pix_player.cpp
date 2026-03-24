@@ -213,6 +213,11 @@ int PixPlayer::load(const char* path) {
     return 0;
 }
 
+void PixPlayer::scheduleStart(int64_t atUs) {
+    _programStartUs = atUs;
+    _nextFrameUs    = atUs;
+}
+
 // ── playback ──────────────────────────────────────────────────────────────────
 
 const uint8_t* PixPlayer::fetchColumn(int cmdIdx, int col) {

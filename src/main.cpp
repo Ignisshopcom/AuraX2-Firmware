@@ -2,6 +2,7 @@
 #include "config.h"
 #include "pix_player.h"
 #include "wifi_control.h"
+#include "sync_control.h"
 
 #if LED_TYPE == LED_TYPE_WS281X
   #include "ws281x.h"
@@ -12,7 +13,8 @@
 #endif
 
 PixPlayer   player(leds);
-WifiControl wifi(player, WIFI_SSID, WIFI_PASSWORD);
+SyncControl syncCtrl(player);
+WifiControl wifi(player, WIFI_SSID, WIFI_PASSWORD, &syncCtrl);
 
 void setup() {
     Serial.begin(115200);
@@ -48,6 +50,8 @@ if (!LittleFS.begin(true)) {
 
     xTaskCreatePinnedToCore(
         [](void* arg) {
+            WiFi.mode(WIFI_STA);
+            syncCtrl.begin();
             auto* w = static_cast<WifiControl*>(arg);
             if (w->begin())
                 Serial.println("[wifi] server ready");

@@ -30,6 +30,9 @@ public:
     void startTask(uint8_t core = 1, uint32_t stackSize = 4096);
     void stopTask();
 
+    // After load(), delay actual playback start to an absolute esp_timer time.
+    void scheduleStart(int64_t atUs);
+
     bool isLoaded()     const { return _loaded; }
     int  numCommands()  const { return _numCmds; }
 

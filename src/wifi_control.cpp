@@ -1,4 +1,5 @@
 #include "wifi_control.h"
+#include "sync_control.h"
 #include "config.h"
 #include <WiFi.h>
 
@@ -67,8 +68,9 @@ refresh();
 
 // ── WifiControl ───────────────────────────────────────────────────────────────
 
-WifiControl::WifiControl(PixPlayer& player, const char* ssid, const char* password)
-    : _player(player), _ssid(ssid), _password(password) {}
+WifiControl::WifiControl(PixPlayer& player, const char* ssid, const char* password,
+                         SyncControl* sync)
+    : _player(player), _sync(sync), _ssid(ssid), _password(password) {}
 
 bool WifiControl::begin(uint32_t timeoutMs) {
     WiFi.mode(WIFI_STA);
@@ -132,19 +134,27 @@ void WifiControl::handleRoot() {
 }
 
 void WifiControl::handlePlay() {
-    _player.stopTask();
-    int err = _player.load(PIX_FILE);
-    if (err) {
-        _server.send(500, "text/plain", "load failed: " + String(err));
-        return;
+    if (_sync) {
+        _sync->broadcastPlay(PIX_FILE);
+    } else {
+        _player.stopTask();
+        int err = _player.load(PIX_FILE);
+        if (err) {
+            _server.send(500, "text/plain", "load failed: " + String(err));
+            return;
+        }
+        _player.startTask(1);
     }
-    _player.startTask(1);
     _server.send(200, "text/plain", "OK");
 }
 
 void WifiControl::handleStop() {
-    _player.stopTask();
-    _player.unload();
+    if (_sync) {
+        _sync->broadcastStop();
+    } else {
+        _player.stopTask();
+        _player.unload();
+    }
     _server.send(200, "text/plain", "OK");
 }
 
