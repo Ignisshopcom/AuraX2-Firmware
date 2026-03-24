@@ -142,9 +142,16 @@ void APA102::showColumnDirect(const uint8_t* pixData, uint16_t count) {
     int buf = _curBuf;
     uint8_t* dst = _txBuf[buf] + 4;  // skip start frame
     uint16_t n = (count < _numLeds) ? count : _numLeds;
-    memcpy(dst, pixData, n * 4);
+
+    // bri=0 in .pix means "no brightness scaling" (WS281x convention) — map to APA102 full brightness
+    for (uint16_t i = 0; i < n; i++, pixData += 4, dst += 4) {
+        dst[0] = (pixData[0] == 0xE0) ? 0xFF : pixData[0];
+        dst[1] = pixData[1];
+        dst[2] = pixData[2];
+        dst[3] = pixData[3];
+    }
     if (n < _numLeds)
-        memset(dst + n * 4, 0, (_numLeds - n) * 4);
+        memset(dst, 0, (_numLeds - n) * 4);
 
     spi_transaction_t* t = &_trans[buf];
     memset(t, 0, sizeof(*t));
