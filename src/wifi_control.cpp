@@ -1,5 +1,6 @@
 #include "wifi_control.h"
 #include "sync_control.h"
+#include "battery.h"
 #include "config.h"
 #include <ArduinoJson.h>
 #include <WiFi.h>
@@ -76,7 +77,8 @@ function refresh() {
       'Stav: <b>'+(d.playing?'přehrává':'zastaveno')+'</b>'
       +(d.file?' &nbsp;|&nbsp; '+d.file:'')
       +(d.commands?' &nbsp;|&nbsp; příkazy: '+d.commands:'')
-      +'<br>IP: '+d.ip;
+      +'<br>IP: '+d.ip
+      +' &nbsp;|&nbsp; &#128267; '+d.battery_pct+'% ('+d.battery_mv+' mV)';
   });
 }
 function upload() {
@@ -205,11 +207,15 @@ void WifiControl::handleStop() {
 }
 
 void WifiControl::handleStatus() {
+    uint16_t mv  = batteryMillivolts();
+    uint8_t  pct = batteryPercent(mv);
     String json = "{";
-    json += "\"playing\":"  + String(_player.isLoaded() ? "true" : "false") + ",";
-    json += "\"commands\":" + String(_player.numCommands()) + ",";
-    json += "\"file\":\""   + String(LittleFS.exists(_cfg.pixFile) ? _cfg.pixFile : "") + "\",";
-    json += "\"ip\":\""     + WiFi.localIP().toString() + "\"";
+    json += "\"playing\":"     + String(_player.isLoaded() ? "true" : "false") + ",";
+    json += "\"commands\":"    + String(_player.numCommands()) + ",";
+    json += "\"file\":\""      + String(LittleFS.exists(_cfg.pixFile) ? _cfg.pixFile : "") + "\",";
+    json += "\"ip\":\""        + WiFi.localIP().toString() + "\",";
+    json += "\"battery_mv\":"  + String(mv) + ",";
+    json += "\"battery_pct\":" + String(pct);
     json += "}";
     _server.send(200, "application/json", json);
 }
