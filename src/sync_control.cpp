@@ -1,6 +1,7 @@
 #include "sync_control.h"
 #include "config.h"
 #include <esp_now.h>
+#include <esp_wifi.h>
 #include <esp_timer.h>
 #include <WiFi.h>
 #include <string.h>
@@ -19,6 +20,9 @@ bool SyncControl::begin() {
         Serial.println("[sync] queue alloc failed");
         return false;
     }
+    // Disable WiFi power save — prevents radio sleep that causes missed ESP-NOW packets
+    esp_wifi_set_ps(WIFI_PS_NONE);
+
     if (esp_now_init() != ESP_OK) {
         Serial.println("[sync] esp_now_init failed");
         return false;
@@ -75,7 +79,8 @@ void SyncControl::broadcastPlay(const char* file, uint32_t delayMs) {
     strncpy(pkt.file, file, sizeof(pkt.file) - 1);
     pkt.file[sizeof(pkt.file) - 1] = '\0';
 
-    esp_now_send(BROADCAST, (uint8_t*)&pkt, sizeof(pkt));
+    esp_err_t r = esp_now_send(BROADCAST, (uint8_t*)&pkt, sizeof(pkt));
+    if (r != ESP_OK) Serial.printf("[sync] send failed: 0x%x\n", r);
 
     _player.stopTask();
     int err = _player.load(pkt.file);
@@ -89,7 +94,8 @@ void SyncControl::broadcastStop() {
     pkt.cmd     = CMD_STOP;
     pkt.delayMs = 0;
     pkt.file[0] = '\0';
-    esp_now_send(BROADCAST, (uint8_t*)&pkt, sizeof(pkt));
+    esp_err_t r = esp_now_send(BROADCAST, (uint8_t*)&pkt, sizeof(pkt));
+    if (r != ESP_OK) Serial.printf("[sync] send failed: 0x%x\n", r);
 
     _player.stopTask();
     _player.unload();
