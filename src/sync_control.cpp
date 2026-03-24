@@ -27,9 +27,11 @@ bool SyncControl::begin() {
 
     esp_now_peer_info_t peer = {};
     memcpy(peer.peer_addr, BROADCAST, 6);
-    peer.channel = 0;
-    peer.encrypt = false;
+    peer.channel = WiFi.channel();  // must match AP channel
+    peer.ifidx   = WIFI_IF_STA;
+    peer.encrypt  = false;
     esp_now_add_peer(&peer);
+    Serial.printf("[sync] channel %d\n", peer.channel);
 
     Serial.println("[sync] ESP-NOW ready");
     return true;
