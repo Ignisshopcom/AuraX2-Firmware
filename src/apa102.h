@@ -17,7 +17,7 @@ public:
 
     void setPixel(uint16_t index, uint8_t r, uint8_t g, uint8_t b, uint8_t brightness = 31);
     void fill(uint8_t r, uint8_t g, uint8_t b, uint8_t brightness = 31);
-    void clear();
+    void clear() override;
 
     // Blocking — waits until transfer is done
     void show();

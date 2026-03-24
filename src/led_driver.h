@@ -10,4 +10,5 @@ public:
     // pixData: [0xE0|brightness, B, G, R] per LED — .pix wire format.
     // count: number of LEDs in pixData (clamped to numLeds internally).
     virtual void showColumnDirect(const uint8_t* pixData, uint16_t count) = 0;
+    virtual void clear() = 0;  // turn off all LEDs immediately
 };

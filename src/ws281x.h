@@ -25,6 +25,7 @@ public:
     // Async: encodes into double buffer, queues RMT transfer, returns immediately.
     // Waits for the *previous* transfer at the start (CPU/RMT overlap).
     void showColumnDirect(const uint8_t* pixData, uint16_t count) override;
+    void clear() override;
     uint16_t numLeds() const override { return _numLeds; }
 
 private:

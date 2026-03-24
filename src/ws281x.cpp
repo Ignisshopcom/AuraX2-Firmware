@@ -50,6 +50,15 @@ bool WS281x::begin() {
     return true;
 }
 
+void WS281x::clear() {
+    // Send all-zero pixel data (black)
+    static const uint8_t black[4] = {0xE0, 0, 0, 0};
+    uint8_t* buf = (uint8_t*)alloca(_numLeds * 4);
+    for (int i = 0; i < _numLeds; i++) memcpy(buf + i * 4, black, 4);
+    showColumnDirect(buf, _numLeds);
+    waitForShow();
+}
+
 void WS281x::waitForShow() {
     if (!_txInFlight) return;
     rmt_wait_tx_done(_channel, portMAX_DELAY);

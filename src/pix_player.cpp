@@ -213,6 +213,12 @@ int PixPlayer::load(const char* path) {
     return 0;
 }
 
+void PixPlayer::blackout() {
+    stopTask();
+    unload();
+    _leds.clear();
+}
+
 void PixPlayer::scheduleStart(int64_t atUs) {
     _programStartUs = atUs;
     _nextFrameUs    = atUs;

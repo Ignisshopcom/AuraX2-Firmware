@@ -32,6 +32,7 @@ public:
 
     // After load(), delay actual playback start to an absolute esp_timer time.
     void scheduleStart(int64_t atUs);
+    void blackout();   // stop playback and turn off all LEDs
 
     bool isLoaded()     const { return _loaded; }
     int  numCommands()  const { return _numCmds; }

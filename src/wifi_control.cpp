@@ -35,6 +35,7 @@ static const char INDEX_HTML[] PROGMEM = R"html(
 <div>
   <button class="play" onclick="fetch('/play').then(refresh)">&#9654; Play</button>
   <button class="stop" onclick="fetch('/stop').then(refresh)">&#9632; Stop</button>
+  <button class="stop" onclick="fetch('/off').then(refresh)">&#9866; Off</button>
 </div>
 
 <div class="upload-area">
@@ -140,6 +141,10 @@ bool WifiControl::begin(uint32_t timeoutMs) {
     _server.on("/",       HTTP_GET,  [this]() { handleRoot();      });
     _server.on("/play",   HTTP_GET,  [this]() { handlePlay();      });
     _server.on("/stop",   HTTP_GET,  [this]() { handleStop();      });
+    _server.on("/off",    HTTP_GET,  [this]() {
+        _player.blackout();
+        _server.send(200, "text/plain", "OK");
+    });
     _server.on("/status", HTTP_GET,  [this]() { handleStatus();    });
     _server.on("/config", HTTP_GET,  [this]() { handleConfigGet(); });
     _server.on("/config", HTTP_POST, [this]() { handleConfigPost(); });
