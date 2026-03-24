@@ -286,7 +286,9 @@ bool PixPlayer::update() {
 // ── FreeRTOS task ─────────────────────────────────────────────────────────────
 
 void PixPlayer::taskEntry(void* arg) {
-    static_cast<PixPlayer*>(arg)->runTask();
+    auto* p = static_cast<PixPlayer*>(arg);
+    p->runTask();
+    p->_taskHandle = nullptr;  // signal completion before self-delete
     vTaskDelete(nullptr);
 }
 
@@ -314,9 +316,7 @@ void PixPlayer::startTask(uint8_t core, uint32_t stackSize) {
 }
 
 void PixPlayer::stopTask() {
+    if (!_taskHandle) return;
     _taskRunning = false;
-    if (_taskHandle) {
-        vTaskDelete(_taskHandle);
-        _taskHandle = nullptr;
-    }
+    while (_taskHandle) vTaskDelay(1);  // wait for task to signal completion
 }
