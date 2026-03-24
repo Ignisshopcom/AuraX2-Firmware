@@ -1,20 +1,19 @@
 #include <Arduino.h>
+#include "app_config.h"
 #include "config.h"
+#include "led_driver.h"
 #include "pix_player.h"
 #include "wifi_control.h"
 #include "sync_control.h"
 
-#if LED_TYPE == LED_TYPE_WS281X
-  #include "ws281x.h"
-  WS281x    leds(WS_DATA_PIN, NUM_LEDS);
-#else
-  #include "apa102.h"
-  APA102    leds(LED_DATA_PIN, LED_CLK_PIN, NUM_LEDS);
-#endif
+#include "apa102.h"
+#include "ws281x.h"
 
-PixPlayer   player(leds);
-SyncControl syncCtrl(player);
-WifiControl wifi(player, WIFI_SSID, WIFI_PASSWORD, &syncCtrl);
+static AppConfig    cfg;
+static ILedDriver*  leds     = nullptr;
+static PixPlayer*   player   = nullptr;
+static SyncControl* syncCtrl = nullptr;
+static WifiControl* wifi     = nullptr;
 
 void setup() {
     Serial.begin(115200);
@@ -22,43 +21,49 @@ void setup() {
     delay(1500);
 #endif
 
-#if LED_TYPE == LED_TYPE_WS281X
-    if (!leds.begin()) {
-        Serial.println("[ws281x] init failed");
-        while (true);
-    }
-#else
-    if (!leds.begin(20000000)) {
-        Serial.println("[apa102] init failed");
-        while (true);
-    }
-    leds.clear();
-    leds.show();
-#endif
-
-if (!LittleFS.begin(true)) {
+    if (!LittleFS.begin(true)) {
         Serial.println("[fs] LittleFS mount failed");
         return;
     }
-    if (LittleFS.exists(PIX_FILE)) {
-        int err = player.load(PIX_FILE);
-        if (err) { Serial.printf("[pix] load failed: %d\n", err); return; }
-        player.startTask(1);  // core 1, priorita 5
+
+    cfg = loadConfig();
+    Serial.printf("[cfg] ledType=%d numLeds=%d dataPin=%d clkPin=%d file=%s\n",
+        cfg.ledType, cfg.numLeds, cfg.dataPin, cfg.clkPin, cfg.pixFile);
+
+    // Instantiate LED driver based on runtime config
+    if (cfg.ledType == LED_TYPE_APA102) {
+        auto* d = new APA102(cfg.dataPin, cfg.clkPin, cfg.numLeds);
+        if (!d->begin(20000000)) { Serial.println("[apa102] init failed"); while (true); }
+        d->clear(); d->show();
+        leds = d;
     } else {
-        Serial.printf("[pix] soubor nenalezen: %s\n", PIX_FILE);
+        auto* d = new WS281x(cfg.dataPin, cfg.numLeds);
+        if (!d->begin()) { Serial.println("[ws281x] init failed"); while (true); }
+        leds = d;
+    }
+
+    player   = new PixPlayer(*leds);
+    syncCtrl = new SyncControl(*player);
+    wifi     = new WifiControl(*player, cfg, syncCtrl);
+
+    if (LittleFS.exists(cfg.pixFile)) {
+        int err = player->load(cfg.pixFile);
+        if (err) { Serial.printf("[pix] load failed: %d\n", err); }
+        else player->startTask(1);
+    } else {
+        Serial.printf("[pix] soubor nenalezen: %s\n", cfg.pixFile);
     }
 
     xTaskCreatePinnedToCore(
-        [](void* arg) {
-            auto* w = static_cast<WifiControl*>(arg);
-            if (w->begin())
+        [](void*) {
+            if (wifi->begin())
                 Serial.println("[wifi] server ready");
             else
                 Serial.println("[wifi] offline — server not started");
-            syncCtrl.begin();  // after WiFi is up — channel is known, stack stable
-            while (true) { syncCtrl.process(); w->handle(); vTaskDelay(1); }
+            syncCtrl->begin();
+            while (true) { syncCtrl->process(); wifi->handle(); vTaskDelay(1); }
         },
-        "wifi_ctrl", 4096, &wifi, 2, nullptr, 0  // core 0, priorita 2
+        "wifi_ctrl", 4096, nullptr, 2, nullptr, 0  // core 0, priorita 2
     );
 }
 
