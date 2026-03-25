@@ -63,7 +63,7 @@ void setup() {
             syncCtrl->begin();
             while (true) { syncCtrl->process(); wifi->handle(); vTaskDelay(1); }
         },
-        "wifi_ctrl", 4096, nullptr, 2, nullptr, 0  // core 0, priorita 2
+        "wifi_ctrl", 8192, nullptr, 2, nullptr, 0  // core 0, priorita 2
     );
 }
 
