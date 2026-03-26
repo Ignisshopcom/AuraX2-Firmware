@@ -205,9 +205,10 @@ bool WifiControl::begin(uint32_t timeoutMs) {
 
     _server.begin();
 
-    if (MDNS.begin(_cfg.hostname)) {
+    const char* mdnsHost = _apMode ? "aurax" : _cfg.hostname;
+    if (MDNS.begin(mdnsHost)) {
         MDNS.addService("http", "tcp", 80);
-        Serial.printf("[mdns] http://%s.local\n", _cfg.hostname);
+        Serial.printf("[mdns] http://%s.local\n", mdnsHost);
     }
 
     if (!_apMode) {
