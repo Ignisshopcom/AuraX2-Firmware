@@ -158,7 +158,7 @@ int PixPlayer::load(const char* path) {
     for (int i = 0; i < _numCmds; i++) {
         if (_cmds[i].width == 0 || _cmds[i].height == 0 || _cmds[i].frequency == 0) return 2;
 #ifdef PIX_DEBUG
-        Serial.printf("[pix] cmd %d: %dx%d @ %d Hz, t=%u-%u ms\n",
+        LOG("[pix] cmd %d: %dx%d @ %d Hz, t=%u-%u ms\n",
             i, _cmds[i].width, _cmds[i].height, _cmds[i].frequency,
             _cmds[i].startTime, _cmds[i].endTime);
 #endif
@@ -189,7 +189,7 @@ int PixPlayer::load(const char* path) {
         }
         f.close();
         _preloaded = true;
-        Serial.printf("[pix] preloaded %zu bytes into PSRAM, %d commands\n", totalBytes, _numCmds);
+        LOG("[pix] preloaded %zu bytes into PSRAM, %d commands\n", totalBytes, _numCmds);
     } else {
         streaming:
         // Streaming: allocate single-column scratch buffer in internal DRAM
@@ -202,7 +202,7 @@ int PixPlayer::load(const char* path) {
 
         _file = LittleFS.open(path, "r");
         if (!_file) { free(_colBuf); _colBuf = nullptr; return 4; }
-        Serial.printf("[pix] streaming mode, %d commands\n", _numCmds);
+        LOG("[pix] streaming mode, %d commands\n", _numCmds);
     }
 
     _loaded         = true;
@@ -280,7 +280,7 @@ bool PixPlayer::update() {
                 if (col[i*4+2] > maxG) maxG = col[i*4+2];
                 if (col[i*4+3] > maxR) maxR = col[i*4+3];
             }
-            Serial.printf("[pix] col0 max: bri=%d B=%d G=%d R=%d\n", maxBri, maxB, maxG, maxR);
+            LOG("[pix] col0 max: bri=%d B=%d G=%d R=%d\n", maxBri, maxB, maxG, maxR);
         }
 #endif
         _leds.showColumnDirect(col, cmd.width);

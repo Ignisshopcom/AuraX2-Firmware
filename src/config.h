@@ -19,5 +19,13 @@
 
 #define PIX_FILE      "/show.pix"
 
-// Odkomentuj pro debug výpisy pix playeru
-#define PIX_DEBUG
+// Odkomentuj pro debug výpisy na sériový port
+//#define PIX_DEBUG
+
+#ifdef PIX_DEBUG
+  #define LOG(...)  Serial.printf(__VA_ARGS__)
+  #define LOGLN(s)  Serial.println(s)
+#else
+  #define LOG(...)  ((void)0)
+  #define LOGLN(s)  ((void)0)
+#endif

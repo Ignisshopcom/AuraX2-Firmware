@@ -141,22 +141,22 @@ bool WifiControl::begin(uint32_t timeoutMs) {
         WiFi.mode(WIFI_STA);
         for (int attempt = 1; attempt <= 2 && !_apMode; attempt++) {
             WiFi.begin(_cfg.ssid, _cfg.password);
-            Serial.printf("[wifi] connecting to %s (pokus %d/2)", _cfg.ssid, attempt);
+            LOG("[wifi] connecting to %s (pokus %d/2)", _cfg.ssid, attempt);
             uint32_t start = millis();
             while (WiFi.status() != WL_CONNECTED) {
                 if (millis() - start > timeoutMs) {
                     WiFi.disconnect(true);
                     if (attempt < 2)
-                        Serial.println("\n[wifi] timeout, zkouším znovu");
+                        LOGLN("\n[wifi] timeout, zkouším znovu");
                     else
-                        Serial.println("\n[wifi] timeout, starting AP");
+                        LOGLN("\n[wifi] timeout, starting AP");
                     break;
                 }
                 delay(250);
-                Serial.print('.');
+                LOG("%c", '.');
             }
             if (WiFi.status() == WL_CONNECTED) {
-                Serial.printf("\n[wifi] connected, IP: %s\n", WiFi.localIP().toString().c_str());
+                LOG("\n[wifi] connected, IP: %s\n", WiFi.localIP().toString().c_str());
             } else if (attempt == 2) {
                 _apMode = true;
             }
@@ -169,7 +169,7 @@ bool WifiControl::begin(uint32_t timeoutMs) {
         char apSsid[32];
         snprintf(apSsid, sizeof(apSsid), "AuraX-%04X", (uint16_t)ESP.getEfuseMac());
         WiFi.softAP(apSsid);
-        Serial.printf("[wifi] AP mode: SSID=%s IP=%s\n", apSsid, WiFi.softAPIP().toString().c_str());
+        LOG("[wifi] AP mode: SSID=%s IP=%s\n", apSsid, WiFi.softAPIP().toString().c_str());
     }
 
     _server.on("/",       HTTP_GET,  [this]() { handleRoot();      });
@@ -199,12 +199,12 @@ bool WifiControl::begin(uint32_t timeoutMs) {
                 _player.unload();
                 if (LittleFS.exists(_cfg.pixFile)) LittleFS.remove(_cfg.pixFile);
                 _uploadFile = LittleFS.open(_cfg.pixFile, "w");
-                if (!_uploadFile) { Serial.println("[upload] open failed"); return; }
-                Serial.printf("[upload] start: %s\n", up.filename.c_str());
+                if (!_uploadFile) { LOGLN("[upload] open failed"); return; }
+                LOG("[upload] start: %s\n", up.filename.c_str());
             } else if (up.status == UPLOAD_FILE_WRITE) {
                 if (_uploadFile) _uploadFile.write(up.buf, up.currentSize);
             } else if (up.status == UPLOAD_FILE_END) {
-                if (_uploadFile) { _uploadFile.close(); Serial.printf("[upload] done: %u bytes\n", up.totalSize); }
+                if (_uploadFile) { _uploadFile.close(); LOG("[upload] done: %u bytes\n", up.totalSize); }
             }
         }
     );
@@ -217,7 +217,7 @@ bool WifiControl::begin(uint32_t timeoutMs) {
 
     if (MDNS.begin(_cfg.hostname)) {
         MDNS.addService("http", "tcp", 80);
-        Serial.printf("[mdns] http://%s.local\n", _cfg.hostname);
+        LOG("[mdns] http://%s.local\n", _cfg.hostname);
     }
 
     if (!_apMode) {
@@ -357,7 +357,7 @@ void WifiControl::receivePeers() {
         }
         char newHost[32];
         snprintf(newHost, sizeof(newHost), "%s-%04x", _cfg.hostname, myChipId);
-        Serial.printf("[mdns] conflict with %s (id=%04x > mine=%04x), renaming to %s.local\n",
+        LOG("[mdns] conflict with %s (id=%04x > mine=%04x), renaming to %s.local\n",
             ip, senderChipId, myChipId, newHost);
         strlcpy(_cfg.hostname, newHost, sizeof(_cfg.hostname));
         MDNS.end();
@@ -379,7 +379,7 @@ void WifiControl::receivePeers() {
         _peers[_peerCount].ip.fromString(ip);
         _peers[_peerCount].lastSeenMs = millis();
         _peerCount++;
-        Serial.printf("[discovery] peer: %s (%s)\n", host, ip);
+        LOG("[discovery] peer: %s (%s)\n", host, ip);
     }
 }
 
@@ -387,7 +387,7 @@ void WifiControl::expirePeers() {
     uint32_t now = millis();
     for (int i = 0; i < _peerCount; ) {
         if (now - _peers[i].lastSeenMs > PEER_EXPIRE_MS) {
-            Serial.printf("[discovery] expired: %s\n", _peers[i].hostname);
+            LOG("[discovery] expired: %s\n", _peers[i].hostname);
             bool wasBlockingWanted = (strcmp(_peers[i].hostname, _wantedHostname) == 0);
             _peers[i] = _peers[--_peerCount];  // swap with last
 
@@ -396,7 +396,7 @@ void WifiControl::expirePeers() {
                 strlcpy(_cfg.hostname, _wantedHostname, sizeof(_cfg.hostname));
                 MDNS.end();
                 if (MDNS.begin(_cfg.hostname)) MDNS.addService("http", "tcp", 80);
-                Serial.printf("[mdns] reclaimed http://%s.local\n", _cfg.hostname);
+                LOG("[mdns] reclaimed http://%s.local\n", _cfg.hostname);
                 announce();
             }
         } else {

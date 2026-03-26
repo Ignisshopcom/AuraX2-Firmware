@@ -17,14 +17,14 @@ SyncControl::SyncControl(PixPlayer& player) : _player(player) {
 bool SyncControl::begin() {
     _queue = xQueueCreate(4, sizeof(Packet));
     if (!_queue) {
-        Serial.println("[sync] queue alloc failed");
+        LOGLN("[sync] queue alloc failed");
         return false;
     }
     // Disable WiFi power save — prevents radio sleep that causes missed ESP-NOW packets
     esp_wifi_set_ps(WIFI_PS_NONE);
 
     if (esp_now_init() != ESP_OK) {
-        Serial.println("[sync] esp_now_init failed");
+        LOGLN("[sync] esp_now_init failed");
         return false;
     }
     esp_now_register_recv_cb(recvCb);
@@ -35,9 +35,9 @@ bool SyncControl::begin() {
     peer.ifidx   = WIFI_IF_STA;
     peer.encrypt  = false;
     esp_now_add_peer(&peer);
-    Serial.printf("[sync] channel %d\n", peer.channel);
+    LOG("[sync] channel %d\n", peer.channel);
 
-    Serial.println("[sync] ESP-NOW ready");
+    LOGLN("[sync] ESP-NOW ready");
     return true;
 }
 
@@ -59,14 +59,14 @@ void SyncControl::process() {
 
 void SyncControl::handlePacket(const Packet& pkt) {
     if (pkt.cmd == CMD_PLAY) {
-        Serial.printf("[sync] play: %s in %u ms\n", pkt.file, pkt.delayMs);
+        LOG("[sync] play: %s in %u ms\n", pkt.file, pkt.delayMs);
         _player.stopTask();
         int err = _player.load(pkt.file);
-        if (err) { Serial.printf("[sync] load failed: %d\n", err); return; }
+        if (err) { LOG("[sync] load failed: %d\n", err); return; }
         _player.scheduleStart(esp_timer_get_time() + (int64_t)pkt.delayMs * 1000);
         _player.startTask(1);
     } else if (pkt.cmd == CMD_STOP) {
-        Serial.println("[sync] stop");
+        LOGLN("[sync] stop");
         _player.stopTask();
         _player.unload();
     }
@@ -80,11 +80,11 @@ void SyncControl::broadcastPlay(const char* file, uint32_t delayMs) {
     pkt.file[sizeof(pkt.file) - 1] = '\0';
 
     esp_err_t r = esp_now_send(BROADCAST, (uint8_t*)&pkt, sizeof(pkt));
-    if (r != ESP_OK) Serial.printf("[sync] send failed: 0x%x\n", r);
+    if (r != ESP_OK) LOG("[sync] send failed: 0x%x\n", r);
 
     _player.stopTask();
     int err = _player.load(pkt.file);
-    if (err) { Serial.printf("[sync] load failed: %d\n", err); return; }
+    if (err) { LOG("[sync] load failed: %d\n", err); return; }
     _player.scheduleStart(esp_timer_get_time() + (int64_t)delayMs * 1000);
     _player.startTask(1);
 }
@@ -95,7 +95,7 @@ void SyncControl::broadcastStop() {
     pkt.delayMs = 0;
     pkt.file[0] = '\0';
     esp_err_t r = esp_now_send(BROADCAST, (uint8_t*)&pkt, sizeof(pkt));
-    if (r != ESP_OK) Serial.printf("[sync] send failed: 0x%x\n", r);
+    if (r != ESP_OK) LOG("[sync] send failed: 0x%x\n", r);
 
     _player.stopTask();
     _player.unload();

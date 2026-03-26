@@ -17,29 +17,29 @@ static SyncControl* syncCtrl = nullptr;
 static WifiControl* wifi     = nullptr;
 
 void setup() {
-    Serial.begin(115200);
 #ifdef PIX_DEBUG
+    Serial.begin(115200);
     delay(1500);
 #endif
 
     if (!LittleFS.begin(true)) {
-        Serial.println("[fs] LittleFS mount failed");
+        LOGLN("[fs] LittleFS mount failed");
         return;
     }
 
     cfg = loadConfig();
-    Serial.printf("[cfg] ledType=%d numLeds=%d dataPin=%d clkPin=%d file=%s\n",
+    LOG("[cfg] ledType=%d numLeds=%d dataPin=%d clkPin=%d file=%s\n",
         cfg.ledType, cfg.numLeds, cfg.dataPin, cfg.clkPin, cfg.pixFile);
 
     // Instantiate LED driver based on runtime config
     if (cfg.ledType == LED_TYPE_APA102) {
         auto* d = new APA102(cfg.dataPin, cfg.clkPin, cfg.numLeds);
-        if (!d->begin(20000000)) { Serial.println("[apa102] init failed"); while (true); }
+        if (!d->begin(20000000)) { LOGLN("[apa102] init failed"); while (true); }
         d->clear(); d->show();
         leds = d;
     } else {
         auto* d = new WS281x(cfg.dataPin, cfg.numLeds);
-        if (!d->begin()) { Serial.println("[ws281x] init failed"); while (true); }
+        if (!d->begin()) { LOGLN("[ws281x] init failed"); while (true); }
         leds = d;
     }
 
@@ -53,19 +53,19 @@ void setup() {
                     resetReason == ESP_RST_TASK_WDT ||
                     resetReason == ESP_RST_WDT);
     if (crashed) {
-        Serial.printf("[sys] crash detected (reason=%d), autoplay disabled\n", (int)resetReason);
+        LOG("[sys] crash detected (reason=%d), autoplay disabled\n", (int)resetReason);
     } else if (LittleFS.exists(cfg.pixFile)) {
         int err = player->load(cfg.pixFile);
-        if (err) { Serial.printf("[pix] load failed: %d\n", err); }
+        if (err) { LOG("[pix] load failed: %d\n", err); }
         else player->startTask(1);
     } else {
-        Serial.printf("[pix] soubor nenalezen: %s\n", cfg.pixFile);
+        LOG("[pix] soubor nenalezen: %s\n", cfg.pixFile);
     }
 
     xTaskCreatePinnedToCore(
         [](void*) {
             wifi->begin();
-            Serial.println("[wifi] server ready");
+            LOGLN("[wifi] server ready");
             syncCtrl->begin();
             while (true) { syncCtrl->process(); wifi->handle(); vTaskDelay(1); }
         },
