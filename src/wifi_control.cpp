@@ -311,8 +311,9 @@ void WifiControl::handleConfigPost() {
 // ── UDP discovery ──────────────────────────────────────────────────────────────
 
 void WifiControl::announce() {
-    char buf[80];
-    snprintf(buf, sizeof(buf), "AURAX %s %s", _cfg.hostname, WiFi.localIP().toString().c_str());
+    char buf[96];
+    snprintf(buf, sizeof(buf), "AURAX %s %s %04x",
+        _cfg.hostname, WiFi.localIP().toString().c_str(), (uint16_t)ESP.getEfuseMac());
     _udp.beginPacket(IPAddress(255, 255, 255, 255), DISCOVERY_PORT);
     _udp.write((uint8_t*)buf, strlen(buf));
     _udp.endPacket();
@@ -325,22 +326,30 @@ void WifiControl::receivePeers() {
     char buf[80] = {};
     _udp.read(buf, sizeof(buf) - 1);
 
-    char* cmd  = strtok(buf, " ");
-    char* host = strtok(nullptr, " ");
-    char* ip   = strtok(nullptr, " ");
+    char* cmd      = strtok(buf, " ");
+    char* host     = strtok(nullptr, " ");
+    char* ip       = strtok(nullptr, " ");
+    char* chipHex  = strtok(nullptr, " ");
     if (!cmd || strcmp(cmd, "AURAX") != 0 || !host || !ip) return;
+
+    uint16_t senderChipId = chipHex ? (uint16_t)strtoul(chipHex, nullptr, 16) : 0;
+    uint16_t myChipId     = (uint16_t)ESP.getEfuseMac();
 
     if (strcmp(host, _cfg.hostname) == 0) {
         IPAddress senderIp;
         senderIp.fromString(ip);
         if (senderIp == (_apMode ? WiFi.softAPIP() : WiFi.localIP())) {
-            // Vlastní broadcast odrážený zpět — ignorovat
+            return;  // vlastní broadcast — ignorovat
+        }
+        // Konflikt: přejmenuje se zařízení s vyšším chip ID (deterministické)
+        if (myChipId <= senderChipId) {
+            announce();  // já mám nižší ID, vyhrávám — připomenutím donutím druhého k přejmenování
             return;
         }
-        // Konflikt: jiné zařízení má stejný hostname → přejmenovat se
         char newHost[32];
-        snprintf(newHost, sizeof(newHost), "%s-%04x", _cfg.hostname, (uint16_t)ESP.getEfuseMac());
-        Serial.printf("[mdns] conflict with %s! renaming to %s.local\n", ip, newHost);
+        snprintf(newHost, sizeof(newHost), "%s-%04x", _cfg.hostname, myChipId);
+        Serial.printf("[mdns] conflict with %s (id=%04x > mine=%04x), renaming to %s.local\n",
+            ip, senderChipId, myChipId, newHost);
         strlcpy(_cfg.hostname, newHost, sizeof(_cfg.hostname));
         saveConfig(_cfg);
         MDNS.end();
