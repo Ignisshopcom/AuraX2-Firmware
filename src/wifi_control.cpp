@@ -210,18 +210,29 @@ bool WifiControl::begin(uint32_t timeoutMs) {
     _server.on("/upload", HTTP_POST,
         [this]() {
             if (_uploadFile) _uploadFile.close();
-            _server.send(200, "text/plain", "OK — soubor nahrán jako " + String(_cfg.pixFile));
+            if (_uploadError) {
+                LittleFS.remove(_cfg.pixFile);
+                _server.send(500, "text/plain", "Chyba: nedostatek místa v LittleFS");
+            } else {
+                _server.send(200, "text/plain", "OK — soubor nahrán jako " + String(_cfg.pixFile));
+            }
         },
         [this]() {
             HTTPUpload& up = _server.upload();
             if (up.status == UPLOAD_FILE_START) {
+                _uploadError = false;
                 _player.unload();
                 if (LittleFS.exists(_cfg.pixFile)) LittleFS.remove(_cfg.pixFile);
                 _uploadFile = LittleFS.open(_cfg.pixFile, "w");
-                if (!_uploadFile) { LOGLN("[upload] open failed"); return; }
+                if (!_uploadFile) { LOGLN("[upload] open failed"); _uploadError = true; return; }
                 LOG("[upload] start: %s\n", up.filename.c_str());
             } else if (up.status == UPLOAD_FILE_WRITE) {
-                if (_uploadFile) _uploadFile.write(up.buf, up.currentSize);
+                if (_uploadFile && !_uploadError) {
+                    if (_uploadFile.write(up.buf, up.currentSize) != up.currentSize) {
+                        LOGLN("[upload] write failed — disk full");
+                        _uploadError = true;
+                    }
+                }
             } else if (up.status == UPLOAD_FILE_END) {
                 if (_uploadFile) { _uploadFile.close(); LOG("[upload] done: %u bytes\n", up.totalSize); }
             }

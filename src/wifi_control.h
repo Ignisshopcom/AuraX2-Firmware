@@ -50,6 +50,7 @@ private:
     WebServer    _server{80};
 
     File         _uploadFile;
+    bool         _uploadError = false;
     bool         _apMode = false;
 
     WiFiUDP  _udp;
