@@ -34,7 +34,7 @@ AppConfig loadConfig() {
     }
     f.close();
     if (strlen(cfg.hostname) == 0)
-        snprintf(cfg.hostname, sizeof(cfg.hostname), "aurax-%04x", (uint16_t)ESP.getEfuseMac());
+        strlcpy(cfg.hostname, "aurax", sizeof(cfg.hostname));
     return cfg;
 }
 
