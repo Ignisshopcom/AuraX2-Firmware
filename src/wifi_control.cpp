@@ -205,6 +205,8 @@ bool WifiControl::begin(uint32_t timeoutMs) {
 
     _server.begin();
 
+    strlcpy(_wantedHostname, _cfg.hostname, sizeof(_wantedHostname));
+
     const char* mdnsHost = _apMode ? "aurax" : _cfg.hostname;
     if (MDNS.begin(mdnsHost)) {
         MDNS.addService("http", "tcp", 80);
@@ -347,11 +349,10 @@ void WifiControl::receivePeers() {
             return;
         }
         char newHost[32];
-        snprintf(newHost, sizeof(newHost), "%s-%04x", _cfg.hostname, myChipId);
+        snprintf(newHost, sizeof(newHost), "%s-%04x", _wantedHostname, myChipId);
         Serial.printf("[mdns] conflict with %s (id=%04x > mine=%04x), renaming to %s.local\n",
             ip, senderChipId, myChipId, newHost);
         strlcpy(_cfg.hostname, newHost, sizeof(_cfg.hostname));
-        saveConfig(_cfg);
         MDNS.end();
         const char* mdnsHost = _apMode ? "aurax" : _cfg.hostname;
         if (MDNS.begin(mdnsHost)) MDNS.addService("http", "tcp", 80);
@@ -381,7 +382,17 @@ void WifiControl::expirePeers() {
     for (int i = 0; i < _peerCount; ) {
         if (now - _peers[i].lastSeenMs > PEER_EXPIRE_MS) {
             Serial.printf("[discovery] expired: %s\n", _peers[i].hostname);
+            bool wasBlockingWanted = (strcmp(_peers[i].hostname, _wantedHostname) == 0);
             _peers[i] = _peers[--_peerCount];  // swap with last
+
+            // Pokud jsme měli konflikt s tímto peerem, zkusíme znovu získat chtěný hostname
+            if (wasBlockingWanted && strcmp(_cfg.hostname, _wantedHostname) != 0) {
+                strlcpy(_cfg.hostname, _wantedHostname, sizeof(_cfg.hostname));
+                MDNS.end();
+                if (MDNS.begin(_cfg.hostname)) MDNS.addService("http", "tcp", 80);
+                Serial.printf("[mdns] reclaimed http://%s.local\n", _cfg.hostname);
+                announce();
+            }
         } else {
             i++;
         }

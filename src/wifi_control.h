@@ -55,4 +55,5 @@ private:
     Peer     _peers[MAX_PEERS];
     int      _peerCount      = 0;
     uint32_t _lastAnnounceMs = 0;
+    char     _wantedHostname[32] = {};  // hostname z configu; po konfliktu zkusíme znovu jakmile peer zmizí
 };
