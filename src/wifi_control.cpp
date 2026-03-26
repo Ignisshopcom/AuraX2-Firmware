@@ -330,8 +330,25 @@ void WifiControl::receivePeers() {
     char* ip   = strtok(nullptr, " ");
     if (!cmd || strcmp(cmd, "AURAX") != 0 || !host || !ip) return;
 
-    // Jiné zařízení ohlásilo příchod → odpovíme svým announce
-    if (strcmp(host, _cfg.hostname) == 0) { announce(); return; }
+    if (strcmp(host, _cfg.hostname) == 0) {
+        IPAddress senderIp;
+        senderIp.fromString(ip);
+        if (senderIp == (_apMode ? WiFi.softAPIP() : WiFi.localIP())) {
+            // Vlastní broadcast odrážený zpět — ignorovat
+            return;
+        }
+        // Konflikt: jiné zařízení má stejný hostname → přejmenovat se
+        char newHost[32];
+        snprintf(newHost, sizeof(newHost), "%s-%04x", _cfg.hostname, (uint16_t)ESP.getEfuseMac());
+        Serial.printf("[mdns] conflict with %s! renaming to %s.local\n", ip, newHost);
+        strlcpy(_cfg.hostname, newHost, sizeof(_cfg.hostname));
+        saveConfig(_cfg);
+        MDNS.end();
+        const char* mdnsHost = _apMode ? "aurax" : _cfg.hostname;
+        if (MDNS.begin(mdnsHost)) MDNS.addService("http", "tcp", 80);
+        announce();
+        return;
+    }
 
     // Aktualizovat existující peer nebo přidat nový
     for (int i = 0; i < _peerCount; i++) {
