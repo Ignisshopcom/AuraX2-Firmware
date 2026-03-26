@@ -157,11 +157,9 @@ int PixPlayer::load(const char* path) {
     // Validate
     for (int i = 0; i < _numCmds; i++) {
         if (_cmds[i].width == 0 || _cmds[i].height == 0 || _cmds[i].frequency == 0) return 2;
-#ifdef PIX_DEBUG
         LOG("[pix] cmd %d: %dx%d @ %d Hz, t=%u-%u ms\n",
             i, _cmds[i].width, _cmds[i].height, _cmds[i].frequency,
             _cmds[i].startTime, _cmds[i].endTime);
-#endif
     }
 
     // Calculate total image data size across all commands
@@ -271,7 +269,6 @@ bool PixPlayer::update() {
     const Command& cmd = _cmds[_curCmd];
     const uint8_t* col = fetchColumn(_curCmd, _curCol);
     if (col) {
-#ifdef PIX_DEBUG
         if (_curCmd == 0 && _curCol == 0 && programUs < 2000000LL / (int64_t)cmd.frequency) {
             uint8_t maxBri = 0, maxR = 0, maxG = 0, maxB = 0;
             for (int i = 0; i < (int)cmd.width; i++) {
@@ -282,7 +279,6 @@ bool PixPlayer::update() {
             }
             LOG("[pix] col0 max: bri=%d B=%d G=%d R=%d\n", maxBri, maxB, maxG, maxR);
         }
-#endif
         _leds.showColumnDirect(col, cmd.width);
     }
 
