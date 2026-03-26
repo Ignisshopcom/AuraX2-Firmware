@@ -339,11 +339,11 @@ void WifiControl::receivePeers() {
     if (strcmp(host, _cfg.hostname) == 0) {
         IPAddress senderIp;
         senderIp.fromString(ip);
-        if (senderIp == (_apMode ? WiFi.softAPIP() : WiFi.localIP())) {
+        if (senderIp == WiFi.localIP()) {
             return;  // vlastní broadcast — ignorovat
         }
         // Konflikt: přejmenuje se zařízení s vyšším chip ID (deterministické)
-        if (myChipId <= senderChipId) {
+        if (myChipId < senderChipId) {
             announce();  // já mám nižší ID, vyhrávám — připomenutím donutím druhého k přejmenování
             return;
         }
