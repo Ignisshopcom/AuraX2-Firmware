@@ -20,7 +20,7 @@
 #define PIX_FILE      "/show.pix"
 
 // Odkomentuj pro debug výpisy na sériový port
-//#define PIX_DEBUG
+#define PIX_DEBUG
 
 #ifdef PIX_DEBUG
   #define LOG(...)  Serial.printf(__VA_ARGS__)

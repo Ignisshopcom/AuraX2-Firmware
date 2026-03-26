@@ -453,7 +453,7 @@ void WifiControl::handleOta() {
     HTTPUpload& up = _server.upload();
     if (up.status == UPLOAD_FILE_START) {
         _player.stopTask();
-        LOG("[ota] start: %s (%u bytes)\n", up.filename.c_str(), up.contentLength);
+        LOG("[ota] start: %s\n", up.filename.c_str());
         if (!Update.begin(UPDATE_SIZE_UNKNOWN))
             LOG("[ota] begin failed\n");
     } else if (up.status == UPLOAD_FILE_WRITE) {
