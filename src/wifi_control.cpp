@@ -348,7 +348,7 @@ void WifiControl::receivePeers() {
             return;
         }
         char newHost[32];
-        snprintf(newHost, sizeof(newHost), "%s-%04x", _wantedHostname, myChipId);
+        snprintf(newHost, sizeof(newHost), "%s-%04x", _cfg.hostname, myChipId);
         Serial.printf("[mdns] conflict with %s (id=%04x > mine=%04x), renaming to %s.local\n",
             ip, senderChipId, myChipId, newHost);
         strlcpy(_cfg.hostname, newHost, sizeof(_cfg.hostname));
