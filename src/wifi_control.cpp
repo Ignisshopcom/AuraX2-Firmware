@@ -49,14 +49,6 @@ static const char INDEX_HTML[] PROGMEM = R"html(
   <p id="upProg"></p>
 </div>
 
-<div class="upload-area">
-  <p>Aktualizace firmware (.bin)</p>
-  <input type="file" id="fw" accept=".bin">
-  <br><br>
-  <button onclick="updateFw()">Nahrát firmware</button>
-  <p id="fwProg"></p>
-</div>
-
 <div id="status">načítám...</div>
 <div id="peers" style="font-size:0.9rem;margin-top:6px;color:#555"></div>
 
@@ -81,6 +73,13 @@ static const char INDEX_HTML[] PROGMEM = R"html(
   <button type="button" class="save" onclick="saveCfg()">Uložit</button>
   <button type="button" class="reboot" onclick="reboot()">Reboot</button>
   <p id="cfgMsg"></p>
+  <hr style="margin:12px 0;border:none;border-top:1px solid #ddd">
+  <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+    <span style="font-size:0.85rem">Firmware (.bin)</span>
+    <input type="file" id="fw" accept=".bin" style="font-size:0.8rem;max-width:180px">
+    <button type="button" class="save" onclick="updateFw()" style="padding:6px 12px;font-size:0.85rem">Nahrát</button>
+    <span id="fwProg" style="font-size:0.85rem;color:#555"></span>
+  </div>
   </form>
 </details>
 
