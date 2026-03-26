@@ -90,9 +90,9 @@ function refresh() {
       'Stav: <b>'+(d.playing?'přehrává':'zastaveno')+'</b>'
       +(d.file?' &nbsp;|&nbsp; '+d.file:'')
       +(d.commands?' &nbsp;|&nbsp; příkazy: '+d.commands:'')
-      +'<br>'+(d.ap_mode?'&#128246; AP: ':'IP: ')+d.ip
+      +'<br>'+(d.ap_mode?'&#128246; AP: ':'IP: ')+'<a href="http://'+d.ip+'">'+d.ip+'</a>'
       +(d.hostname?' &nbsp;|&nbsp; '+d.hostname+'.local':'')
-      +(d.ap_mode?' <span style="color:#a60">(bez WiFi — přímé připojení)</span>':'')
+      +(d.ap_mode?' <span style="color:#a60">(Windows: použij IP odkaz)</span>':'')
       +' &nbsp;|&nbsp; &#128267; '+d.battery_pct+'% ('+d.battery_mv+' mV)';
   });
   fetch('/peers').then(r=>r.json()).then(ps=>{
