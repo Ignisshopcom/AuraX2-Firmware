@@ -1,4 +1,5 @@
 #include <Arduino.h>
+#include <esp_system.h>
 #include "app_config.h"
 #include "config.h"
 #include "led_driver.h"
@@ -46,7 +47,14 @@ void setup() {
     syncCtrl = new SyncControl(*player);
     wifi     = new WifiControl(*player, cfg, syncCtrl);
 
-    if (LittleFS.exists(cfg.pixFile)) {
+    esp_reset_reason_t resetReason = esp_reset_reason();
+    bool crashed = (resetReason == ESP_RST_PANIC    ||
+                    resetReason == ESP_RST_INT_WDT  ||
+                    resetReason == ESP_RST_TASK_WDT ||
+                    resetReason == ESP_RST_WDT);
+    if (crashed) {
+        Serial.printf("[sys] crash detected (reason=%d), autoplay disabled\n", (int)resetReason);
+    } else if (LittleFS.exists(cfg.pixFile)) {
         int err = player->load(cfg.pixFile);
         if (err) { Serial.printf("[pix] load failed: %d\n", err); }
         else player->startTask(1);
@@ -56,10 +64,8 @@ void setup() {
 
     xTaskCreatePinnedToCore(
         [](void*) {
-            if (wifi->begin())
-                Serial.println("[wifi] server ready");
-            else
-                Serial.println("[wifi] offline — server not started");
+            wifi->begin();
+            Serial.println("[wifi] server ready");
             syncCtrl->begin();
             while (true) { syncCtrl->process(); wifi->handle(); vTaskDelay(1); }
         },

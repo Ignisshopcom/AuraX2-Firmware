@@ -32,4 +32,5 @@ private:
     WebServer    _server{80};
 
     File         _uploadFile;
+    bool         _apMode = false;
 };

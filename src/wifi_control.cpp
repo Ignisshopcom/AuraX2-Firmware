@@ -78,7 +78,8 @@ function refresh() {
       'Stav: <b>'+(d.playing?'přehrává':'zastaveno')+'</b>'
       +(d.file?' &nbsp;|&nbsp; '+d.file:'')
       +(d.commands?' &nbsp;|&nbsp; příkazy: '+d.commands:'')
-      +'<br>IP: '+d.ip
+      +'<br>'+(d.ap_mode?'&#128246; AP: ':'IP: ')+d.ip
+      +(d.ap_mode?' <span style="color:#a60">(bez WiFi — přímé připojení)</span>':'')
       +' &nbsp;|&nbsp; &#128267; '+d.battery_pct+'% ('+d.battery_mv+' mV)';
   });
 }
@@ -124,19 +125,34 @@ WifiControl::WifiControl(PixPlayer& player, AppConfig& cfg, SyncControl* sync)
     : _player(player), _cfg(cfg), _sync(sync) {}
 
 bool WifiControl::begin(uint32_t timeoutMs) {
-    WiFi.mode(WIFI_STA);
-    WiFi.begin(_cfg.ssid, _cfg.password);
-    Serial.printf("[wifi] connecting to %s", _cfg.ssid);
-    uint32_t start = millis();
-    while (WiFi.status() != WL_CONNECTED) {
-        if (millis() - start > timeoutMs) {
-            Serial.println("\n[wifi] timeout");
-            return false;
+    if (strlen(_cfg.ssid) == 0) {
+        _apMode = true;
+    } else {
+        WiFi.mode(WIFI_STA);
+        WiFi.begin(_cfg.ssid, _cfg.password);
+        Serial.printf("[wifi] connecting to %s", _cfg.ssid);
+        uint32_t start = millis();
+        while (WiFi.status() != WL_CONNECTED) {
+            if (millis() - start > timeoutMs) {
+                Serial.println("\n[wifi] timeout, starting AP");
+                _apMode = true;
+                break;
+            }
+            delay(250);
+            Serial.print('.');
         }
-        delay(250);
-        Serial.print('.');
+        if (!_apMode)
+            Serial.printf("\n[wifi] connected, IP: %s\n", WiFi.localIP().toString().c_str());
     }
-    Serial.printf("\n[wifi] connected, IP: %s\n", WiFi.localIP().toString().c_str());
+
+    if (_apMode) {
+        WiFi.disconnect(true);
+        WiFi.mode(WIFI_AP);
+        char apSsid[32];
+        snprintf(apSsid, sizeof(apSsid), "AuraX-%04X", (uint16_t)ESP.getEfuseMac());
+        WiFi.softAP(apSsid);
+        Serial.printf("[wifi] AP mode: SSID=%s IP=%s\n", apSsid, WiFi.softAPIP().toString().c_str());
+    }
 
     _server.on("/",       HTTP_GET,  [this]() { handleRoot();      });
     _server.on("/play",   HTTP_GET,  [this]() { handlePlay();      });
@@ -218,7 +234,8 @@ void WifiControl::handleStatus() {
     json += "\"playing\":"     + String(_player.isLoaded() ? "true" : "false") + ",";
     json += "\"commands\":"    + String(_player.numCommands()) + ",";
     json += "\"file\":\""      + String(LittleFS.exists(_cfg.pixFile) ? _cfg.pixFile : "") + "\",";
-    json += "\"ip\":\""        + WiFi.localIP().toString() + "\",";
+    json += "\"ip\":\""        + (_apMode ? WiFi.softAPIP() : WiFi.localIP()).toString() + "\",";
+    json += "\"ap_mode\":"     + String(_apMode ? "true" : "false") + ",";
     json += "\"battery_mv\":"  + String(mv) + ",";
     json += "\"battery_pct\":" + String(pct);
     json += "}";
