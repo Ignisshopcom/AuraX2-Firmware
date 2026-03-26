@@ -11,6 +11,7 @@ struct AppConfig {
     char     ssid[64];
     char     password[64];
     char     pixFile[64];
+    char     hostname[32];  // mDNS hostname bez .local; "" → auto z chip ID
 };
 
 // Load from /config.json — falls back to compile-time defaults if missing

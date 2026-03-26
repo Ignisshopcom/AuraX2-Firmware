@@ -4,6 +4,7 @@
 #include "config.h"
 #include <ArduinoJson.h>
 #include <WiFi.h>
+#include <ESPmDNS.h>
 #include <esp_wifi.h>
 
 // ── HTML UI ───────────────────────────────────────────────────────────────────
@@ -47,6 +48,7 @@ static const char INDEX_HTML[] PROGMEM = R"html(
 </div>
 
 <div id="status">načítám...</div>
+<div id="peers" style="font-size:0.9rem;margin-top:6px;color:#555"></div>
 
 <details>
   <summary>&#9881; Nastavení</summary>
@@ -64,6 +66,7 @@ static const char INDEX_HTML[] PROGMEM = R"html(
     <label style="grid-column:1/-1">PIX soubor <input type="text" name="pixFile" style="width:100%;box-sizing:border-box"></label>
     <label>WiFi SSID <input type="text" name="ssid"></label>
     <label>WiFi heslo <input type="password" name="password"></label>
+    <label style="grid-column:1/-1">Hostname (.local) <input type="text" name="hostname" pattern="[a-z0-9-]+" placeholder="aurax-xxxx" style="width:100%;box-sizing:border-box"></label>
   </div>
   <button type="button" class="save" onclick="saveCfg()">Uložit</button>
   <button type="button" class="reboot" onclick="reboot()">Reboot</button>
@@ -79,9 +82,15 @@ function refresh() {
       +(d.file?' &nbsp;|&nbsp; '+d.file:'')
       +(d.commands?' &nbsp;|&nbsp; příkazy: '+d.commands:'')
       +'<br>'+(d.ap_mode?'&#128246; AP: ':'IP: ')+d.ip
+      +(d.hostname?' &nbsp;|&nbsp; '+d.hostname+'.local':'')
       +(d.ap_mode?' <span style="color:#a60">(bez WiFi — přímé připojení)</span>':'')
       +' &nbsp;|&nbsp; &#128267; '+d.battery_pct+'% ('+d.battery_mv+' mV)';
   });
+  fetch('/peers').then(r=>r.json()).then(ps=>{
+    document.getElementById('peers').innerHTML = ps.length
+      ? '&#128279; ' + ps.map(p=>`<a href="http://${p.ip}">${p.hostname}</a>`).join(' &nbsp;&middot;&nbsp; ')
+      : '';
+  }).catch(()=>{});
 }
 function upload() {
   const f = document.getElementById('file').files[0];
@@ -104,7 +113,8 @@ function saveCfg() {
   const d = {
     ledType: parseInt(f.ledType.value), numLeds: parseInt(f.numLeds.value),
     dataPin: parseInt(f.dataPin.value), clkPin:  parseInt(f.clkPin.value),
-    pixFile: f.pixFile.value, ssid: f.ssid.value, password: f.password.value
+    pixFile: f.pixFile.value, ssid: f.ssid.value, password: f.password.value,
+    hostname: f.hostname.value
   };
   fetch('/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(d)})
     .then(r=>r.text()).then(t=>{document.getElementById('cfgMsg').textContent=t;});
@@ -191,12 +201,30 @@ bool WifiControl::begin(uint32_t timeoutMs) {
         }
     );
 
+    _server.on("/peers", HTTP_GET, [this]() { handlePeers(); });
+
     _server.begin();
+
+    if (MDNS.begin(_cfg.hostname)) {
+        MDNS.addService("http", "tcp", 80);
+        Serial.printf("[mdns] http://%s.local\n", _cfg.hostname);
+    }
+
+    if (!_apMode) {
+        _udp.begin(DISCOVERY_PORT);
+        announce();
+    }
+
     return true;
 }
 
 void WifiControl::handle() {
     _server.handleClient();
+    if (!_apMode) {
+        receivePeers();
+        expirePeers();
+        if (millis() - _lastAnnounceMs > ANNOUNCE_INTERVAL_MS) announce();
+    }
 }
 
 // ── handlers ──────────────────────────────────────────────────────────────────
@@ -235,6 +263,7 @@ void WifiControl::handleStatus() {
     json += "\"commands\":"    + String(_player.numCommands()) + ",";
     json += "\"file\":\""      + String(LittleFS.exists(_cfg.pixFile) ? _cfg.pixFile : "") + "\",";
     json += "\"ip\":\""        + (_apMode ? WiFi.softAPIP() : WiFi.localIP()).toString() + "\",";
+    json += "\"hostname\":\""  + String(_cfg.hostname) + "\",";
     json += "\"ap_mode\":"     + String(_apMode ? "true" : "false") + ",";
     json += "\"battery_mv\":"  + String(mv) + ",";
     json += "\"battery_pct\":" + String(pct);
@@ -269,10 +298,76 @@ void WifiControl::handleConfigPost() {
     strlcpy(_cfg.ssid,     doc["ssid"]     | _cfg.ssid,     sizeof(_cfg.ssid));
     strlcpy(_cfg.password, doc["password"] | _cfg.password, sizeof(_cfg.password));
     strlcpy(_cfg.pixFile,  doc["pixFile"]  | _cfg.pixFile,  sizeof(_cfg.pixFile));
+    strlcpy(_cfg.hostname, doc["hostname"] | _cfg.hostname, sizeof(_cfg.hostname));
 
     if (saveConfig(_cfg)) {
         _server.send(200, "text/plain", "Uloženo — reboot pro aktivaci");
     } else {
         _server.send(500, "text/plain", "Chyba zápisu");
     }
+}
+
+// ── UDP discovery ──────────────────────────────────────────────────────────────
+
+void WifiControl::announce() {
+    char buf[80];
+    snprintf(buf, sizeof(buf), "AURAX %s %s", _cfg.hostname, WiFi.localIP().toString().c_str());
+    _udp.beginPacket(IPAddress(255, 255, 255, 255), DISCOVERY_PORT);
+    _udp.write((uint8_t*)buf, strlen(buf));
+    _udp.endPacket();
+    _lastAnnounceMs = millis();
+}
+
+void WifiControl::receivePeers() {
+    int len = _udp.parsePacket();
+    if (len <= 0) return;
+    char buf[80] = {};
+    _udp.read(buf, sizeof(buf) - 1);
+
+    char* cmd  = strtok(buf, " ");
+    char* host = strtok(nullptr, " ");
+    char* ip   = strtok(nullptr, " ");
+    if (!cmd || strcmp(cmd, "AURAX") != 0 || !host || !ip) return;
+
+    // Jiné zařízení ohlásilo příchod → odpovíme svým announce
+    if (strcmp(host, _cfg.hostname) == 0) { announce(); return; }
+
+    // Aktualizovat existující peer nebo přidat nový
+    for (int i = 0; i < _peerCount; i++) {
+        if (strcmp(_peers[i].hostname, host) == 0) {
+            _peers[i].ip.fromString(ip);
+            _peers[i].lastSeenMs = millis();
+            return;
+        }
+    }
+    if (_peerCount < MAX_PEERS) {
+        strlcpy(_peers[_peerCount].hostname, host, sizeof(_peers[_peerCount].hostname));
+        _peers[_peerCount].ip.fromString(ip);
+        _peers[_peerCount].lastSeenMs = millis();
+        _peerCount++;
+        Serial.printf("[discovery] peer: %s (%s)\n", host, ip);
+    }
+}
+
+void WifiControl::expirePeers() {
+    uint32_t now = millis();
+    for (int i = 0; i < _peerCount; ) {
+        if (now - _peers[i].lastSeenMs > PEER_EXPIRE_MS) {
+            Serial.printf("[discovery] expired: %s\n", _peers[i].hostname);
+            _peers[i] = _peers[--_peerCount];  // swap with last
+        } else {
+            i++;
+        }
+    }
+}
+
+void WifiControl::handlePeers() {
+    String json = "[";
+    for (int i = 0; i < _peerCount; i++) {
+        if (i > 0) json += ",";
+        json += "{\"hostname\":\"" + String(_peers[i].hostname) + "\","
+              + "\"ip\":\""        + _peers[i].ip.toString()    + "\"}";
+    }
+    json += "]";
+    _server.send(200, "application/json", json);
 }

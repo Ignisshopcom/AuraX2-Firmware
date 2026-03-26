@@ -30,8 +30,11 @@ AppConfig loadConfig() {
         strlcpy(cfg.ssid,     doc["ssid"]     | cfg.ssid,     sizeof(cfg.ssid));
         strlcpy(cfg.password, doc["password"] | cfg.password, sizeof(cfg.password));
         strlcpy(cfg.pixFile,  doc["pixFile"]  | cfg.pixFile,  sizeof(cfg.pixFile));
+        strlcpy(cfg.hostname, doc["hostname"] | "",            sizeof(cfg.hostname));
     }
     f.close();
+    if (strlen(cfg.hostname) == 0)
+        snprintf(cfg.hostname, sizeof(cfg.hostname), "aurax-%04x", (uint16_t)ESP.getEfuseMac());
     return cfg;
 }
 
@@ -44,6 +47,7 @@ bool saveConfig(const AppConfig& cfg) {
     doc["ssid"]     = cfg.ssid;
     doc["password"] = cfg.password;
     doc["pixFile"]  = cfg.pixFile;
+    doc["hostname"] = cfg.hostname;
 
     File f = LittleFS.open(CFG_FILE, "w");
     if (!f) return false;
