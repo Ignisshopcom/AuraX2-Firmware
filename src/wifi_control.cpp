@@ -139,20 +139,28 @@ bool WifiControl::begin(uint32_t timeoutMs) {
         _apMode = true;
     } else {
         WiFi.mode(WIFI_STA);
-        WiFi.begin(_cfg.ssid, _cfg.password);
-        Serial.printf("[wifi] connecting to %s", _cfg.ssid);
-        uint32_t start = millis();
-        while (WiFi.status() != WL_CONNECTED) {
-            if (millis() - start > timeoutMs) {
-                Serial.println("\n[wifi] timeout, starting AP");
-                _apMode = true;
-                break;
+        for (int attempt = 1; attempt <= 2 && !_apMode; attempt++) {
+            WiFi.begin(_cfg.ssid, _cfg.password);
+            Serial.printf("[wifi] connecting to %s (pokus %d/2)", _cfg.ssid, attempt);
+            uint32_t start = millis();
+            while (WiFi.status() != WL_CONNECTED) {
+                if (millis() - start > timeoutMs) {
+                    WiFi.disconnect(true);
+                    if (attempt < 2)
+                        Serial.println("\n[wifi] timeout, zkouším znovu");
+                    else
+                        Serial.println("\n[wifi] timeout, starting AP");
+                    break;
+                }
+                delay(250);
+                Serial.print('.');
             }
-            delay(250);
-            Serial.print('.');
+            if (WiFi.status() == WL_CONNECTED) {
+                Serial.printf("\n[wifi] connected, IP: %s\n", WiFi.localIP().toString().c_str());
+            } else if (attempt == 2) {
+                _apMode = true;
+            }
         }
-        if (!_apMode)
-            Serial.printf("\n[wifi] connected, IP: %s\n", WiFi.localIP().toString().c_str());
     }
 
     if (_apMode) {
