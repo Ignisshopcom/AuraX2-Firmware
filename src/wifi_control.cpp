@@ -207,10 +207,9 @@ bool WifiControl::begin(uint32_t timeoutMs) {
 
     strlcpy(_wantedHostname, _cfg.hostname, sizeof(_wantedHostname));
 
-    const char* mdnsHost = _apMode ? "aurax" : _cfg.hostname;
-    if (MDNS.begin(mdnsHost)) {
+    if (MDNS.begin(_cfg.hostname)) {
         MDNS.addService("http", "tcp", 80);
-        Serial.printf("[mdns] http://%s.local\n", mdnsHost);
+        Serial.printf("[mdns] http://%s.local\n", _cfg.hostname);
     }
 
     if (!_apMode) {
@@ -354,8 +353,7 @@ void WifiControl::receivePeers() {
             ip, senderChipId, myChipId, newHost);
         strlcpy(_cfg.hostname, newHost, sizeof(_cfg.hostname));
         MDNS.end();
-        const char* mdnsHost = _apMode ? "aurax" : _cfg.hostname;
-        if (MDNS.begin(mdnsHost)) MDNS.addService("http", "tcp", 80);
+        if (MDNS.begin(_cfg.hostname)) MDNS.addService("http", "tcp", 80);
         announce();
         return;
     }
