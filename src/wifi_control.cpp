@@ -5,6 +5,8 @@
 #include <ArduinoJson.h>
 #include <WiFi.h>
 #include <ESPmDNS.h>
+#include <ArduinoOTA.h>
+#include <Update.h>
 #include <esp_wifi.h>
 
 // ── HTML UI ───────────────────────────────────────────────────────────────────
@@ -45,6 +47,14 @@ static const char INDEX_HTML[] PROGMEM = R"html(
   <br><br>
   <button onclick="upload()">Nahrát</button>
   <p id="upProg"></p>
+</div>
+
+<div class="upload-area">
+  <p>Aktualizace firmware (.bin)</p>
+  <input type="file" id="fw" accept=".bin">
+  <br><br>
+  <button onclick="updateFw()">Nahrát firmware</button>
+  <p id="fwProg"></p>
 </div>
 
 <div id="status">načítám...</div>
@@ -122,6 +132,16 @@ function saveCfg() {
 function reboot() {
   fetch('/reboot',{method:'POST'});
   document.getElementById('cfgMsg').textContent='Rebootuji...';
+}
+function updateFw() {
+  const f = document.getElementById('fw').files[0];
+  if (!f) return alert('Vyber .bin soubor');
+  const p = document.getElementById('fwProg');
+  p.textContent = 'Nahrávám firmware...';
+  const fd = new FormData(); fd.append('firmware', f, f.name);
+  fetch('/update',{method:'POST',body:fd})
+    .then(r=>r.text()).then(t=>{p.textContent=t;})
+    .catch(()=>{p.textContent='Chyba nahrávání';});
 }
 setInterval(refresh, 2000);
 refresh(); loadCfg();
@@ -209,7 +229,16 @@ bool WifiControl::begin(uint32_t timeoutMs) {
         }
     );
 
-    _server.on("/peers", HTTP_GET, [this]() { handlePeers(); });
+    _server.on("/peers",  HTTP_GET,  [this]() { handlePeers(); });
+    _server.on("/update", HTTP_POST,
+        [this]() {
+            _server.send(Update.hasError() ? 500 : 200, "text/plain",
+                         Update.hasError() ? "Chyba aktualizace" : "OK — rebooting");
+            delay(500);
+            esp_restart();
+        },
+        [this]() { handleOta(); }
+    );
 
     _server.begin();
 
@@ -223,6 +252,10 @@ bool WifiControl::begin(uint32_t timeoutMs) {
     if (!_apMode) {
         _udp.begin(DISCOVERY_PORT);
         announce();
+
+        ArduinoOTA.setHostname(_cfg.hostname);
+        ArduinoOTA.begin();
+        LOG("[ota] ArduinoOTA ready\n");
     }
 
     return true;
@@ -231,6 +264,7 @@ bool WifiControl::begin(uint32_t timeoutMs) {
 void WifiControl::handle() {
     _server.handleClient();
     if (!_apMode) {
+        ArduinoOTA.handle();
         receivePeers();
         expirePeers();
         if (millis() - _lastAnnounceMs > ANNOUNCE_INTERVAL_MS) announce();
@@ -414,4 +448,22 @@ void WifiControl::handlePeers() {
     }
     json += "]";
     _server.send(200, "application/json", json);
+}
+
+void WifiControl::handleOta() {
+    HTTPUpload& up = _server.upload();
+    if (up.status == UPLOAD_FILE_START) {
+        _player.stopTask();
+        LOG("[ota] start: %s (%u bytes)\n", up.filename.c_str(), up.contentLength);
+        if (!Update.begin(UPDATE_SIZE_UNKNOWN))
+            LOG("[ota] begin failed\n");
+    } else if (up.status == UPLOAD_FILE_WRITE) {
+        if (Update.write(up.buf, up.currentSize) != up.currentSize)
+            LOG("[ota] write error\n");
+    } else if (up.status == UPLOAD_FILE_END) {
+        if (Update.end(true))
+            LOG("[ota] done: %u bytes\n", up.totalSize);
+        else
+            LOG("[ota] end failed\n");
+    }
 }

@@ -32,6 +32,7 @@ private:
     void handlePeers();
     void handleConfigGet();
     void handleConfigPost();
+    void handleOta();
 
     void announce();
     void receivePeers();
