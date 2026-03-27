@@ -47,6 +47,19 @@ void setup() {
     syncCtrl = new SyncControl(*player);
     wifi     = new WifiControl(*player, cfg, syncCtrl);
 
+    // wifi_ctrl musí být vytvořen PŘED player->startTask() — pix_player běží
+    // na Core 1 s prioritou 5 a při spin-loop blokuje loopTask (taky Core 1,
+    // priorita 1), takže by se řádek za startTask() nikdy nevykonal.
+    xTaskCreatePinnedToCore(
+        [](void*) {
+            wifi->begin();
+            LOGLN("[wifi] server ready");
+            syncCtrl->begin();
+            while (true) { syncCtrl->process(); wifi->handle(); vTaskDelay(1); }
+        },
+        "wifi_ctrl", 8192, nullptr, 2, nullptr, 0  // core 0, priorita 2
+    );
+
     esp_reset_reason_t resetReason = esp_reset_reason();
     bool crashed = (resetReason == ESP_RST_PANIC    ||
                     resetReason == ESP_RST_INT_WDT  ||
@@ -61,16 +74,6 @@ void setup() {
     } else {
         LOG("[pix] soubor nenalezen: %s\n", cfg.pixFile);
     }
-
-    xTaskCreatePinnedToCore(
-        [](void*) {
-            wifi->begin();
-            LOGLN("[wifi] server ready");
-            syncCtrl->begin();
-            while (true) { syncCtrl->process(); wifi->handle(); vTaskDelay(1); }
-        },
-        "wifi_ctrl", 8192, nullptr, 2, nullptr, 0  // core 0, priorita 2
-    );
 }
 
 void loop() {

@@ -118,7 +118,7 @@ int PixPlayer::parseHeader(File& f) {
             for (int i = 1; i < (int)ps; i++) { uint32_t v; if (!readDW(f, v)) return 2; remaining--; }
 
             switch (pt) {
-                case CP_START_TIME: cmd.startTime = val; break;
+                case CP_START_TIME: cmd.startTime = ((int32_t)val < 0) ? 0 : val; break;
                 case CP_END_TIME:   cmd.endTime   = val; break;
                 case CP_OFFSET:     cmd.offset    = val; break;
                 case CP_WIDTH:      cmd.width     = val; break;
