@@ -116,3 +116,5 @@ Pokud LEDky zobrazují animaci a `http://aurax.local` otevře web UI, ověření
 - FreeRTOS `loopTask` je sdílený s Arduino frameworkem — jiné knihovny (WiFi, BLE) ho mohou zdržet. Přehrávač musí běžet v separátním tasku.
 - ESP-NOW receive callback nesmí volat `vTaskDelay()` ani LittleFS — způsobí crash. Řešení: `xQueueSendFromISR()` v callbacku, zpracování v samostatném tasku.
 - `wifi_ctrl` task potřebuje stack ≥ 8192 bytů — `handleConfigPost` + `saveConfig` alokují dva `StaticJsonDocument<512>` na stacku.
+- **`xTaskCreatePinnedToCore` pro wifi_ctrl musí být voláno PŘED `player->startTask()`** — pix_player (Core 1, priorita 5) v spin-loop nikdy neuvolní Core 1 nižší prioritě, takže `setup()` by se za `startTask()` nikdy nedostalo. wifi_ctrl je na Core 0, takže mu to nevadí, ale musí být vytvořen dřív.
+- **`.pix` soubory ukládají `startTime` jako signed int32** — záporná hodnota znamená "začni před t=0" (tj. okamžitě). Parser čte uint32, takže -2000 ms se stane 4 294 965 296 ms ≈ 49 dní → zařízení vypadá zmrzlé. Řešení: `((int32_t)val < 0) ? 0 : val`.
