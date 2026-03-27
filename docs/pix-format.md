@@ -123,7 +123,7 @@ Parameters appear in the following fixed order:
 
 | # | Type ID | Name                  | Size (DW) | Description                                                   |
 |---|---------|-----------------------|-----------|---------------------------------------------------------------|
-| 1 | `0x05`  | `startTime`           | 1         | Start time in milliseconds                                    |
+| 1 | `0x05`  | `startTime`           | 1         | Start time in milliseconds. Stored as **signed int32** — negative value means "start before t=0" (i.e. immediately). Parse as `(int32_t)val < 0 ? 0 : val`. |
 | 2 | `0x06`  | `endTime`             | 1         | End time in milliseconds                                      |
 | 3 | `0x09`  | `dimming`             | 1         | Brightness 0–100                                             |
 | 4 | `0x04`  | `offset`              | 1         | Byte offset of image data from start of file                  |

@@ -58,6 +58,7 @@ Detaily: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Formát souborů: [docs/
 - `goto streaming` v `PixPlayer::load()` je záměrné — fallback cesta při selhání PSRAM alokace.
 - Interní pixel formát APA102: `[R, G, B, brightness]`; drátový formát: `[0xE0|bri, B, G, R]`.
 - Debug výpisy: makra `LOG(...)` / `LOGLN(s)` definovaná v `config.h` — aktivní jen při `#define PIX_DEBUG`. `Serial.begin()` se volá jen tehdy.
+- Formátování: `.clang-format` v rootu projektu (Google style, indent 4). Použij `clang-format -i src/*.cpp src/*.h`.
 
 ## Build Environment
 
@@ -75,6 +76,11 @@ Detaily: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Formát souborů: [docs/
 - Po opravě chyby nebo zjištění neočekávané vlastnosti: navrhni přidání do sekce Learnings.
 
 ## Verification
+
+Před flashováním — ověř, že firmware jde zkompilovat:
+```bash
+pio run
+```
 
 Po flashování — pro ověření zapni `#define PIX_DEBUG` a sleduj sériový monitor:
 ```
