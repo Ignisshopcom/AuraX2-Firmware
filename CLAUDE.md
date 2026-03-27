@@ -41,6 +41,7 @@ Detaily: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Formát souborů: [docs/
 | `/peers` | GET | JSON seznam zařízení v síti |
 | `/config` | GET/POST | Číst/zapsat konfiguraci (JSON) |
 | `/upload` | POST | Nahrát `.pix` soubor (multipart) |
+| `/update` | POST | OTA aktualizace firmware (multipart `.bin`) |
 | `/reboot` | POST | Restart zařízení |
 
 ## Multi-device (mDNS + UDP discovery)

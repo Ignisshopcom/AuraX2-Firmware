@@ -125,14 +125,14 @@ Parameters appear in the following fixed order:
 |---|---------|-----------------------|-----------|---------------------------------------------------------------|
 | 1 | `0x05`  | `startTime`           | 1         | Start time in milliseconds. Stored as **signed int32** — negative value means "start before t=0" (i.e. immediately). Parse as `(int32_t)val < 0 ? 0 : val`. |
 | 2 | `0x06`  | `endTime`             | 1         | End time in milliseconds                                      |
-| 3 | `0x09`  | `dimming`             | 1         | Brightness 0–100                                             |
+| 3 | `0x09`  | `dimming`             | 1         | Brightness 0–100. **Parser ignoruje** (not implemented).      |
 | 4 | `0x04`  | `offset`              | 1         | Byte offset of image data from start of file                  |
 | 5 | `0x0A`  | `width`               | 1         | Image width **after** 90° rotation (= source image height)    |
 | 6 | `0x0B`  | `height`              | 1         | Image height **after** 90° rotation (= source image width)    |
 | 7 | `0x07`  | `frequency`           | 1         | Line scan frequency in Hz                                     |
-| 8 | `0x08`  | `gap`                 | 1         | Gap between picture repetitions in pixels                     |
-| 9 | `0x0C`  | `picture_frequency`   | 1         | Image display frequency (used in accelerometer mode)          |
-|10 | `0x0D`  | `accelerometer`       | 1         | `0` = disabled, `1` = accelerometer mode enabled             |
+| 8 | `0x08`  | `gap`                 | 1         | Gap between picture repetitions in pixels. **Parser ignoruje.**|
+| 9 | `0x0C`  | `picture_frequency`   | 1         | Image display frequency (accelerometer mode). **Parser ignoruje.**|
+|10 | `0x0D`  | `accelerometer`       | 1         | `0` = disabled, `1` = accelerometer mode. **Parser ignoruje.**|
 |11 | `0x0E`  | `last_command`        | 1         | `1` if this is the last command in the program, else `0`      |
 
 Total command size: 1 (header DW) + 11 × 2 (parameter header + value) = **23 DWs**.

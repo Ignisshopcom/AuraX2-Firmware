@@ -34,6 +34,7 @@ class ILedDriver {
 public:
     virtual uint16_t numLeds() const = 0;
     virtual void showColumnDirect(const uint8_t* pixData, uint16_t count) = 0;
+    virtual void clear() = 0;
 };
 ```
 
@@ -146,8 +147,10 @@ PixPlayer player(leds);               // leds: ILedDriver& (APA102 nebo WS281x)
 player.load("/show.pix");             // 0 = OK, jinak chybový kód
 player.update();                       // volat z loop(); false = konec
 player.startTask(core = 1, stackSize = 4096); // FreeRTOS task
-player.stopTask();
+player.stopTask();                     // blokující — čeká na konec tasku
 player.unload();
+player.blackout();                     // stopTask + unload + leds.clear()
+player.scheduleStart(int64_t atUs);    // naplánovat start na abs. čas (esp_timer_get_time())
 player.isLoaded();                     // bool
 player.numCommands();                  // int — počet příkazů v souboru
 ```
