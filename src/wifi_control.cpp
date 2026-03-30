@@ -130,7 +130,8 @@ function refresh() {
       +'<br>'+(d.ap_mode?'&#128246; AP: ':'IP: ')+'<a href="http://'+d.ip+'">'+d.ip+'</a>'
       +(d.hostname?' &nbsp;|&nbsp; '+d.hostname+'.local':'')
       +(d.ap_mode?' <span style="color:#a60">(Windows: použij IP odkaz)</span>':'')
-      +' &nbsp;|&nbsp; &#128267; '+d.battery_pct+'% ('+d.battery_mv+' mV)';
+      +' &nbsp;|&nbsp; &#128267; '+d.battery_pct+'% ('+d.battery_mv+' mV)'
+      +(!d.ap_mode&&d.rssi?' &nbsp;|&nbsp; &#128246; '+d.rssi+' dBm':'');
   });
   fetch('/peers').then(r=>r.json()).then(ps=>{
     document.getElementById('peers').innerHTML = ps.length
@@ -394,7 +395,8 @@ void WifiControl::handleStatus() {
     json += "\"hostname\":\""       + String(_cfg.hostname) + "\",";
     json += "\"ap_mode\":"          + String(_apMode ? "true" : "false") + ",";
     json += "\"battery_mv\":"       + String(mv) + ",";
-    json += "\"battery_pct\":"      + String(pct);
+    json += "\"battery_pct\":"      + String(pct) + ",";
+    json += "\"rssi\":"             + String(_apMode ? 0 : WiFi.RSSI());
     json += "}";
     _server.send(200, "application/json", json);
 }
