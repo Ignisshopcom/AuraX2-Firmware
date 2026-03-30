@@ -62,8 +62,33 @@ static const char INDEX_HTML[] PROGMEM = R"html(
   </select>
 </div>
 
+<details id="efxPanel">
+  <summary>&#10024; Efekty</summary>
+  <div class="cfg-grid" style="margin-top:8px">
+    <label>Efekt
+      <select id="efxId">
+        <option value="1">Solid</option>
+        <option value="2">Android</option>
+      </select>
+    </label>
+    <label>Rychlost %
+      <input type="number" id="efxSpeed" value="100" min="10" max="1000" style="width:70px">
+    </label>
+    <label>Velikost te&#269;ky
+      <input type="number" id="efxDot" value="3" min="1" max="20" style="width:60px">
+    </label>
+  </div>
+  <div style="margin:8px 0">
+    <span style="font-size:0.85rem">Paleta:</span>
+    <span id="palette"></span>
+    <button onclick="addColor()" style="padding:2px 8px;font-size:1rem">+</button>
+  </div>
+  <button class="play" onclick="startEffect()">&#9654; Spustit efekt</button>
+  <button class="stop" onclick="stopEffect()">&#9632; Zastavit</button>
+</details>
+
 <div class="upload-area">
-  <p>Nahrát .pix soubor</p>
+  <p>Nahr&#225;t .pix soubor</p>
   <input type="file" id="file" accept=".pix">
   <br><br>
   <button onclick="upload()">Nahrát</button>
@@ -120,6 +145,35 @@ function setBri(v) {
   document.getElementById('briVal').textContent = +v === 0 ? 'PIX soubor' : v + '%';
   fetch('/brightness?v=' + v);
 }
+function startEffect() {
+  var colors=[...document.querySelectorAll('#palette input')].map(function(i){
+    var h=i.value.slice(1);
+    return {r:parseInt(h.slice(0,2),16),g:parseInt(h.slice(2,4),16),b:parseInt(h.slice(4,6),16)};
+  });
+  if(!colors.length) colors=[{r:255,g:0,b:0}];
+  fetch('/effect',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({id:+document.getElementById('efxId').value,
+      speed:+document.getElementById('efxSpeed').value,
+      dotSize:+document.getElementById('efxDot').value,
+      palette:colors})});
+}
+function stopEffect() { fetch('/effect/stop').then(refresh); }
+function addColor() {
+  if(document.querySelectorAll('#palette input').length>=4) return;
+  var inp=document.createElement('input'); inp.type='color'; inp.value='#ff0000';
+  inp.style='margin:2px;width:36px;height:28px;cursor:pointer';
+  document.getElementById('palette').appendChild(inp);
+}
+function initPalette(rs,gs,bs,sz) {
+  var p=document.getElementById('palette'); p.innerHTML='';
+  for(var i=0;i<sz;i++){
+    var inp=document.createElement('input'); inp.type='color';
+    var r=rs[i]||0,g=gs[i]||0,b=bs[i]||0;
+    inp.value='#'+('0'+r.toString(16)).slice(-2)+('0'+g.toString(16)).slice(-2)+('0'+b.toString(16)).slice(-2);
+    inp.style='margin:2px;width:36px;height:28px;cursor:pointer';
+    p.appendChild(inp);
+  }
+}
 function rssiBar(dbm) {
   if (!dbm) return '';
   var s = dbm>-55?5:dbm>-65?4:dbm>-72?3:dbm>-80?2:1;
@@ -165,10 +219,19 @@ function loadCfg() {
     const t = d.tempo || 100;
     document.getElementById('tempo').value = t;
     document.getElementById('endBeh').value = (d.endBehavior !== undefined) ? d.endBehavior : 255;
+    document.getElementById('efxId').value    = d.effectId    || 1;
+    document.getElementById('efxSpeed').value = d.effectSpeed || 100;
+    document.getElementById('efxDot').value   = d.effectDotSize || 3;
+    initPalette(d.paletteR||[255],d.paletteG||[0],d.paletteB||[0],d.paletteSize||1);
   });
 }
 function saveCfg() {
   const f = document.getElementById('cfg');
+  var pal=[...document.querySelectorAll('#palette input')].map(function(i){
+    var h=i.value.slice(1);
+    return {r:parseInt(h.slice(0,2),16),g:parseInt(h.slice(2,4),16),b:parseInt(h.slice(4,6),16)};
+  });
+  if(!pal.length) pal=[{r:255,g:0,b:0}];
   const d = {
     ledType: parseInt(f.ledType.value), numLeds: parseInt(f.numLeds.value),
     dataPin: parseInt(f.dataPin.value), clkPin:  parseInt(f.clkPin.value),
@@ -176,7 +239,14 @@ function saveCfg() {
     hostname: f.hostname.value,
     brightness:   parseInt(document.getElementById('bri').value),
     tempo:        parseInt(document.getElementById('tempo').value),
-    endBehavior:  parseInt(document.getElementById('endBeh').value)
+    endBehavior:  parseInt(document.getElementById('endBeh').value),
+    effectId:      parseInt(document.getElementById('efxId').value),
+    effectSpeed:   parseInt(document.getElementById('efxSpeed').value),
+    effectDotSize: parseInt(document.getElementById('efxDot').value),
+    paletteSize: pal.length,
+    paletteR: pal.map(function(c){return c.r;}),
+    paletteG: pal.map(function(c){return c.g;}),
+    paletteB: pal.map(function(c){return c.b;})
   };
   fetch('/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(d)})
     .then(r=>r.text()).then(t=>{document.getElementById('cfgMsg').textContent=t;});
@@ -203,8 +273,8 @@ refresh(); loadCfg();
 
 // ── WifiControl ───────────────────────────────────────────────────────────────
 
-WifiControl::WifiControl(PixPlayer& player, AppConfig& cfg, SyncControl* sync)
-    : _player(player), _cfg(cfg), _sync(sync) {}
+WifiControl::WifiControl(PixPlayer& player, EffectPlayer& effectPlayer, AppConfig& cfg, SyncControl* sync)
+    : _player(player), _effectPlayer(effectPlayer), _cfg(cfg), _sync(sync) {}
 
 bool WifiControl::begin(uint32_t timeoutMs) {
     if (strlen(_cfg.ssid) == 0) {
@@ -315,6 +385,8 @@ bool WifiControl::begin(uint32_t timeoutMs) {
         _player.setBrightness(_cfg.brightness);
         _server.send(200, "text/plain", "OK");
     });
+    _server.on("/effect",      HTTP_POST, [this]() { handleEffectStart(); });
+    _server.on("/effect/stop", HTTP_GET,  [this]() { handleEffectStop();  });
     _server.on("/peers",  HTTP_GET,  [this]() { handlePeers(); });
     _server.on("/update", HTTP_POST,
         [this]() {
@@ -364,6 +436,7 @@ void WifiControl::handleRoot() {
 }
 
 void WifiControl::handlePlay() {
+    _effectPlayer.stop();
     if (_sync) {
         _sync->broadcastPlay(_cfg.pixFile);
     } else {
@@ -407,7 +480,7 @@ void WifiControl::handleStatus() {
 }
 
 void WifiControl::handleConfigGet() {
-    StaticJsonDocument<512> doc;
+    StaticJsonDocument<768> doc;
     doc["ledType"]  = _cfg.ledType;
     doc["numLeds"]  = _cfg.numLeds;
     doc["dataPin"]  = _cfg.dataPin;
@@ -418,13 +491,65 @@ void WifiControl::handleConfigGet() {
     doc["brightness"] = _cfg.brightness;
     doc["tempo"]       = _cfg.tempo;
     doc["endBehavior"] = _cfg.endBehavior;
+    doc["effectId"]      = _cfg.effectId;
+    doc["effectSpeed"]   = _cfg.effectSpeed;
+    doc["effectDotSize"] = _cfg.effectDotSize;
+    doc["paletteSize"]   = _cfg.paletteSize;
+    JsonArray pR = doc.createNestedArray("paletteR");
+    JsonArray pG = doc.createNestedArray("paletteG");
+    JsonArray pB = doc.createNestedArray("paletteB");
+    for (int i = 0; i < 4; i++) { pR.add(_cfg.paletteR[i]); pG.add(_cfg.paletteG[i]); pB.add(_cfg.paletteB[i]); }
     String out;
     serializeJson(doc, out);
     _server.send(200, "application/json", out);
 }
 
+void WifiControl::handleEffectStart() {
+    StaticJsonDocument<256> doc;
+    if (deserializeJson(doc, _server.arg("plain")) != DeserializationError::Ok) {
+        _server.send(400, "text/plain", "JSON error");
+        return;
+    }
+    EffectParams p = {};
+    p.effectId = doc["id"]      | 1;
+    p.speed    = doc["speed"]   | 100;
+    p.dotSize  = doc["dotSize"] | 3;
+    JsonArray palette = doc["palette"];
+    p.paletteSize = 0;
+    for (JsonObject c : palette) {
+        if (p.paletteSize >= 4) break;
+        p.palette[p.paletteSize].r = c["r"] | 255;
+        p.palette[p.paletteSize].g = c["g"] | 0;
+        p.palette[p.paletteSize].b = c["b"] | 0;
+        p.paletteSize++;
+    }
+    if (p.paletteSize == 0) { p.palette[0] = {255, 0, 0}; p.paletteSize = 1; }
+
+    // Uložit do konfigurace
+    _cfg.effectId      = p.effectId;
+    _cfg.effectSpeed   = p.speed;
+    _cfg.effectDotSize = p.dotSize;
+    _cfg.paletteSize   = p.paletteSize;
+    for (int i = 0; i < p.paletteSize; i++) {
+        _cfg.paletteR[i] = p.palette[i].r;
+        _cfg.paletteG[i] = p.palette[i].g;
+        _cfg.paletteB[i] = p.palette[i].b;
+    }
+    saveConfig(_cfg);
+
+    _player.stopTask();
+    _player.unload();
+    _effectPlayer.start(p);
+    _server.send(200, "text/plain", "OK");
+}
+
+void WifiControl::handleEffectStop() {
+    _effectPlayer.stop();
+    _server.send(200, "text/plain", "OK");
+}
+
 void WifiControl::handleConfigPost() {
-    StaticJsonDocument<512> doc;
+    StaticJsonDocument<768> doc;
     if (deserializeJson(doc, _server.arg("plain")) != DeserializationError::Ok) {
         _server.send(400, "text/plain", "JSON error");
         return;
@@ -443,6 +568,16 @@ void WifiControl::handleConfigPost() {
     _cfg.endBehavior  = doc["endBehavior"]  | _cfg.endBehavior;
     _player.setTempo(_cfg.tempo);
     _player.setEndBehavior(_cfg.endBehavior);
+    _cfg.effectId      = doc["effectId"]      | _cfg.effectId;
+    _cfg.effectSpeed   = doc["effectSpeed"]   | _cfg.effectSpeed;
+    _cfg.effectDotSize = doc["effectDotSize"] | _cfg.effectDotSize;
+    _cfg.paletteSize   = doc["paletteSize"]   | _cfg.paletteSize;
+    JsonArray pR = doc["paletteR"], pG = doc["paletteG"], pB = doc["paletteB"];
+    for (int i = 0; i < 4; i++) {
+        if (i < (int)pR.size()) _cfg.paletteR[i] = pR[i];
+        if (i < (int)pG.size()) _cfg.paletteG[i] = pG[i];
+        if (i < (int)pB.size()) _cfg.paletteB[i] = pB[i];
+    }
 
     if (saveConfig(_cfg)) {
         _server.send(200, "text/plain", "Uloženo — reboot pro aktivaci");

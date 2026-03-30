@@ -4,6 +4,7 @@
 #include <WiFi.h>
 #include <LittleFS.h>
 #include "pix_player.h"
+#include "effect_player.h"
 #include "app_config.h"
 
 class SyncControl;  // forward declaration
@@ -15,7 +16,7 @@ static constexpr uint32_t ANNOUNCE_INTERVAL_MS = 30000;
 
 class WifiControl {
 public:
-    WifiControl(PixPlayer& player, AppConfig& cfg, SyncControl* sync = nullptr);
+    WifiControl(PixPlayer& player, EffectPlayer& effectPlayer, AppConfig& cfg, SyncControl* sync = nullptr);
 
     // Connect to WiFi and start HTTP server. Returns false on timeout.
     bool begin(uint32_t timeoutMs = 10000);
@@ -28,6 +29,8 @@ private:
     void handleUpload();
     void handlePlay();
     void handleStop();
+    void handleEffectStart();
+    void handleEffectStop();
     void handleStatus();
     void handlePeers();
     void handleConfigGet();
@@ -44,8 +47,9 @@ private:
         uint32_t  lastSeenMs;
     };
 
-    PixPlayer&   _player;
-    AppConfig&   _cfg;
+    PixPlayer&    _player;
+    EffectPlayer& _effectPlayer;
+    AppConfig&    _cfg;
     SyncControl* _sync;
     WebServer    _server{80};
 

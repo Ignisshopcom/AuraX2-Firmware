@@ -4,17 +4,19 @@
 #include "config.h"
 #include "led_driver.h"
 #include "pix_player.h"
+#include "effect_player.h"
 #include "wifi_control.h"
 #include "sync_control.h"
 
 #include "apa102.h"
 #include "ws281x.h"
 
-static AppConfig    cfg;
-static ILedDriver*  leds     = nullptr;
-static PixPlayer*   player   = nullptr;
-static SyncControl* syncCtrl = nullptr;
-static WifiControl* wifi     = nullptr;
+static AppConfig     cfg;
+static ILedDriver*   leds         = nullptr;
+static PixPlayer*    player       = nullptr;
+static EffectPlayer* effectPlayer = nullptr;
+static SyncControl*  syncCtrl     = nullptr;
+static WifiControl*  wifi         = nullptr;
 
 void setup() {
 #ifdef PIX_DEBUG
@@ -45,11 +47,12 @@ void setup() {
 
     leds->setBrightness(cfg.brightness);
 
-    player   = new PixPlayer(*leds);
+    player       = new PixPlayer(*leds);
     player->setTempo(cfg.tempo);
     player->setEndBehavior(cfg.endBehavior);
-    syncCtrl = new SyncControl(*player);
-    wifi     = new WifiControl(*player, cfg, syncCtrl);
+    effectPlayer = new EffectPlayer(*leds);
+    syncCtrl     = new SyncControl(*player);
+    wifi         = new WifiControl(*player, *effectPlayer, cfg, syncCtrl);
 
     // wifi_ctrl musí být vytvořen PŘED player->startTask() — pix_player běží
     // na Core 1 s prioritou 5 a při spin-loop blokuje loopTask (taky Core 1,
