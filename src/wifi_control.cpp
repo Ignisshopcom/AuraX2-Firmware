@@ -55,7 +55,7 @@ static const char INDEX_HTML[] PROGMEM = R"html(
 <div style="margin:12px 0;display:flex;align-items:center;gap:8px">
   <span style="font-size:0.9rem;white-space:nowrap">&#8635; Konec show</span>
   <select id="endBeh" onchange="setEndBeh(this.value)" style="padding:4px;font-size:1rem">
-    <option value="255">Z souboru</option>
+    <option value="255">Ze souboru</option>
     <option value="1">Loop</option>
     <option value="2">Keep</option>
     <option value="0">Off</option>
@@ -126,6 +126,7 @@ function refresh() {
       'Stav: <b>'+(d.playing?'přehrává':'zastaveno')+'</b>'
       +(d.file?' &nbsp;|&nbsp; '+d.file:'')
       +(d.commands?' &nbsp;|&nbsp; příkazy: '+d.commands:'')
+      +(d.frames_expected?' &nbsp;|&nbsp; snímky: '+d.frames_rendered+'/'+d.frames_expected+(d.frames_expected>d.frames_rendered?' ⚠':''):'')
       +'<br>'+(d.ap_mode?'&#128246; AP: ':'IP: ')+'<a href="http://'+d.ip+'">'+d.ip+'</a>'
       +(d.hostname?' &nbsp;|&nbsp; '+d.hostname+'.local':'')
       +(d.ap_mode?' <span style="color:#a60">(Windows: použij IP odkaz)</span>':'')
@@ -363,6 +364,7 @@ void WifiControl::handlePlay() {
         _player.stopTask();
         int err = _player.load(_cfg.pixFile);
         if (err) { _server.send(500, "text/plain", "load failed: " + String(err)); return; }
+        _player.scheduleStart(esp_timer_get_time() + 20000);  // 20 ms — dost na spuštění tasku
         _player.startTask(1);
     }
     _server.send(200, "text/plain", "OK");
@@ -381,15 +383,18 @@ void WifiControl::handleStop() {
 void WifiControl::handleStatus() {
     uint16_t mv  = batteryMillivolts();
     uint8_t  pct = batteryPercent(mv);
+    auto st = _player.stats();
     String json = "{";
-    json += "\"playing\":"     + String(_player.isLoaded() ? "true" : "false") + ",";
-    json += "\"commands\":"    + String(_player.numCommands()) + ",";
-    json += "\"file\":\""      + String(LittleFS.exists(_cfg.pixFile) ? _cfg.pixFile : "") + "\",";
-    json += "\"ip\":\""        + (_apMode ? WiFi.softAPIP() : WiFi.localIP()).toString() + "\",";
-    json += "\"hostname\":\""  + String(_cfg.hostname) + "\",";
-    json += "\"ap_mode\":"     + String(_apMode ? "true" : "false") + ",";
-    json += "\"battery_mv\":"  + String(mv) + ",";
-    json += "\"battery_pct\":" + String(pct);
+    json += "\"playing\":"          + String(_player.isLoaded() ? "true" : "false") + ",";
+    json += "\"commands\":"         + String(_player.numCommands()) + ",";
+    json += "\"file\":\""           + String(LittleFS.exists(_cfg.pixFile) ? _cfg.pixFile : "") + "\",";
+    json += "\"frames_rendered\":"  + String(st.framesRendered) + ",";
+    json += "\"frames_expected\":"  + String(st.framesExpected) + ",";
+    json += "\"ip\":\""             + (_apMode ? WiFi.softAPIP() : WiFi.localIP()).toString() + "\",";
+    json += "\"hostname\":\""       + String(_cfg.hostname) + "\",";
+    json += "\"ap_mode\":"          + String(_apMode ? "true" : "false") + ",";
+    json += "\"battery_mv\":"       + String(mv) + ",";
+    json += "\"battery_pct\":"      + String(pct);
     json += "}";
     _server.send(200, "application/json", json);
 }

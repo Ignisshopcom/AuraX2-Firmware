@@ -207,6 +207,8 @@ int PixPlayer::load(const char* path) {
     _keepFrozen     = false;
     _curCmd         = 0;
     _curCol         = 0;
+    _framesRendered = 0;
+    _framesExpected = 0;
     _programStartUs = esp_timer_get_time();
     _nextFrameUs    = _programStartUs;
     return 0;
@@ -231,6 +233,8 @@ void PixPlayer::blackout() {
 }
 
 void PixPlayer::scheduleStart(int64_t atUs) {
+    _framesRendered = 0;
+    _framesExpected = 0;
     _programStartUs = atUs;
     _nextFrameUs    = atUs;
 }
@@ -299,6 +303,11 @@ bool PixPlayer::update() {
     }
 
     const Command& cmd = _cmds[_curCmd];
+    {
+        int64_t frameIntervalUs = 1000000LL * 100LL / ((int64_t)cmd.frequency * (int64_t)_tempo);
+        _framesExpected += (now - _nextFrameUs) / frameIntervalUs + 1;
+        _framesRendered++;
+    }
     const uint8_t* col = fetchColumn(_curCmd, _curCol);
     if (col) {
         if (_curCmd == 0 && _curCol == 0 && programUs < 2000000LL / (int64_t)cmd.frequency) {
