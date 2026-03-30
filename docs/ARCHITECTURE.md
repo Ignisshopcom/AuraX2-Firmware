@@ -35,6 +35,7 @@ public:
     virtual uint16_t numLeds() const = 0;
     virtual void showColumnDirect(const uint8_t* pixData, uint16_t count) = 0;
     virtual void clear() = 0;
+    virtual void setBrightness(uint8_t pct) = 0;  // 0–100 %, 100 = plný jas
 };
 ```
 
@@ -71,6 +72,7 @@ leds.show();                           // blocking
 leds.showAsync();                      // non-blocking, DMA
 leds.waitForShow();                    // čeká na dokončení DMA
 leds.showColumnDirect(ptr, count);     // přímý DMA z pix bufferu
+leds.setBrightness(pct);              // globální jas 0–100 %
 leds.numLeds();                        // počet LED
 ```
 
@@ -101,6 +103,7 @@ WS281x leds(dataPin, numLeds, channel = RMT_CHANNEL_0);
 bool ok = leds.begin();
 leds.showColumnDirect(ptr, count);  // async, encodes brightness + GRB
 leds.waitForShow();
+leds.setBrightness(pct);            // globální jas 0–100 %
 leds.numLeds();
 ```
 
@@ -139,7 +142,7 @@ PixEndBehavior::Exit   // 0 — zastaví přehrávání
 PixEndBehavior::Repeat // 1 — opakuje od začátku (výchozí)
 PixEndBehavior::Keep   // 2 — drží poslední snímek
 ```
-Hodnota se čte ze souboru; nelze přepsat z kódu.
+Hodnota se čte ze souboru; runtime override přes `setEndBehavior(uint8_t v)` (0/1/2 nebo 255 = ze souboru, výchozí).
 
 **API:**
 ```cpp
@@ -150,10 +153,25 @@ player.startTask(core = 1, stackSize = 4096); // FreeRTOS task
 player.stopTask();                     // blokující — čeká na konec tasku
 player.unload();
 player.blackout();                     // stopTask + unload + leds.clear()
-player.scheduleStart(int64_t atUs);    // naplánovat start na abs. čas (esp_timer_get_time())
-player.isLoaded();                     // bool
-player.numCommands();                  // int — počet příkazů v souboru
+player.scheduleStart(int64_t atUs);    // naplánovat start na abs. čas; resetuje stats
+player.setBrightness(pct);            // 0–100 %, deleguje na ILedDriver
+player.setTempo(pct);                 // 100=normální, 50=poloviční, 200=dvojnásobná rychlost
+player.setEndBehavior(v);             // 0=Exit, 1=Repeat, 2=Keep, 255=ze souboru (výchozí)
+player.isLoaded();                    // bool
+player.numCommands();                 // int — počet příkazů v souboru
+player.stats();                       // Stats{framesRendered, framesExpected}
 ```
+
+**`PixPlayer::Stats`** — statistiky přehrávání od posledního `load()` / `scheduleStart()`:
+
+```cpp
+struct Stats {
+    uint32_t framesRendered;  // snímků skutečně vykreslených
+    uint32_t framesExpected;  // snímků, které měly být vykresleny podle pozice v animaci
+};
+```
+
+`framesExpected` = `loopCount × totalFrames + součet height dokončených příkazů + curCol`. Odvozuje se z pozice v animaci, nikoli z časovače — nezávisí na FreeRTOS jitteru. Vystaveno v `/status` jako `frames_rendered` / `frames_expected`; web UI zobrazuje varování `⚠` pokud `expected > rendered`.
 
 **Chybové kódy `load()`:**
 

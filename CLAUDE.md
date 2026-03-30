@@ -37,9 +37,12 @@ Detaily: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Formát souborů: [docs/
 | `/play` | GET | Spustit animaci (nebo broadcastovat přes ESP-NOW) |
 | `/stop` | GET | Zastavit animaci |
 | `/off` | GET | Blackout — zastavit + zhasnout LED |
-| `/status` | GET | JSON stav (playing, ip, hostname, battery, ap_mode) |
+| `/status` | GET | JSON stav (playing, file, frames_rendered, frames_expected, ip, hostname, battery, ap_mode) |
 | `/peers` | GET | JSON seznam zařízení v síti |
 | `/config` | GET/POST | Číst/zapsat konfiguraci (JSON) |
+| `/brightness` | GET | Nastavit jas LED (`?v=0..100`) |
+| `/tempo` | GET | Nastavit rychlost přehrávání (`?v=10..1000`, 100 = normální) |
+| `/endbehavior` | GET | Přepsat chování konce show (`?v=0..2` nebo `255` = ze souboru) |
 | `/upload` | POST | Nahrát `.pix` soubor (multipart) |
 | `/update` | POST | OTA aktualizace firmware (multipart `.bin`) |
 | `/reboot` | POST | Restart zařízení |
@@ -59,7 +62,7 @@ Detaily: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Formát souborů: [docs/
 - `goto streaming` v `PixPlayer::load()` je záměrné — fallback cesta při selhání PSRAM alokace.
 - Interní pixel formát APA102: `[R, G, B, brightness]`; drátový formát: `[0xE0|bri, B, G, R]`.
 - Debug výpisy: makra `LOG(...)` / `LOGLN(s)` definovaná v `config.h` — aktivní jen při `#define PIX_DEBUG`. `Serial.begin()` se volá jen tehdy.
-- Formátování: `.clang-format` v rootu projektu (Google style, indent 4). Použij `clang-format -i src/*.cpp src/*.h`.
+- Formátování: `.clang-format` v rootu projektu (Google style, indent 4). Spouští se automaticky přes PostToolUse hook po každém Edit/Write — ruční volání není třeba.
 
 ## Build Environment
 
@@ -121,7 +124,9 @@ Pokud LEDky zobrazují animaci a `http://aurax.local` otevře web UI, ověření
 - `loop()` na ESP32 běží jako FreeRTOS task s prioritou 1 — nestačí pro přesné časování nad ~1000 Hz. Řešení: dedikovaný task s vyšší prioritou.
 - `vTaskDelay(pdMS_TO_TICKS(1))` při tick rate 1 kHz uspí na celou 1 ms — při frame intervalu 1 ms zablokuje přehrávání. Řešení: spin-loop pro intervaly < 10 ms.
 - FreeRTOS `loopTask` je sdílený s Arduino frameworkem — jiné knihovny (WiFi, BLE) ho mohou zdržet. Přehrávač musí běžet v separátním tasku.
-- ESP-NOW receive callback nesmí volat `vTaskDelay()` ani LittleFS — způsobí crash. Řešení: `xQueueSendFromISR()` v callbacku, zpracování v samostatném tasku.
+- **⚠ CRASH: ESP-NOW receive callback nesmí volat `vTaskDelay()` ani LittleFS** — způsobí crash. Řešení: `xQueueSendFromISR()` v callbacku, zpracování v samostatném tasku.
 - `wifi_ctrl` task potřebuje stack ≥ 8192 bytů — `handleConfigPost` + `saveConfig` alokují dva `StaticJsonDocument<512>` na stacku.
-- **`xTaskCreatePinnedToCore` pro wifi_ctrl musí být voláno PŘED `player->startTask()`** — pix_player (Core 1, priorita 5) v spin-loop nikdy neuvolní Core 1 nižší prioritě, takže `setup()` by se za `startTask()` nikdy nedostalo. wifi_ctrl je na Core 0, takže mu to nevadí, ale musí být vytvořen dřív.
+- **⚠ HANG: `xTaskCreatePinnedToCore` pro wifi_ctrl musí být voláno PŘED `player->startTask()`** — pix_player (Core 1, priorita 5) v spin-loop nikdy neuvolní Core 1 nižší prioritě, takže `setup()` by se za `startTask()` nikdy nedostalo. wifi_ctrl je na Core 0, takže mu to nevadí, ale musí být vytvořen dřív.
 - **`.pix` soubory ukládají `startTime` jako signed int32** — záporná hodnota znamená "začni před t=0" (tj. okamžitě). Parser čte uint32, takže -2000 ms se stane 4 294 965 296 ms ≈ 49 dní → zařízení vypadá zmrzlé. Řešení: `((int32_t)val < 0) ? 0 : val`.
+- **`handlePlay()` volá `scheduleStart(now + 20 ms)` před `startTask()`** — bez toho se `_nextFrameUs` nastaví na Core 0, ale task nastartuje na Core 1 až za ~100–500 µs; za tu dobu přehrávač vyhodnotí první snímky jako zmeškané a čítač `framesExpected` okamžitě skočí. 20 ms rezerva je dost pro spuštění tasku a zanedbatelná pro uživatele.
+- **`PixPlayer::Stats::framesExpected` se odvozuje z pozice v animaci**, nikoli z časovače — `loopCount × totalFrames + součet dokončených příkazů + curCol`. Předchozí přístup (akumulace `(now − _nextFrameUs) / interval`) dával pokaždé jiný výsledek kvůli FreeRTOS jitteru.
