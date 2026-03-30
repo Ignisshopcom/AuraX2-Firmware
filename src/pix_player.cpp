@@ -205,6 +205,7 @@ int PixPlayer::load(const char* path) {
 
     _loaded         = true;
     _keepFrozen     = false;
+    _inPause        = false;
     _curCmd         = 0;
     _curCol         = 0;
     _framesRendered = 0;
@@ -235,6 +236,7 @@ void PixPlayer::blackout() {
 void PixPlayer::scheduleStart(int64_t atUs) {
     _framesRendered = 0;
     _framesExpected = 0;
+    _inPause        = false;
     _programStartUs = atUs;
     _nextFrameUs    = atUs;
 }
@@ -298,9 +300,14 @@ bool PixPlayer::update() {
     // Convert program startTime back to real time accounting for tempo
     int64_t cmdStartUs = _programStartUs + (int64_t)_cmds[_curCmd].startTime * 1000LL * 100LL / (int64_t)_tempo;
     if (now < cmdStartUs) {
+        if (!_inPause) {
+            _leds.clear();
+            _inPause = true;
+        }
         _nextFrameUs = cmdStartUs;
         return true;
     }
+    _inPause = false;
 
     const Command& cmd = _cmds[_curCmd];
     {

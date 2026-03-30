@@ -98,6 +98,7 @@ private:
     uint16_t         _tempo               = 100;  // playback speed %; 100=normal, 50=half, 200=double
     uint8_t          _endBehaviorOverride = 255;  // 255=from file, 0=Exit, 1=Repeat, 2=Keep
     bool             _keepFrozen          = false; // set when Keep behavior locks last frame
+    bool             _inPause             = false; // true = jsme v pauze, clear() již zavolán
 
     TaskHandle_t     _taskHandle  = nullptr;
     volatile bool    _taskRunning = false;
