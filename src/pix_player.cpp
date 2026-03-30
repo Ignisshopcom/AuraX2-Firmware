@@ -204,11 +204,24 @@ int PixPlayer::load(const char* path) {
     }
 
     _loaded         = true;
+    _keepFrozen     = false;
     _curCmd         = 0;
     _curCol         = 0;
     _programStartUs = esp_timer_get_time();
     _nextFrameUs    = _programStartUs;
     return 0;
+}
+
+void PixPlayer::setBrightness(uint8_t pct) {
+    _leds.setBrightness(pct);
+}
+
+void PixPlayer::setTempo(uint16_t pct) {
+    _tempo = pct < 1 ? 1 : (pct > 1000 ? 1000 : pct);
+}
+
+void PixPlayer::setEndBehavior(uint8_t v) {
+    _endBehaviorOverride = v;
 }
 
 void PixPlayer::blackout() {
@@ -242,25 +255,44 @@ bool PixPlayer::update() {
     int64_t now = esp_timer_get_time();
     if (now < _nextFrameUs) return true;
 
-    int64_t programUs = now - _programStartUs;
+    // Scale elapsed real time by tempo to get effective program time.
+    // tempo=100 → normal; tempo=200 → 2× speed (program advances 2× faster).
+    int64_t programUs = (now - _programStartUs) * (int64_t)_tempo / 100LL;
+
+    if (_keepFrozen) {
+        // Keep behavior: last frame already on LEDs, just park the task
+        _nextFrameUs = now + 100000LL;  // wake up every 100 ms to stay alive
+        return true;
+    }
+
+    PixEndBehavior effectiveBehavior = (_endBehaviorOverride != 255)
+        ? (PixEndBehavior)_endBehaviorOverride
+        : _endBehavior;
 
     // Advance past any commands whose endTime has passed
     while (programUs >= (int64_t)_cmds[_curCmd].endTime * 1000) {
         _curCmd++;
         _curCol = 0;
         if (_curCmd >= _numCmds) {
-            if (_endBehavior == PixEndBehavior::Exit) {
+            if (effectiveBehavior == PixEndBehavior::Exit) {
                 _loaded = false;
+                _leds.clear();
                 return false;
+            } else if (effectiveBehavior == PixEndBehavior::Keep) {
+                _curCmd     = _numCmds - 1;
+                _curCol     = _cmds[_curCmd].height - 1;
+                _keepFrozen = true;
+                break;
+            } else {
+                _curCmd = 0;
+                _programStartUs = now;
+                programUs = 0;
             }
-            _curCmd = 0;
-            _programStartUs = now;
-            programUs = 0;
         }
     }
 
-    // Wait for this command's startTime gap
-    int64_t cmdStartUs = _programStartUs + (int64_t)_cmds[_curCmd].startTime * 1000;
+    // Convert program startTime back to real time accounting for tempo
+    int64_t cmdStartUs = _programStartUs + (int64_t)_cmds[_curCmd].startTime * 1000LL * 100LL / (int64_t)_tempo;
     if (now < cmdStartUs) {
         _nextFrameUs = cmdStartUs;
         return true;
@@ -282,7 +314,7 @@ bool PixPlayer::update() {
         _leds.showColumnDirect(col, cmd.width);
     }
 
-    _nextFrameUs = now + 1000000LL / (int64_t)cmd.frequency;
+    _nextFrameUs = now + 1000000LL * 100LL / ((int64_t)cmd.frequency * (int64_t)_tempo);
 
     if (++_curCol >= (int)cmd.height) {
         _curCol = 0;  // loop frames within the time window

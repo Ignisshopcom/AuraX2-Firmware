@@ -65,6 +65,10 @@ void WS281x::waitForShow() {
     _txInFlight = false;
 }
 
+void WS281x::setBrightness(uint8_t pct) {
+    _globalBrightness = pct > 100 ? 100 : pct;
+}
+
 // Encode .pix column data [0xE0|bri, B, G, R] × count into RMT items.
 // Output: GRB bit stream, MSB first (WS2812B wire order).
 void WS281x::encodePixels(rmt_item32_t* dst, const uint8_t* pixData, uint16_t count) {
@@ -75,9 +79,14 @@ void WS281x::encodePixels(rmt_item32_t* dst, const uint8_t* pixData, uint16_t co
         uint8_t g   = p[2];
         uint8_t r   = p[3];
 
-        // Apply APA102-style brightness to RGB.
-        // bri=0 znamená "brightness není použit" (WS281x soubory) → plný jas.
-        if (bri > 0 && bri < 31) {
+        if (_globalBrightness > 0) {
+            // Global override: scale RGB by percentage, ignore per-pixel bri
+            r = (uint8_t)((r * _globalBrightness) / 100);
+            g = (uint8_t)((g * _globalBrightness) / 100);
+            b = (uint8_t)((b * _globalBrightness) / 100);
+        } else if (bri > 0 && bri < 31) {
+            // Per-pixel APA102-style brightness from .pix file
+            // bri=0 znamená "brightness není použit" (WS281x soubory) → plný jas.
             r = (uint8_t)((r * bri) / 31);
             g = (uint8_t)((g * bri) / 31);
             b = (uint8_t)((b * bri) / 31);

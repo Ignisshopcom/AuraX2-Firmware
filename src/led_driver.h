@@ -11,4 +11,8 @@ public:
     // count: number of LEDs in pixData (clamped to numLeds internally).
     virtual void showColumnDirect(const uint8_t* pixData, uint16_t count) = 0;
     virtual void clear() = 0;  // turn off all LEDs immediately
+
+    // Global brightness override: 0 = use per-pixel brightness from .pix file (default),
+    // 1–100 = override all pixels to this percentage.
+    virtual void setBrightness(uint8_t pct) { (void)pct; }
 };

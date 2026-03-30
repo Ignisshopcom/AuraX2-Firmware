@@ -41,6 +41,27 @@ static const char INDEX_HTML[] PROGMEM = R"html(
   <button class="stop" onclick="fetch('/off').then(refresh)">&#9866; Off</button>
 </div>
 
+<div style="margin:12px 0;display:flex;align-items:center;gap:8px">
+  <span style="font-size:0.9rem;white-space:nowrap">&#9728; Jas</span>
+  <input type="range" id="bri" min="0" max="100" style="flex:1" oninput="setBri(this.value)">
+  <span id="briVal" style="font-size:0.9rem;min-width:72px;text-align:right">PIX soubor</span>
+</div>
+<div style="margin:12px 0;display:flex;align-items:center;gap:8px">
+  <span style="font-size:0.9rem;white-space:nowrap">&#9654;&#9654; Tempo</span>
+  <input type="number" id="tempo" min="10" max="500" value="100" style="width:72px;padding:4px;font-size:1rem" onchange="setTempo(this.value)">
+  <span style="font-size:0.9rem;color:#555">%</span>
+</div>
+
+<div style="margin:12px 0;display:flex;align-items:center;gap:8px">
+  <span style="font-size:0.9rem;white-space:nowrap">&#8635; Konec show</span>
+  <select id="endBeh" onchange="setEndBeh(this.value)" style="padding:4px;font-size:1rem">
+    <option value="255">Z souboru</option>
+    <option value="1">Loop</option>
+    <option value="2">Keep</option>
+    <option value="0">Off</option>
+  </select>
+</div>
+
 <div class="upload-area">
   <p>Nahrát .pix soubor</p>
   <input type="file" id="file" accept=".pix">
@@ -57,14 +78,14 @@ static const char INDEX_HTML[] PROGMEM = R"html(
   <form id="cfg">
   <div class="cfg-grid">
     <label>LED typ
-      <select name="ledType">
-        <option value="0">APA102</option>
-        <option value="1">WS281x</option>
+      <select name="ledType" onchange="updClk(this.value)">
+        <option value="1">APA102</option>
+        <option value="0">WS281x</option>
       </select>
     </label>
     <label>Počet LED <input type="number" name="numLeds" min="1" max="1000"></label>
     <label>Data pin <input type="number" name="dataPin" min="0" max="48"></label>
-    <label>CLK pin <input type="number" name="clkPin" min="0" max="48"></label>
+    <label id="clkLabel">CLK pin <input type="number" name="clkPin" min="0" max="48"></label>
     <label style="grid-column:1/-1">PIX soubor <input type="text" name="pixFile" style="width:100%;box-sizing:border-box"></label>
     <label>WiFi SSID <input type="text" name="ssid"></label>
     <label>WiFi heslo <input type="password" name="password"></label>
@@ -84,6 +105,21 @@ static const char INDEX_HTML[] PROGMEM = R"html(
 </details>
 
 <script>
+function updClk(v) {
+  document.getElementById('clkLabel').style.display = (parseInt(v) === 1) ? '' : 'none';
+}
+function setEndBeh(v) {
+  fetch('/endbehavior?v=' + v);
+}
+function setTempo(v) {
+  v = Math.max(10, Math.min(500, parseInt(v) || 100));
+  document.getElementById('tempo').value = v;
+  fetch('/tempo?v=' + v);
+}
+function setBri(v) {
+  document.getElementById('briVal').textContent = +v === 0 ? 'PIX soubor' : v + '%';
+  fetch('/brightness?v=' + v);
+}
 function refresh() {
   fetch('/status').then(r=>r.json()).then(d=>{
     document.getElementById('status').innerHTML =
@@ -115,6 +151,13 @@ function loadCfg() {
   fetch('/config').then(r=>r.json()).then(d=>{
     const f = document.getElementById('cfg');
     Object.keys(d).forEach(k=>{ if(f[k]) f[k].value=d[k]; });
+    updClk(d.ledType);
+    const bri = d.brightness || 0;
+    document.getElementById('bri').value = bri;
+    setBri(bri);
+    const t = d.tempo || 100;
+    document.getElementById('tempo').value = t;
+    document.getElementById('endBeh').value = (d.endBehavior !== undefined) ? d.endBehavior : 255;
   });
 }
 function saveCfg() {
@@ -123,7 +166,10 @@ function saveCfg() {
     ledType: parseInt(f.ledType.value), numLeds: parseInt(f.numLeds.value),
     dataPin: parseInt(f.dataPin.value), clkPin:  parseInt(f.clkPin.value),
     pixFile: f.pixFile.value, ssid: f.ssid.value, password: f.password.value,
-    hostname: f.hostname.value
+    hostname: f.hostname.value,
+    brightness:   parseInt(document.getElementById('bri').value),
+    tempo:        parseInt(document.getElementById('tempo').value),
+    endBehavior:  parseInt(document.getElementById('endBeh').value)
   };
   fetch('/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(d)})
     .then(r=>r.text()).then(t=>{document.getElementById('cfgMsg').textContent=t;});
@@ -239,6 +285,29 @@ bool WifiControl::begin(uint32_t timeoutMs) {
         }
     );
 
+    _server.on("/endbehavior", HTTP_GET, [this]() {
+        int v = _server.arg("v").toInt();
+        if (v < 0 || v > 2) v = 255;  // anything out of range → from file
+        _cfg.endBehavior = (uint8_t)v;
+        _player.setEndBehavior(_cfg.endBehavior);
+        _server.send(200, "text/plain", "OK");
+    });
+    _server.on("/tempo", HTTP_GET, [this]() {
+        int v = _server.arg("v").toInt();
+        if (v < 1)   v = 1;
+        if (v > 1000) v = 1000;
+        _cfg.tempo = (uint16_t)v;
+        _player.setTempo(_cfg.tempo);
+        _server.send(200, "text/plain", "OK");
+    });
+    _server.on("/brightness", HTTP_GET, [this]() {
+        int v = _server.arg("v").toInt();
+        if (v < 0) v = 0;
+        if (v > 100) v = 100;
+        _cfg.brightness = (uint8_t)v;
+        _player.setBrightness(_cfg.brightness);
+        _server.send(200, "text/plain", "OK");
+    });
     _server.on("/peers",  HTTP_GET,  [this]() { handlePeers(); });
     _server.on("/update", HTTP_POST,
         [this]() {
@@ -333,7 +402,10 @@ void WifiControl::handleConfigGet() {
     doc["clkPin"]   = _cfg.clkPin;
     doc["ssid"]     = _cfg.ssid;
     doc["password"] = _cfg.password;
-    doc["pixFile"]  = _cfg.pixFile;
+    doc["pixFile"]    = _cfg.pixFile;
+    doc["brightness"] = _cfg.brightness;
+    doc["tempo"]       = _cfg.tempo;
+    doc["endBehavior"] = _cfg.endBehavior;
     String out;
     serializeJson(doc, out);
     _server.send(200, "application/json", out);
@@ -353,6 +425,12 @@ void WifiControl::handleConfigPost() {
     strlcpy(_cfg.password, doc["password"] | _cfg.password, sizeof(_cfg.password));
     strlcpy(_cfg.pixFile,  doc["pixFile"]  | _cfg.pixFile,  sizeof(_cfg.pixFile));
     strlcpy(_cfg.hostname, doc["hostname"] | _cfg.hostname, sizeof(_cfg.hostname));
+    _cfg.brightness = doc["brightness"] | _cfg.brightness;
+    _player.setBrightness(_cfg.brightness);
+    _cfg.tempo        = doc["tempo"]        | _cfg.tempo;
+    _cfg.endBehavior  = doc["endBehavior"]  | _cfg.endBehavior;
+    _player.setTempo(_cfg.tempo);
+    _player.setEndBehavior(_cfg.endBehavior);
 
     if (saveConfig(_cfg)) {
         _server.send(200, "text/plain", "Uloženo — reboot pro aktivaci");

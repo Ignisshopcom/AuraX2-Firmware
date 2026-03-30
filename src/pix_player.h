@@ -33,6 +33,11 @@ public:
     // After load(), delay actual playback start to an absolute esp_timer time.
     void scheduleStart(int64_t atUs);
     void blackout();   // stop playback and turn off all LEDs
+    void setBrightness(uint8_t pct);   // delegates to ILedDriver::setBrightness()
+    void setTempo(uint16_t pct);       // 100 = normal, 50 = half speed, 200 = double speed
+    // Override end-of-show behavior. 255 = use value from .pix file (default).
+    // 0 = Exit (blackout), 1 = Repeat (loop), 2 = Keep last frame.
+    void setEndBehavior(uint8_t v);
 
     bool isLoaded()     const { return _loaded; }
     int  numCommands()  const { return _numCmds; }
@@ -80,6 +85,10 @@ private:
     int     _curCol         = 0;
     int64_t _nextFrameUs    = 0;
     int64_t _programStartUs = 0;  // esp_timer time when program playback began
+
+    uint16_t         _tempo               = 100;  // playback speed %; 100=normal, 50=half, 200=double
+    uint8_t          _endBehaviorOverride = 255;  // 255=from file, 0=Exit, 1=Repeat, 2=Keep
+    bool             _keepFrozen          = false; // set when Keep behavior locks last frame
 
     TaskHandle_t     _taskHandle  = nullptr;
     volatile bool    _taskRunning = false;

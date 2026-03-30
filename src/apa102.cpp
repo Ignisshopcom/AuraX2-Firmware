@@ -137,6 +137,10 @@ void APA102::show() {
     waitForShow();
 }
 
+void APA102::setBrightness(uint8_t pct) {
+    _globalBrightness = pct > 100 ? 100 : pct;
+}
+
 void APA102::showColumnDirect(const uint8_t* pixData, uint16_t count) {
     waitForShow();
 
@@ -144,9 +148,16 @@ void APA102::showColumnDirect(const uint8_t* pixData, uint16_t count) {
     uint8_t* dst = _txBuf[buf] + 4;  // skip start frame
     uint16_t n = (count < _numLeds) ? count : _numLeds;
 
-    // bri=0 in .pix means "no brightness scaling" (WS281x convention) — map to APA102 full brightness
     for (uint16_t i = 0; i < n; i++, pixData += 4, dst += 4) {
-        dst[0] = (pixData[0] == 0xE0) ? 0xE6 : pixData[0];  // bri=0 → 20% (6/31)
+        if (_globalBrightness > 0) {
+            // Global override: map pct 1–100 to APA102 nibble 1–31
+            uint8_t nibble = (uint8_t)((_globalBrightness * 31u + 50u) / 100u);
+            if (nibble == 0) nibble = 1;
+            dst[0] = 0xE0 | nibble;
+        } else {
+            // Passthrough — bri=0 (0xE0) means no scaling in .pix files → map to 20% (6/31)
+            dst[0] = (pixData[0] == 0xE0) ? 0xE6 : pixData[0];
+        }
         dst[1] = pixData[1];
         dst[2] = pixData[2];
         dst[3] = pixData[3];

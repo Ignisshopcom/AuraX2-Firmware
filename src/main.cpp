@@ -43,7 +43,11 @@ void setup() {
         leds = d;
     }
 
+    leds->setBrightness(cfg.brightness);
+
     player   = new PixPlayer(*leds);
+    player->setTempo(cfg.tempo);
+    player->setEndBehavior(cfg.endBehavior);
     syncCtrl = new SyncControl(*player);
     wifi     = new WifiControl(*player, cfg, syncCtrl);
 

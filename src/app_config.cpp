@@ -6,9 +6,11 @@
 
 static AppConfig defaults() {
     AppConfig cfg = {};
+    cfg.tempo        = 100;
+    cfg.endBehavior  = 255;
     cfg.ledType = LED_TYPE;
     cfg.numLeds = NUM_LEDS;
-    cfg.dataPin = (LED_TYPE == 0) ? LED_DATA_PIN : WS_DATA_PIN;
+    cfg.dataPin = (LED_TYPE == LED_TYPE_APA102) ? LED_DATA_PIN : WS_DATA_PIN;
     cfg.clkPin  = LED_CLK_PIN;
     strncpy(cfg.ssid,     WIFI_SSID,     sizeof(cfg.ssid)     - 1);
     strncpy(cfg.password, WIFI_PASSWORD, sizeof(cfg.password) - 1);
@@ -31,6 +33,9 @@ AppConfig loadConfig() {
         strlcpy(cfg.password, doc["password"] | cfg.password, sizeof(cfg.password));
         strlcpy(cfg.pixFile,  doc["pixFile"]  | cfg.pixFile,  sizeof(cfg.pixFile));
         strlcpy(cfg.hostname, doc["hostname"] | "",            sizeof(cfg.hostname));
+        cfg.brightness = doc["brightness"] | cfg.brightness;
+        cfg.tempo       = doc["tempo"]       | cfg.tempo;
+        cfg.endBehavior = doc["endBehavior"] | cfg.endBehavior;
     }
     f.close();
     if (strlen(cfg.hostname) == 0)
@@ -47,7 +52,10 @@ bool saveConfig(const AppConfig& cfg) {
     doc["ssid"]     = cfg.ssid;
     doc["password"] = cfg.password;
     doc["pixFile"]  = cfg.pixFile;
-    doc["hostname"] = cfg.hostname;
+    doc["hostname"]   = cfg.hostname;
+    doc["brightness"] = cfg.brightness;
+    doc["tempo"]       = cfg.tempo;
+    doc["endBehavior"] = cfg.endBehavior;
 
     File f = LittleFS.open(CFG_FILE, "w");
     if (!f) return false;
