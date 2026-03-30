@@ -121,6 +121,8 @@ Parsuje `.pix` soubory z LittleFS a řídí LED pásek přes `ILedDriver`.
 
 **Multi-command:** program může obsahovat více `picture_command` záznamů; přehrávač je postupně prochází. Po posledním se chování řídí `progEndBehavior` (Repeat / Keep / Exit).
 
+**Pauzy:** mezera mezi `endTime` jednoho příkazu a `startTime` dalšího = pauza. Přehrávač při vstupu do pauzy zavolá `leds.clear()` (LEDky zhasnou) a čeká do začátku dalšího příkazu. Clear se volá jen jednou — flag `_inPause` zabraňuje opakování na každém ticku.
+
 **Provozní mód — FreeRTOS task (doporučeno):**
 Přehrávač běží jako dedikovaný task na core 1 s prioritou 5. `loop()` parkuje na `vTaskDelay(portMAX_DELAY)`. Core 0 zůstává volný pro WiFi a jiné úlohy.
 
