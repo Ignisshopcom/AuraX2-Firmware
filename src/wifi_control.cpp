@@ -120,6 +120,11 @@ function setBri(v) {
   document.getElementById('briVal').textContent = +v === 0 ? 'PIX soubor' : v + '%';
   fetch('/brightness?v=' + v);
 }
+function rssiBar(dbm) {
+  if (!dbm) return '';
+  var s = dbm>-55?5:dbm>-65?4:dbm>-72?3:dbm>-80?2:1;
+  return ' &nbsp;|&nbsp; &#128246; '+'█'.repeat(s)+'░'.repeat(5-s)+' ('+dbm+' dBm)';
+}
 function refresh() {
   fetch('/status').then(r=>r.json()).then(d=>{
     document.getElementById('status').innerHTML =
@@ -131,7 +136,7 @@ function refresh() {
       +(d.hostname?' &nbsp;|&nbsp; '+d.hostname+'.local':'')
       +(d.ap_mode?' <span style="color:#a60">(Windows: použij IP odkaz)</span>':'')
       +' &nbsp;|&nbsp; &#128267; '+d.battery_pct+'% ('+d.battery_mv+' mV)'
-      +(!d.ap_mode&&d.rssi?' &nbsp;|&nbsp; &#128246; '+d.rssi+' dBm':'');
+      +(!d.ap_mode?rssiBar(d.rssi):'');
   });
   fetch('/peers').then(r=>r.json()).then(ps=>{
     document.getElementById('peers').innerHTML = ps.length
