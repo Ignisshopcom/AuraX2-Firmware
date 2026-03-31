@@ -9,9 +9,10 @@ public:
     uint32_t intervalUs(const EffectParams& p) const override;
 
 private:
-    uint16_t _numLeds  = 0;
-    int      _pos      = 0;    // pozice začátku tečky
-    int      _dir      = 1;    // směr pohybu: +1 nebo -1
-    uint8_t  _colorIdx = 0;    // index aktuální barvy v paletě
-    uint8_t* _buf      = nullptr;
+    uint16_t _numLeds = 0;
+    uint16_t _pos     = 0;    // pozice začátku oblouku
+    uint16_t _width   = 2;    // aktuální šířka oblouku
+    uint8_t  _phase   = 0;    // 0=expanze, 1=kontrakce
+    uint32_t _call    = 0;    // čítač volání pro _call%3 timing
+    uint8_t* _buf     = nullptr;
 };

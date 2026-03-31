@@ -74,7 +74,7 @@ static const char INDEX_HTML[] PROGMEM = R"html(
     <label>Rychlost %
       <input type="number" id="efxSpeed" value="100" min="10" max="1000" style="width:70px">
     </label>
-    <label>Velikost te&#269;ky
+    <label>&#352;&#237;&#345;ka
       <input type="number" id="efxDot" value="3" min="1" max="20" style="width:60px">
     </label>
   </div>
