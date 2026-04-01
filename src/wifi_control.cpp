@@ -505,7 +505,7 @@ void WifiControl::handleConfigGet() {
 }
 
 void WifiControl::handleEffectStart() {
-    StaticJsonDocument<256> doc;
+    StaticJsonDocument<512> doc;
     if (deserializeJson(doc, _server.arg("plain")) != DeserializationError::Ok) {
         _server.send(400, "text/plain", "JSON error");
         return;
@@ -525,6 +525,10 @@ void WifiControl::handleEffectStart() {
     }
     if (p.paletteSize == 0) { p.palette[0] = {255, 0, 0}; p.paletteSize = 1; }
 
+    // Zastavit přehrávač před zápisem do LittleFS — vyhnout se souběžnému přístupu
+    _player.stopTask();
+    _player.unload();
+
     // Uložit do konfigurace
     _cfg.effectId      = p.effectId;
     _cfg.effectSpeed   = p.speed;
@@ -537,8 +541,6 @@ void WifiControl::handleEffectStart() {
     }
     saveConfig(_cfg);
 
-    _player.stopTask();
-    _player.unload();
     _effectPlayer.start(p);
     _server.send(200, "text/plain", "OK");
 }
