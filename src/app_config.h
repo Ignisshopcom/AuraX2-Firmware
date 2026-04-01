@@ -23,6 +23,9 @@ struct AppConfig {
     uint8_t  paletteR[4];
     uint8_t  paletteG[4];
     uint8_t  paletteB[4];
+    // Current limiting
+    uint16_t mALimit;   // max mA total draw; 0 = no limit
+    uint16_t mAPerLed;  // mA per LED at full white (R+G+B=255); default 60
 };
 
 // Load from /config.json — falls back to compile-time defaults if missing

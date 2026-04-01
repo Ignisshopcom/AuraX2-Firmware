@@ -46,13 +46,14 @@ void setup() {
     }
 
     leds->setBrightness(cfg.brightness);
+    leds->setCurrentLimit(cfg.mALimit, cfg.mAPerLed);
 
     player       = new PixPlayer(*leds);
     player->setTempo(cfg.tempo);
     player->setEndBehavior(cfg.endBehavior);
     effectPlayer = new EffectPlayer(*leds);
     syncCtrl     = new SyncControl(*player);
-    wifi         = new WifiControl(*player, *effectPlayer, cfg, syncCtrl);
+    wifi         = new WifiControl(*player, *effectPlayer, *leds, cfg, syncCtrl);
 
     // wifi_ctrl musí být vytvořen PŘED player->startTask() — pix_player běží
     // na Core 1 s prioritou 5 a při spin-loop blokuje loopTask (taky Core 1,

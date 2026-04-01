@@ -115,6 +115,8 @@ static const char INDEX_HTML[] PROGMEM = R"html(
     <label>WiFi SSID <input type="text" name="ssid"></label>
     <label>WiFi heslo <input type="password" name="password"></label>
     <label style="grid-column:1/-1">Hostname (.local) <input type="text" name="hostname" pattern="[a-z0-9-]+" placeholder="aurax-xxxx" style="width:100%;box-sizing:border-box"></label>
+    <label>Limit mA (0=off) <input type="number" id="cfgMALimit" name="mALimit" min="0" max="65000" step="100"></label>
+    <label>mA per LED <input type="number" id="cfgMAPerLed" name="mAPerLed" min="1" max="200"></label>
   </div>
   <button type="button" class="save" onclick="saveCfg()">Uložit</button>
   <button type="button" class="reboot" onclick="reboot()">Reboot</button>
@@ -243,6 +245,8 @@ function saveCfg() {
     effectId:      parseInt(document.getElementById('efxId').value),
     effectSpeed:   parseInt(document.getElementById('efxSpeed').value),
     effectDotSize: parseInt(document.getElementById('efxDot').value),
+    mALimit:  parseInt(f.mALimit.value)  || 0,
+    mAPerLed: parseInt(f.mAPerLed.value) || 60,
     paletteSize: pal.length,
     paletteR: pal.map(function(c){return c.r;}),
     paletteG: pal.map(function(c){return c.g;}),
@@ -273,8 +277,8 @@ refresh(); loadCfg();
 
 // ── WifiControl ───────────────────────────────────────────────────────────────
 
-WifiControl::WifiControl(PixPlayer& player, EffectPlayer& effectPlayer, AppConfig& cfg, SyncControl* sync)
-    : _player(player), _effectPlayer(effectPlayer), _cfg(cfg), _sync(sync) {}
+WifiControl::WifiControl(PixPlayer& player, EffectPlayer& effectPlayer, ILedDriver& leds, AppConfig& cfg, SyncControl* sync)
+    : _player(player), _effectPlayer(effectPlayer), _leds(leds), _cfg(cfg), _sync(sync) {}
 
 bool WifiControl::begin(uint32_t timeoutMs) {
     if (strlen(_cfg.ssid) == 0) {
@@ -495,6 +499,8 @@ void WifiControl::handleConfigGet() {
     doc["effectSpeed"]   = _cfg.effectSpeed;
     doc["effectDotSize"] = _cfg.effectDotSize;
     doc["paletteSize"]   = _cfg.paletteSize;
+    doc["mALimit"]  = _cfg.mALimit;
+    doc["mAPerLed"] = _cfg.mAPerLed;
     JsonArray pR = doc.createNestedArray("paletteR");
     JsonArray pG = doc.createNestedArray("paletteG");
     JsonArray pB = doc.createNestedArray("paletteB");
@@ -574,6 +580,9 @@ void WifiControl::handleConfigPost() {
     _cfg.effectSpeed   = doc["effectSpeed"]   | _cfg.effectSpeed;
     _cfg.effectDotSize = doc["effectDotSize"] | _cfg.effectDotSize;
     _cfg.paletteSize   = doc["paletteSize"]   | _cfg.paletteSize;
+    _cfg.mALimit  = doc["mALimit"]  | _cfg.mALimit;
+    _cfg.mAPerLed = doc["mAPerLed"] | _cfg.mAPerLed;
+    _leds.setCurrentLimit(_cfg.mALimit, _cfg.mAPerLed);
     JsonArray pR = doc["paletteR"], pG = doc["paletteG"], pB = doc["paletteB"];
     for (int i = 0; i < 4; i++) {
         if (i < (int)pR.size()) _cfg.paletteR[i] = pR[i];

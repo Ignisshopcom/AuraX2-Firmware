@@ -26,13 +26,16 @@ public:
     // Waits for the *previous* transfer at the start (CPU/RMT overlap).
     void showColumnDirect(const uint8_t* pixData, uint16_t count) override;
     void setBrightness(uint8_t pct) override;
+    void setCurrentLimit(uint16_t mALimit, uint16_t mAPerLed) override;
     void clear() override;
     uint16_t numLeds() const override { return _numLeds; }
 
 private:
-    void encodePixels(rmt_item32_t* dst, const uint8_t* pixData, uint16_t count);
+    void encodePixels(rmt_item32_t* dst, const uint8_t* pixData, uint16_t count, uint16_t scale256 = 256);
 
     uint8_t       _globalBrightness = 0; // 0 = from .pix file, 1–100 = override %
+    uint16_t      _mALimit  = 0;         // 0 = no limit
+    uint16_t      _mAPerLed = 60;
     uint8_t       _dataPin;
     uint16_t      _numLeds;
     rmt_channel_t _channel;

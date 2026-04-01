@@ -141,12 +141,38 @@ void APA102::setBrightness(uint8_t pct) {
     _globalBrightness = pct > 100 ? 100 : pct;
 }
 
+void APA102::setCurrentLimit(uint16_t mALimit, uint16_t mAPerLed) {
+    _mALimit  = mALimit;
+    _mAPerLed = mAPerLed > 0 ? mAPerLed : 1;
+}
+
 void APA102::showColumnDirect(const uint8_t* pixData, uint16_t count) {
     waitForShow();
 
     int buf = _curBuf;
     uint8_t* dst = _txBuf[buf] + 4;  // skip start frame
     uint16_t n = (count < _numLeds) ? count : _numLeds;
+
+    // Current limiting: pre-pass to estimate draw, compute scale factor
+    uint16_t scale256 = 256;  // Q8: 256 = no scaling
+    if (_mALimit > 0) {
+        uint32_t totalRGB = 0;
+        for (uint16_t i = 0; i < n; i++) {
+            const uint8_t* p = pixData + i * 4;
+            uint8_t nibble;
+            if (_globalBrightness > 0) {
+                nibble = (uint8_t)((_globalBrightness * 31u + 50u) / 100u);
+                if (nibble == 0) nibble = 1;
+            } else {
+                nibble = (p[0] == 0xE0) ? 6u : (p[0] & 0x1Fu);
+            }
+            totalRGB += ((uint32_t)p[3] + p[2] + p[1]) * nibble / 31u;
+        }
+        uint32_t estMA = n + totalRGB * _mAPerLed / 765u;
+        if (estMA > _mALimit) {
+            scale256 = (uint16_t)((uint32_t)_mALimit * 256u / estMA);
+        }
+    }
 
     for (uint16_t i = 0; i < n; i++, pixData += 4, dst += 4) {
         if (_globalBrightness > 0) {
@@ -158,9 +184,9 @@ void APA102::showColumnDirect(const uint8_t* pixData, uint16_t count) {
             // Passthrough — bri=0 (0xE0) means no scaling in .pix files → map to 20% (6/31)
             dst[0] = (pixData[0] == 0xE0) ? 0xE6 : pixData[0];
         }
-        dst[1] = pixData[1];
-        dst[2] = pixData[2];
-        dst[3] = pixData[3];
+        dst[1] = (uint8_t)(pixData[1] * scale256 >> 8);
+        dst[2] = (uint8_t)(pixData[2] * scale256 >> 8);
+        dst[3] = (uint8_t)(pixData[3] * scale256 >> 8);
     }
     if (n < _numLeds)
         memset(dst, 0, (_numLeds - n) * 4);

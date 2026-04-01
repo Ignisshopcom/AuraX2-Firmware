@@ -34,6 +34,7 @@ public:
     // count: number of LEDs in pixData (clamped to numLeds).
     void showColumnDirect(const uint8_t* pixData, uint16_t count) override;
     void setBrightness(uint8_t pct) override;
+    void setCurrentLimit(uint16_t mALimit, uint16_t mAPerLed) override;
 
     uint16_t numLeds() const override { return _numLeds; }
 
@@ -46,6 +47,8 @@ private:
     spi_device_handle_t _spi = nullptr;
 
     uint8_t  _globalBrightness = 0; // 0 = from .pix file, 1–100 = override %
+    uint16_t _mALimit  = 0;         // 0 = no limit
+    uint16_t _mAPerLed = 60;
     uint8_t* _pixels  = nullptr;   // [r, g, b, brightness] per pixel, internal DRAM
     uint8_t* _txBuf[2] = {};       // double DMA buffers
     spi_transaction_t _trans[2]  = {};

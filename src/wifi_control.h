@@ -16,7 +16,7 @@ static constexpr uint32_t ANNOUNCE_INTERVAL_MS = 30000;
 
 class WifiControl {
 public:
-    WifiControl(PixPlayer& player, EffectPlayer& effectPlayer, AppConfig& cfg, SyncControl* sync = nullptr);
+    WifiControl(PixPlayer& player, EffectPlayer& effectPlayer, ILedDriver& leds, AppConfig& cfg, SyncControl* sync = nullptr);
 
     // Connect to WiFi and start HTTP server. Returns false on timeout.
     bool begin(uint32_t timeoutMs = 10000);
@@ -49,6 +49,7 @@ private:
 
     PixPlayer&    _player;
     EffectPlayer& _effectPlayer;
+    ILedDriver&   _leds;
     AppConfig&    _cfg;
     SyncControl* _sync;
     WebServer    _server{80};

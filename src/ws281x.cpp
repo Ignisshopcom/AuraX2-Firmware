@@ -69,9 +69,15 @@ void WS281x::setBrightness(uint8_t pct) {
     _globalBrightness = pct > 100 ? 100 : pct;
 }
 
+void WS281x::setCurrentLimit(uint16_t mALimit, uint16_t mAPerLed) {
+    _mALimit  = mALimit;
+    _mAPerLed = mAPerLed > 0 ? mAPerLed : 1;
+}
+
 // Encode .pix column data [0xE0|bri, B, G, R] × count into RMT items.
 // Output: GRB bit stream, MSB first (WS2812B wire order).
-void WS281x::encodePixels(rmt_item32_t* dst, const uint8_t* pixData, uint16_t count) {
+// scale256: Q8 current-limit scale factor (256 = no limiting).
+void WS281x::encodePixels(rmt_item32_t* dst, const uint8_t* pixData, uint16_t count, uint16_t scale256) {
     for (uint16_t i = 0; i < count; i++) {
         const uint8_t* p = pixData + i * 4;
         uint8_t bri = p[0] & 0x1F;
@@ -92,6 +98,12 @@ void WS281x::encodePixels(rmt_item32_t* dst, const uint8_t* pixData, uint16_t co
             b = (uint8_t)((b * bri) / 31);
         }
 
+        if (scale256 < 256) {
+            r = (uint8_t)(r * scale256 >> 8);
+            g = (uint8_t)(g * scale256 >> 8);
+            b = (uint8_t)(b * scale256 >> 8);
+        }
+
         // Emit 24 bits: G7..G0, R7..R0, B7..B0 (WS2812B GRB order)
         uint32_t grb = ((uint32_t)g << 16) | ((uint32_t)r << 8) | b;
         for (int bit = 23; bit >= 0; bit--) {
@@ -107,7 +119,32 @@ void WS281x::showColumnDirect(const uint8_t* pixData, uint16_t count) {
     int buf = _curBuf;
     uint16_t n = count < _numLeds ? count : _numLeds;
 
-    encodePixels(_rmtBuf[buf], pixData, n);
+    // Current limiting: pre-pass to estimate draw, compute scale factor
+    uint16_t scale256 = 256;
+    if (_mALimit > 0) {
+        uint32_t totalRGB = 0;
+        for (uint16_t i = 0; i < n; i++) {
+            const uint8_t* p = pixData + i * 4;
+            uint8_t bri = p[0] & 0x1F;
+            uint32_t r = p[3], g = p[2], b = p[1];
+            if (_globalBrightness > 0) {
+                r = r * _globalBrightness / 100u;
+                g = g * _globalBrightness / 100u;
+                b = b * _globalBrightness / 100u;
+            } else if (bri > 0 && bri < 31) {
+                r = r * bri / 31u;
+                g = g * bri / 31u;
+                b = b * bri / 31u;
+            }
+            totalRGB += r + g + b;
+        }
+        uint32_t estMA = n + totalRGB * _mAPerLed / 765u;
+        if (estMA > _mALimit) {
+            scale256 = (uint16_t)((uint32_t)_mALimit * 256u / estMA);
+        }
+    }
+
+    encodePixels(_rmtBuf[buf], pixData, n, scale256);
 
     // Fill remaining LEDs with off (all-zero bits)
     if (n < _numLeds) {

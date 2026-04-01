@@ -13,6 +13,7 @@ static AppConfig defaults() {
     cfg.effectDotSize = 3;
     cfg.paletteSize   = 1;
     cfg.paletteR[0]   = 255;
+    cfg.mAPerLed      = 60;
     cfg.ledType = LED_TYPE;
     cfg.numLeds = NUM_LEDS;
     cfg.dataPin = (LED_TYPE == LED_TYPE_APA102) ? LED_DATA_PIN : WS_DATA_PIN;
@@ -45,6 +46,8 @@ AppConfig loadConfig() {
         cfg.effectSpeed   = doc["effectSpeed"]   | cfg.effectSpeed;
         cfg.effectDotSize = doc["effectDotSize"] | cfg.effectDotSize;
         cfg.paletteSize   = doc["paletteSize"]   | cfg.paletteSize;
+        cfg.mALimit   = doc["mALimit"]   | cfg.mALimit;
+        cfg.mAPerLed  = doc["mAPerLed"]  | cfg.mAPerLed;
         JsonArray pR = doc["paletteR"], pG = doc["paletteG"], pB = doc["paletteB"];
         for (int i = 0; i < 4; i++) {
             if (i < (int)pR.size()) cfg.paletteR[i] = pR[i];
@@ -75,6 +78,8 @@ bool saveConfig(const AppConfig& cfg) {
     doc["effectSpeed"]   = cfg.effectSpeed;
     doc["effectDotSize"] = cfg.effectDotSize;
     doc["paletteSize"]   = cfg.paletteSize;
+    doc["mALimit"]  = cfg.mALimit;
+    doc["mAPerLed"] = cfg.mAPerLed;
     JsonArray pR = doc.createNestedArray("paletteR");
     JsonArray pG = doc.createNestedArray("paletteG");
     JsonArray pB = doc.createNestedArray("paletteB");
