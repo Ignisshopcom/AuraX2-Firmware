@@ -47,6 +47,7 @@ private:
         IPAddress ip;
         uint32_t  lastSeenMs;
         uint8_t   batPct;
+        int8_t    rssi;
     };
 
     PixPlayer&    _player;
