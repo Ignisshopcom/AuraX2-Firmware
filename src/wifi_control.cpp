@@ -670,16 +670,16 @@ void WifiControl::receivePeers() {
     char* batPctStr = strtok(nullptr, " ");
     if (!cmd || strcmp(cmd, "AURAX") != 0 || !host || !ip) return;
 
+    // Ignorovat vlastní broadcast — kontrola vždy podle IP, nezávisle na hostname
+    IPAddress senderIp;
+    senderIp.fromString(ip);
+    if (senderIp == WiFi.localIP()) return;
+
     uint16_t senderChipId = chipHex ? (uint16_t)strtoul(chipHex, nullptr, 16) : 0;
     uint8_t  senderBatPct = batPctStr ? (uint8_t)atoi(batPctStr) : 0;
     uint16_t myChipId     = (uint16_t)ESP.getEfuseMac();
 
     if (strcmp(host, _cfg.hostname) == 0) {
-        IPAddress senderIp;
-        senderIp.fromString(ip);
-        if (senderIp == WiFi.localIP()) {
-            return;  // vlastní broadcast — ignorovat
-        }
         // Konflikt: přejmenuje se zařízení s vyšším chip ID (deterministické)
         if (myChipId < senderChipId) {
             announce();  // já mám nižší ID, vyhrávám — připomenutím donutím druhého k přejmenování
@@ -688,7 +688,7 @@ void WifiControl::receivePeers() {
         char newHost[32];
         snprintf(newHost, sizeof(newHost), "%s-%04x", _cfg.hostname, myChipId);
         LOG("[mdns] conflict with %s (id=%04x > mine=%04x), renaming to %s.local\n",
-            ip, senderChipId, myChipId, newHost);
+            senderIp.toString().c_str(), senderChipId, myChipId, newHost);
         strlcpy(_cfg.hostname, newHost, sizeof(_cfg.hostname));
         MDNS.end();
         if (MDNS.begin(_cfg.hostname)) MDNS.addService("http", "tcp", 80);
