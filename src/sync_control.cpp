@@ -10,7 +10,8 @@ SyncControl* SyncControl::_instance = nullptr;
 
 static const uint8_t BROADCAST[6] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
 
-SyncControl::SyncControl(PixPlayer& player) : _player(player) {
+SyncControl::SyncControl(PixPlayer& player, EffectPlayer& effectPlayer)
+    : _player(player), _effectPlayer(effectPlayer) {
     _instance = this;
 }
 
@@ -59,44 +60,82 @@ void SyncControl::process() {
 
 void SyncControl::handlePacket(const Packet& pkt) {
     if (pkt.cmd == CMD_PLAY) {
-        LOG("[sync] play: %s in %u ms\n", pkt.file, pkt.delayMs);
+        LOG("[sync] play: %s endBeh=%u in %u ms\n", pkt.play.file, pkt.play.endBehavior, pkt.play.delayMs);
+        _effectPlayer.stop();
         _player.stopTask();
-        int err = _player.load(pkt.file);
+        int err = _player.load(pkt.play.file);
         if (err) { LOG("[sync] load failed: %d\n", err); return; }
-        _player.scheduleStart(esp_timer_get_time() + (int64_t)pkt.delayMs * 1000);
+        _player.setEndBehavior(pkt.play.endBehavior);
+        _player.scheduleStart(esp_timer_get_time() + (int64_t)pkt.play.delayMs * 1000);
         _player.startTask(1);
     } else if (pkt.cmd == CMD_STOP) {
         LOGLN("[sync] stop");
+        _effectPlayer.stop();
         _player.stopTask();
         _player.unload();
+    } else if (pkt.cmd == CMD_EFFECT) {
+        LOG("[sync] effect id=%u speed=%u\n", pkt.effect.effectId, pkt.effect.speed);
+        _player.stopTask();
+        _player.unload();
+        EffectParams p = {};
+        p.effectId   = pkt.effect.effectId;
+        p.speed      = pkt.effect.speed;
+        p.dotSize    = pkt.effect.dotSize;
+        p.paletteSize = pkt.effect.paletteSize;
+        for (int i = 0; i < p.paletteSize && i < 4; i++) {
+            p.palette[i] = {pkt.effect.paletteR[i], pkt.effect.paletteG[i], pkt.effect.paletteB[i]};
+        }
+        _effectPlayer.start(p);
     }
 }
 
-void SyncControl::broadcastPlay(const char* file, uint32_t delayMs) {
-    Packet pkt;
-    pkt.cmd     = CMD_PLAY;
-    pkt.delayMs = delayMs;
-    strncpy(pkt.file, file, sizeof(pkt.file) - 1);
-    pkt.file[sizeof(pkt.file) - 1] = '\0';
+void SyncControl::broadcastPlay(const char* file, uint8_t endBehavior, uint32_t delayMs) {
+    Packet pkt = {};
+    pkt.cmd              = CMD_PLAY;
+    pkt.play.delayMs     = delayMs;
+    pkt.play.endBehavior = endBehavior;
+    strncpy(pkt.play.file, file, sizeof(pkt.play.file) - 1);
 
     esp_err_t r = esp_now_send(BROADCAST, (uint8_t*)&pkt, sizeof(pkt));
     if (r != ESP_OK) LOG("[sync] send failed: 0x%x\n", r);
 
+    _effectPlayer.stop();
     _player.stopTask();
-    int err = _player.load(pkt.file);
+    int err = _player.load(file);
     if (err) { LOG("[sync] load failed: %d\n", err); return; }
+    _player.setEndBehavior(endBehavior);
     _player.scheduleStart(esp_timer_get_time() + (int64_t)delayMs * 1000);
     _player.startTask(1);
 }
 
 void SyncControl::broadcastStop() {
-    Packet pkt;
-    pkt.cmd     = CMD_STOP;
-    pkt.delayMs = 0;
-    pkt.file[0] = '\0';
+    Packet pkt = {};
+    pkt.cmd = CMD_STOP;
+    esp_err_t r = esp_now_send(BROADCAST, (uint8_t*)&pkt, sizeof(pkt));
+    if (r != ESP_OK) LOG("[sync] send failed: 0x%x\n", r);
+
+    _effectPlayer.stop();
+    _player.stopTask();
+    _player.unload();
+}
+
+void SyncControl::broadcastEffect(const EffectParams& p) {
+    Packet pkt = {};
+    pkt.cmd               = CMD_EFFECT;
+    pkt.effect.effectId   = p.effectId;
+    pkt.effect.speed      = p.speed;
+    pkt.effect.dotSize    = p.dotSize;
+    pkt.effect.paletteSize = p.paletteSize;
+    for (int i = 0; i < p.paletteSize && i < 4; i++) {
+        pkt.effect.paletteR[i] = p.palette[i].r;
+        pkt.effect.paletteG[i] = p.palette[i].g;
+        pkt.effect.paletteB[i] = p.palette[i].b;
+    }
+
     esp_err_t r = esp_now_send(BROADCAST, (uint8_t*)&pkt, sizeof(pkt));
     if (r != ESP_OK) LOG("[sync] send failed: 0x%x\n", r);
 
     _player.stopTask();
     _player.unload();
+    _effectPlayer.start(p);
 }

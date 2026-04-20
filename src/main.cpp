@@ -52,7 +52,7 @@ void setup() {
     player->setTempo(cfg.tempo);
     player->setEndBehavior(cfg.endBehavior);
     effectPlayer = new EffectPlayer(*leds);
-    syncCtrl     = new SyncControl(*player);
+    syncCtrl     = new SyncControl(*player, *effectPlayer);
     wifi         = new WifiControl(*player, *effectPlayer, *leds, cfg, syncCtrl);
 
     // wifi_ctrl musí být vytvořen PŘED player->startTask() — pix_player běží

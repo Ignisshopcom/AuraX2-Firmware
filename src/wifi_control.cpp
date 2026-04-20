@@ -83,7 +83,6 @@ static const char INDEX_HTML[] PROGMEM = R"html(
     <button onclick="addColor()" style="padding:2px 8px;font-size:1rem">+</button>
   </div>
   <button class="play" onclick="startEffect()">&#9654; Spustit efekt</button>
-  <button class="stop" onclick="stopEffect()">&#9632; Zastavit</button>
 </details>
 
 <div class="upload-area">
@@ -171,7 +170,6 @@ function startEffect() {
       dotSize:+document.getElementById('efxDot').value,
       palette:colors})});
 }
-function stopEffect() { fetch('/effect/stop').then(refresh); }
 function addColor() {
   if(document.querySelectorAll('#palette input').length>=4) return;
   var inp=document.createElement('input'); inp.type='color'; inp.value='#ff0000';
@@ -344,6 +342,7 @@ bool WifiControl::begin(uint32_t timeoutMs) {
     _server.on("/play",   HTTP_GET,  [this]() { handlePlay();      });
     _server.on("/stop",   HTTP_GET,  [this]() { handleStop();      });
     _server.on("/off",    HTTP_GET,  [this]() {
+        _effectPlayer.stop();
         _player.blackout();
         _server.send(200, "text/plain", "OK");
     });
@@ -472,7 +471,7 @@ void WifiControl::handleRoot() {
 void WifiControl::handlePlay() {
     _effectPlayer.stop();
     if (_sync) {
-        _sync->broadcastPlay(_cfg.pixFile);
+        _sync->broadcastPlay(_cfg.pixFile, _cfg.endBehavior);
     } else {
         _player.stopTask();
         int err = _player.load(_cfg.pixFile);
@@ -487,6 +486,7 @@ void WifiControl::handleStop() {
     if (_sync) {
         _sync->broadcastStop();
     } else {
+        _effectPlayer.stop();
         _player.stopTask();
         _player.unload();
     }
@@ -584,7 +584,11 @@ void WifiControl::handleEffectStart() {
     }
     saveConfig(_cfg);
 
-    _effectPlayer.start(p);
+    if (_sync) {
+        _sync->broadcastEffect(p);
+    } else {
+        _effectPlayer.start(p);
+    }
     _server.send(200, "text/plain", "OK");
 }
 
