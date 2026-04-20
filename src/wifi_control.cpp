@@ -1,6 +1,5 @@
 #include "wifi_control.h"
 #include "sync_control.h"
-#include "battery.h"
 #include "config.h"
 #include <ArduinoJson.h>
 #include <WiFi.h>
@@ -118,6 +117,19 @@ static const char INDEX_HTML[] PROGMEM = R"html(
     <label>Limit mA (0=off) <input type="number" id="cfgMALimit" name="mALimit" min="0" max="65000" step="100"></label>
     <label>mA per LED <input type="number" id="cfgMAPerLed" name="mAPerLed" min="1" max="200"></label>
   </div>
+  <details style="margin:10px 0">
+    <summary style="font-weight:normal;font-size:0.9rem">&#128267; Baterie</summary>
+    <div class="cfg-grid" style="margin-top:8px">
+      <label>ADC pin <input type="number" name="batPin" min="0" max="48"></label>
+      <label>Multiplier <input type="number" name="batMultiplier" min="0.1" max="20" step="0.001"></label>
+      <label>Kalibrace (V) <input type="number" name="batCalibration" step="0.001"></label>
+      <label>Min mV <input type="number" name="batMinMv" min="0" max="5000"></label>
+      <label>Max mV <input type="number" name="batMaxMv" min="0" max="5000"></label>
+      <label>Kapacita (mAh) <input type="number" name="batCapacityMah" min="0" max="65000"></label>
+      <label style="grid-column:1/-1">Interval m&#283;&#345;en&#237; (ms) <input type="number" name="batIntervalMs" min="1000" max="3600000" step="1000" style="width:120px"></label>
+      <label style="grid-column:1/-1">Auto off pod <input type="number" name="batAutoOffThreshold" min="0" max="100" style="width:56px">% &nbsp;<label><input type="checkbox" name="batAutoOff"> povolen</label></label>
+    </div>
+  </details>
   <button type="button" class="save" onclick="saveCfg()">Uložit</button>
   <button type="button" class="reboot" onclick="reboot()">Reboot</button>
   <p id="cfgMsg"></p>
@@ -225,6 +237,7 @@ function loadCfg() {
     document.getElementById('efxSpeed').value = d.effectSpeed || 100;
     document.getElementById('efxDot').value   = d.effectDotSize || 3;
     initPalette(d.paletteR||[255],d.paletteG||[0],d.paletteB||[0],d.paletteSize||1);
+    if (d.batAutoOff !== undefined) f.batAutoOff.checked = !!d.batAutoOff;
   });
 }
 function saveCfg() {
@@ -247,6 +260,15 @@ function saveCfg() {
     effectDotSize: parseInt(document.getElementById('efxDot').value),
     mALimit:  parseInt(f.mALimit.value)  || 0,
     mAPerLed: parseInt(f.mAPerLed.value) || 60,
+    batPin:              parseInt(f.batPin.value)              || 2,
+    batMultiplier:       parseFloat(f.batMultiplier.value)     || 2.0,
+    batCalibration:      parseFloat(f.batCalibration.value)    || 0.0,
+    batMinMv:            parseInt(f.batMinMv.value)            || 3200,
+    batMaxMv:            parseInt(f.batMaxMv.value)            || 4200,
+    batCapacityMah:      parseInt(f.batCapacityMah.value)      || 0,
+    batIntervalMs:       parseInt(f.batIntervalMs.value)       || 30000,
+    batAutoOff:          f.batAutoOff.checked,
+    batAutoOffThreshold: parseInt(f.batAutoOffThreshold.value) || 10,
     paletteSize: pal.length,
     paletteR: pal.map(function(c){return c.r;}),
     paletteG: pal.map(function(c){return c.g;}),
@@ -404,6 +426,8 @@ bool WifiControl::begin(uint32_t timeoutMs) {
 
     _server.begin();
 
+    _batMonitor.begin(_cfg);
+
     strlcpy(_wantedHostname, _cfg.hostname, sizeof(_wantedHostname));
 
     if (MDNS.begin(_cfg.hostname)) {
@@ -425,6 +449,12 @@ bool WifiControl::begin(uint32_t timeoutMs) {
 
 void WifiControl::handle() {
     _server.handleClient();
+    if (_batMonitor.update()) {
+        _player.stopTask();
+        _player.unload();
+        _leds.clear();
+        LOG("[bat] auto-off: battery %u%% (<= %u%%)\n", _batMonitor.pct(), _cfg.batAutoOffThreshold);
+    }
     if (!_apMode) {
         ArduinoOTA.handle();
         receivePeers();
@@ -464,8 +494,6 @@ void WifiControl::handleStop() {
 }
 
 void WifiControl::handleStatus() {
-    uint16_t mv  = batteryMillivolts();
-    uint8_t  pct = batteryPercent(mv);
     auto st = _player.stats();
     String json = "{";
     json += "\"playing\":"          + String(_player.isLoaded() ? "true" : "false") + ",";
@@ -476,15 +504,15 @@ void WifiControl::handleStatus() {
     json += "\"ip\":\""             + (_apMode ? WiFi.softAPIP() : WiFi.localIP()).toString() + "\",";
     json += "\"hostname\":\""       + String(_cfg.hostname) + "\",";
     json += "\"ap_mode\":"          + String(_apMode ? "true" : "false") + ",";
-    json += "\"battery_mv\":"       + String(mv) + ",";
-    json += "\"battery_pct\":"      + String(pct) + ",";
+    json += "\"battery_mv\":"       + String(_batMonitor.mv()) + ",";
+    json += "\"battery_pct\":"      + String(_batMonitor.pct()) + ",";
     json += "\"rssi\":"             + String(_apMode ? 0 : WiFi.RSSI());
     json += "}";
     _server.send(200, "application/json", json);
 }
 
 void WifiControl::handleConfigGet() {
-    StaticJsonDocument<768> doc;
+    StaticJsonDocument<1024> doc;
     doc["ledType"]  = _cfg.ledType;
     doc["numLeds"]  = _cfg.numLeds;
     doc["dataPin"]  = _cfg.dataPin;
@@ -501,6 +529,15 @@ void WifiControl::handleConfigGet() {
     doc["paletteSize"]   = _cfg.paletteSize;
     doc["mALimit"]  = _cfg.mALimit;
     doc["mAPerLed"] = _cfg.mAPerLed;
+    doc["batPin"]              = _cfg.batPin;
+    doc["batMultiplier"]       = _cfg.batMultiplier;
+    doc["batCalibration"]      = _cfg.batCalibration;
+    doc["batMinMv"]            = _cfg.batMinMv;
+    doc["batMaxMv"]            = _cfg.batMaxMv;
+    doc["batCapacityMah"]      = _cfg.batCapacityMah;
+    doc["batIntervalMs"]       = _cfg.batIntervalMs;
+    doc["batAutoOff"]          = (bool)_cfg.batAutoOff;
+    doc["batAutoOffThreshold"] = _cfg.batAutoOffThreshold;
     JsonArray pR = doc.createNestedArray("paletteR");
     JsonArray pG = doc.createNestedArray("paletteG");
     JsonArray pB = doc.createNestedArray("paletteB");
@@ -557,7 +594,7 @@ void WifiControl::handleEffectStop() {
 }
 
 void WifiControl::handleConfigPost() {
-    StaticJsonDocument<768> doc;
+    StaticJsonDocument<1024> doc;
     if (deserializeJson(doc, _server.arg("plain")) != DeserializationError::Ok) {
         _server.send(400, "text/plain", "JSON error");
         return;
@@ -583,6 +620,16 @@ void WifiControl::handleConfigPost() {
     _cfg.mALimit  = doc["mALimit"]  | _cfg.mALimit;
     _cfg.mAPerLed = doc["mAPerLed"] | _cfg.mAPerLed;
     _leds.setCurrentLimit(_cfg.mALimit, _cfg.mAPerLed);
+    _cfg.batPin              = doc["batPin"]              | _cfg.batPin;
+    _cfg.batMultiplier       = doc["batMultiplier"]       | _cfg.batMultiplier;
+    _cfg.batCalibration      = doc["batCalibration"]      | _cfg.batCalibration;
+    _cfg.batMinMv            = doc["batMinMv"]            | _cfg.batMinMv;
+    _cfg.batMaxMv            = doc["batMaxMv"]            | _cfg.batMaxMv;
+    _cfg.batCapacityMah      = doc["batCapacityMah"]      | _cfg.batCapacityMah;
+    _cfg.batIntervalMs       = doc["batIntervalMs"]       | _cfg.batIntervalMs;
+    if (doc.containsKey("batAutoOff")) _cfg.batAutoOff = doc["batAutoOff"] ? 1 : 0;
+    _cfg.batAutoOffThreshold = doc["batAutoOffThreshold"] | _cfg.batAutoOffThreshold;
+    _batMonitor.resetInterval();  // re-measure with new settings
     JsonArray pR = doc["paletteR"], pG = doc["paletteG"], pB = doc["paletteB"];
     for (int i = 0; i < 4; i++) {
         if (i < (int)pR.size()) _cfg.paletteR[i] = pR[i];

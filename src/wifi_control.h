@@ -6,6 +6,7 @@
 #include "pix_player.h"
 #include "effect_player.h"
 #include "app_config.h"
+#include "battery.h"
 
 class SyncControl;  // forward declaration
 
@@ -58,9 +59,10 @@ private:
     bool         _uploadError = false;
     bool         _apMode = false;
 
-    WiFiUDP  _udp;
-    Peer     _peers[MAX_PEERS];
-    int      _peerCount      = 0;
-    uint32_t _lastAnnounceMs = 0;
-    char     _wantedHostname[32] = {};  // hostname z configu; po konfliktu zkusíme znovu jakmile peer zmizí
+    WiFiUDP        _udp;
+    Peer           _peers[MAX_PEERS];
+    int            _peerCount      = 0;
+    uint32_t       _lastAnnounceMs = 0;
+    char           _wantedHostname[32] = {};  // hostname z configu; po konfliktu zkusíme znovu jakmile peer zmizí
+    BatteryMonitor _batMonitor;
 };
