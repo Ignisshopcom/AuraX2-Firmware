@@ -46,6 +46,7 @@ private:
         char      hostname[32];
         IPAddress ip;
         uint32_t  lastSeenMs;
+        uint8_t   batPct;
     };
 
     PixPlayer&    _player;

@@ -208,7 +208,7 @@ function refresh() {
   });
   fetch('/peers').then(r=>r.json()).then(ps=>{
     document.getElementById('peers').innerHTML = ps.length
-      ? '&#128279; ' + ps.map(p=>`<a href="http://${p.ip}">${p.hostname}</a>`).join(' &nbsp;&middot;&nbsp; ')
+      ? '&#128279; ' + ps.map(p=>`<a href="http://${p.ip}">${p.hostname}</a> &#128267;${p.bat_pct}%`).join(' &nbsp;&middot;&nbsp; ')
       : '';
   }).catch(()=>{});
 }
@@ -648,8 +648,9 @@ void WifiControl::handleConfigPost() {
 
 void WifiControl::announce() {
     char buf[96];
-    snprintf(buf, sizeof(buf), "AURAX %s %s %04x",
-        _cfg.hostname, WiFi.localIP().toString().c_str(), (uint16_t)ESP.getEfuseMac());
+    snprintf(buf, sizeof(buf), "AURAX %s %s %04x %u",
+        _cfg.hostname, WiFi.localIP().toString().c_str(), (uint16_t)ESP.getEfuseMac(),
+        _batMonitor.pct());
     _udp.beginPacket(IPAddress(255, 255, 255, 255), DISCOVERY_PORT);
     _udp.write((uint8_t*)buf, strlen(buf));
     _udp.endPacket();
@@ -666,9 +667,11 @@ void WifiControl::receivePeers() {
     char* host     = strtok(nullptr, " ");
     char* ip       = strtok(nullptr, " ");
     char* chipHex  = strtok(nullptr, " ");
+    char* batPctStr = strtok(nullptr, " ");
     if (!cmd || strcmp(cmd, "AURAX") != 0 || !host || !ip) return;
 
     uint16_t senderChipId = chipHex ? (uint16_t)strtoul(chipHex, nullptr, 16) : 0;
+    uint8_t  senderBatPct = batPctStr ? (uint8_t)atoi(batPctStr) : 0;
     uint16_t myChipId     = (uint16_t)ESP.getEfuseMac();
 
     if (strcmp(host, _cfg.hostname) == 0) {
@@ -698,6 +701,7 @@ void WifiControl::receivePeers() {
         if (strcmp(_peers[i].hostname, host) == 0) {
             _peers[i].ip.fromString(ip);
             _peers[i].lastSeenMs = millis();
+            _peers[i].batPct = senderBatPct;
             return;
         }
     }
@@ -705,6 +709,7 @@ void WifiControl::receivePeers() {
         strlcpy(_peers[_peerCount].hostname, host, sizeof(_peers[_peerCount].hostname));
         _peers[_peerCount].ip.fromString(ip);
         _peers[_peerCount].lastSeenMs = millis();
+        _peers[_peerCount].batPct = senderBatPct;
         _peerCount++;
         LOG("[discovery] peer: %s (%s)\n", host, ip);
     }
@@ -737,7 +742,8 @@ void WifiControl::handlePeers() {
     for (int i = 0; i < _peerCount; i++) {
         if (i > 0) json += ",";
         json += "{\"hostname\":\"" + String(_peers[i].hostname) + "\","
-              + "\"ip\":\""        + _peers[i].ip.toString()    + "\"}";
+              + "\"ip\":\""        + _peers[i].ip.toString()    + "\","
+              + "\"bat_pct\":"     + String(_peers[i].batPct)   + "}";
     }
     json += "]";
     _server.send(200, "application/json", json);
