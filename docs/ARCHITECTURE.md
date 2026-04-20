@@ -231,3 +231,47 @@ pio run --target uploadfs      # nahrání LittleFS (soubory z data/)
 | app1 (OTA 1) | 2 MB |
 | spiffs/littlefs | 3,875 MB |
 | coredump | 64 KB |
+
+---
+
+### `sync_control.h / sync_control.cpp` — ESP-NOW broadcast synchronizace
+
+Zajišťuje synchronizované přehrávání, zastavení a efekty na více zařízeních současně přes ESP-NOW broadcast.
+
+**Inicializace:** `begin()` musí být voláno **po** `wifi.begin()` — ESP-NOW potřebuje inicializovaný WiFi stack a platný kanál.
+
+**Příkazy (ESP-NOW pakety):**
+
+| CMD | Hodnota | Data | Popis |
+|---|---|---|---|
+| `CMD_PLAY` | 1 | `delayMs`, `endBehavior`, `file[64]` | Spustit animaci synchronizovaně |
+| `CMD_STOP` | 2 | — | Zastavit animaci i efekt |
+| `CMD_EFFECT` | 3 | `effectId`, `speed`, `dotSize`, `paletteSize`, `paletteR/G/B[4]` | Spustit efekt synchronizovaně |
+
+**Synchronizace času:** `CMD_PLAY` nese `delayMs` (výchozí 200 ms). Odesílatel i přijímač spustí přehrávání v čase `now + delayMs`. 200 ms je dostatečná rezerva pro doručení ESP-NOW paketu a spuštění FreeRTOS tasku.
+
+**Příjem paketů:** `recvCb()` je volán z ESP-NOW callback (ISR kontext) → nesmí blokovat, volat LittleFS ani `vTaskDelay`. Paket se uloží do FreeRTOS fronty (`xQueueSendFromISR`). `process()` se volá z `wifi_ctrl` tasku a zpracuje frontu bezpečně.
+
+**API:**
+```cpp
+SyncControl sync(player, effectPlayer);
+sync.begin();                                         // po wifi.begin()
+sync.process();                                       // volat z wifi_ctrl task loop
+sync.broadcastPlay("/show.pix", endBehavior, 200);   // sync play všem + lokálně
+sync.broadcastStop();                                 // sync stop všem + lokálně
+sync.broadcastEffect(params);                         // sync efekt všem + lokálně
+```
+
+**`broadcastStop()` a `/stop` / `/off`** zastavují jak `PixPlayer`, tak `EffectPlayer` — není třeba volat stop zvlášť pro každý.
+
+**Packet struktura:**
+```cpp
+struct Packet {          // __attribute__((packed))
+    uint8_t cmd;
+    union {
+        struct { uint32_t delayMs; uint8_t endBehavior; char file[64]; } play;
+        struct { uint8_t effectId; uint16_t speed; uint8_t dotSize;
+                 uint8_t paletteSize; uint8_t paletteR[4], paletteG[4], paletteB[4]; } effect;
+    };
+};                       // celkem 70 bytů (ESP-NOW limit: 250 B)
+```

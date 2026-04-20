@@ -20,7 +20,7 @@ Výchozí konfigurace: `src/config.h` (LED typ, piny, počet LED, PIX_FILE). Za 
 - **`WS281x`** — RMT driver (ESP-IDF v4 API, `driver/rmt.h`). Double-buffer async stejný pattern jako APA102. Pixel encoding: `.pix` `[0xE0|bri, B, G, R]` → brightness scaling → GRB bity přes RMT.
 - **`PixPlayer`** — parsuje `.pix` soubory, načítá obrazová data do PSRAM (nebo streamuje z LittleFS jako fallback), zobrazuje sloupce časovaně přes `esp_timer_get_time()`. Běží jako FreeRTOS task na **core 1, priorita 5**; `loop()` parkuje na `vTaskDelay(portMAX_DELAY)`.
 - **`WifiControl`** — HTTP server (port 80) na core 0, priorita 2. Připojuje se k WiFi STA (2 pokusy), fallback na soft AP `AuraX-XXXX`. mDNS (`aurax.local`), UDP discovery (port 4210), REST API.
-- **`SyncControl`** — ESP-NOW broadcast synchronizace. `broadcastPlay()` odešle packet všem peerům, všechna zařízení spustí animaci ve stejný čas (`now + 200 ms`).
+- **`SyncControl`** — ESP-NOW broadcast synchronizace. Tři příkazy: `CMD_PLAY` (sync start s `endBehavior` a `delayMs`), `CMD_STOP` (zastaví animaci i efekt), `CMD_EFFECT` (sync efekt). `broadcastPlay/Stop/Effect()` odešle packet všem peerům a provede akci i lokálně. Příjem v ISR → fronta → `process()` v `wifi_ctrl` tasku.
 - **`AppConfig`** — runtime konfigurace načítaná z `/config.json` (LittleFS). Fallback na compile-time hodnoty z `src/config.h`.
 - **Rychlostní strop APA102** (20 MHz SPI): ~3 600 řádků/s pro 170 LED, ~4 200 pro 144 LED.
 - **Rychlostní strop WS281x** (800 kHz): ~230 řádků/s pro 144 LED — protokol neumožňuje víc.
