@@ -46,7 +46,7 @@ void setup() {
     }
 
     leds->setBrightness(cfg.brightness);
-    leds->setCurrentLimit(cfg.mALimit, cfg.mAPerLed);
+    leds->setCurrentLimit(cfg.mALimit, 60);
 
     player       = new PixPlayer(*leds);
     player->setTempo(cfg.tempo);
@@ -62,7 +62,7 @@ void setup() {
         [](void*) {
             wifi->begin();
             LOGLN("[wifi] server ready");
-            syncCtrl->begin();
+            syncCtrl->begin(cfg.syncChannel);
             while (true) { syncCtrl->process(); wifi->handle(); vTaskDelay(1); }
         },
         "wifi_ctrl", 8192, nullptr, 2, nullptr, 0  // core 0, priorita 2
@@ -75,6 +75,17 @@ void setup() {
                     resetReason == ESP_RST_WDT);
     if (crashed) {
         LOG("[sys] crash detected (reason=%d), autoplay disabled\n", (int)resetReason);
+    } else if (cfg.autoStart == 1) {
+        EffectParams p = {};
+        p.effectId    = cfg.effectId;
+        p.speed       = cfg.effectSpeed;
+        p.dotSize     = cfg.effectDotSize;
+        p.paletteSize = cfg.paletteSize;
+        for (int i = 0; i < cfg.paletteSize && i < 4; i++)
+            p.palette[i] = { cfg.paletteR[i], cfg.paletteG[i], cfg.paletteB[i] };
+        if (p.paletteSize == 0) { p.palette[0] = {255, 0, 0}; p.paletteSize = 1; }
+        effectPlayer->start(p);
+        LOG("[sys] restored effect id=%d\n", p.effectId);
     } else if (LittleFS.exists(cfg.pixFile)) {
         int err = player->load(cfg.pixFile);
         if (err) { LOG("[pix] load failed: %d\n", err); }

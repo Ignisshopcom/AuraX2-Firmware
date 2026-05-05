@@ -46,19 +46,9 @@ static const char INDEX_HTML[] PROGMEM = R"html(
   <span id="briVal" style="font-size:0.9rem;min-width:72px;text-align:right">PIX soubor</span>
 </div>
 <div style="margin:12px 0;display:flex;align-items:center;gap:8px">
-  <span style="font-size:0.9rem;white-space:nowrap">&#9654;&#9654; Tempo</span>
-  <input type="number" id="tempo" min="10" max="500" value="100" style="width:72px;padding:4px;font-size:1rem" onchange="setTempo(this.value)">
-  <span style="font-size:0.9rem;color:#555">%</span>
-</div>
-
-<div style="margin:12px 0;display:flex;align-items:center;gap:8px">
-  <span style="font-size:0.9rem;white-space:nowrap">&#8635; Konec show</span>
-  <select id="endBeh" onchange="setEndBeh(this.value)" style="padding:4px;font-size:1rem">
-    <option value="255">Ze souboru</option>
-    <option value="1">Loop</option>
-    <option value="2">Keep</option>
-    <option value="0">Off</option>
-  </select>
+  <span style="font-size:0.9rem;white-space:nowrap">Sync</span>
+  <button onclick="nudge(-100)" style="padding:6px 14px">&#9664; &minus;100ms</button>
+  <button onclick="nudge(100)" style="padding:6px 14px">+100ms &#9654;</button>
 </div>
 
 <details id="efxPanel">
@@ -70,16 +60,16 @@ static const char INDEX_HTML[] PROGMEM = R"html(
         <option value="2">Android</option>
       </select>
     </label>
-    <label>Rychlost %
-      <input type="number" id="efxSpeed" value="100" min="10" max="1000" style="width:70px">
-    </label>
     <label>&#352;&#237;&#345;ka
       <input type="number" id="efxDot" value="3" min="1" max="20" style="width:60px">
+    </label>
+    <label style="grid-column:1/-1">Rychlost
+      <input type="range" id="efxSpeed" value="100" min="10" max="1000" style="width:100%">
     </label>
   </div>
   <div style="margin:8px 0">
     <span style="font-size:0.85rem">Paleta:</span>
-    <span id="palette"></span>
+    <div id="palette" style="display:inline-flex;flex-wrap:wrap;gap:4px;align-items:center;vertical-align:middle"></div>
     <button onclick="addColor()" style="padding:2px 8px;font-size:1rem">+</button>
   </div>
   <button class="play" onclick="startEffect()">&#9654; Spustit efekt</button>
@@ -113,8 +103,22 @@ static const char INDEX_HTML[] PROGMEM = R"html(
     <label>WiFi SSID <input type="text" name="ssid"></label>
     <label>WiFi heslo <input type="password" name="password"></label>
     <label style="grid-column:1/-1">Hostname (.local) <input type="text" name="hostname" pattern="[a-z0-9-]+" placeholder="aurax-xxxx" style="width:100%;box-sizing:border-box"></label>
+    <label>Sync kanál
+      <select name="syncChannel">
+        <option value="0">Vypnuto</option>
+        <option value="1">1</option>
+        <option value="2">2</option>
+        <option value="3">3</option>
+        <option value="4">4</option>
+        <option value="5">5</option>
+        <option value="6">6</option>
+        <option value="7">7</option>
+        <option value="8">8</option>
+        <option value="9">9</option>
+        <option value="10">10</option>
+      </select>
+    </label>
     <label>Limit mA (0=off) <input type="number" id="cfgMALimit" name="mALimit" min="0" max="65000" step="100"></label>
-    <label>mA per LED <input type="number" id="cfgMAPerLed" name="mAPerLed" min="1" max="200"></label>
   </div>
   <details style="margin:10px 0">
     <summary style="font-weight:normal;font-size:0.9rem">&#128267; Baterie</summary>
@@ -124,7 +128,6 @@ static const char INDEX_HTML[] PROGMEM = R"html(
       <label>Kalibrace (V) <input type="number" name="batCalibration" step="0.001"></label>
       <label>Min mV <input type="number" name="batMinMv" min="0" max="5000"></label>
       <label>Max mV <input type="number" name="batMaxMv" min="0" max="5000"></label>
-      <label>Kapacita (mAh) <input type="number" name="batCapacityMah" min="0" max="65000"></label>
       <label style="grid-column:1/-1">Interval m&#283;&#345;en&#237; (ms) <input type="number" name="batIntervalMs" min="1000" max="3600000" step="1000" style="width:120px"></label>
       <label style="grid-column:1/-1">Auto off pod <input type="number" name="batAutoOffThreshold" min="0" max="100" style="width:56px">% &nbsp;<label><input type="checkbox" name="batAutoOff"> povolen</label></label>
     </div>
@@ -146,14 +149,7 @@ static const char INDEX_HTML[] PROGMEM = R"html(
 function updClk(v) {
   document.getElementById('clkLabel').style.display = (parseInt(v) === 1) ? '' : 'none';
 }
-function setEndBeh(v) {
-  fetch('/endbehavior?v=' + v);
-}
-function setTempo(v) {
-  v = Math.max(10, Math.min(500, parseInt(v) || 100));
-  document.getElementById('tempo').value = v;
-  fetch('/tempo?v=' + v);
-}
+function nudge(ms) { fetch('/nudge?v=' + ms); }
 function setBri(v) {
   document.getElementById('briVal').textContent = +v === 0 ? 'PIX soubor' : v + '%';
   fetch('/brightness?v=' + v);
@@ -173,7 +169,7 @@ function startEffect() {
 function addColor() {
   if(document.querySelectorAll('#palette input').length>=4) return;
   var inp=document.createElement('input'); inp.type='color'; inp.value='#ff0000';
-  inp.style='margin:2px;width:36px;height:28px;cursor:pointer';
+  inp.style='margin:0;width:52px;height:44px;cursor:pointer;touch-action:manipulation';
   document.getElementById('palette').appendChild(inp);
 }
 function initPalette(rs,gs,bs,sz) {
@@ -182,7 +178,7 @@ function initPalette(rs,gs,bs,sz) {
     var inp=document.createElement('input'); inp.type='color';
     var r=rs[i]||0,g=gs[i]||0,b=bs[i]||0;
     inp.value='#'+('0'+r.toString(16)).slice(-2)+('0'+g.toString(16)).slice(-2)+('0'+b.toString(16)).slice(-2);
-    inp.style='margin:2px;width:36px;height:28px;cursor:pointer';
+    inp.style='margin:0;width:52px;height:44px;cursor:pointer;touch-action:manipulation';
     p.appendChild(inp);
   }
 }
@@ -206,7 +202,7 @@ function refresh() {
   });
   fetch('/peers').then(r=>r.json()).then(ps=>{
     document.getElementById('peers').innerHTML = ps.length
-      ? '&#128279; ' + ps.map(p=>`<a href="http://${p.ip}">${p.hostname}</a> &#128267;${p.bat_pct}%${rssiBar(p.rssi)}`).join(' &nbsp;&middot;&nbsp; ')
+      ? '&#128279; ' + ps.map(p=>`<a href="http://${p.ip}">${p.hostname}</a> &#128267;${p.bat_pct}%${rssiBar(p.rssi)}${p.sync_channel?' &nbsp;ch'+p.sync_channel:''}`).join(' &nbsp;&middot;&nbsp; ')
       : '';
   }).catch(()=>{});
 }
@@ -228,9 +224,6 @@ function loadCfg() {
     const bri = d.brightness || 0;
     document.getElementById('bri').value = bri;
     setBri(bri);
-    const t = d.tempo || 100;
-    document.getElementById('tempo').value = t;
-    document.getElementById('endBeh').value = (d.endBehavior !== undefined) ? d.endBehavior : 255;
     document.getElementById('efxId').value    = d.effectId    || 1;
     document.getElementById('efxSpeed').value = d.effectSpeed || 100;
     document.getElementById('efxDot').value   = d.effectDotSize || 3;
@@ -250,20 +243,17 @@ function saveCfg() {
     dataPin: parseInt(f.dataPin.value), clkPin:  parseInt(f.clkPin.value),
     pixFile: f.pixFile.value, ssid: f.ssid.value, password: f.password.value,
     hostname: f.hostname.value,
+    syncChannel: parseInt(f.syncChannel.value),
     brightness:   parseInt(document.getElementById('bri').value),
-    tempo:        parseInt(document.getElementById('tempo').value),
-    endBehavior:  parseInt(document.getElementById('endBeh').value),
     effectId:      parseInt(document.getElementById('efxId').value),
     effectSpeed:   parseInt(document.getElementById('efxSpeed').value),
     effectDotSize: parseInt(document.getElementById('efxDot').value),
     mALimit:  parseInt(f.mALimit.value)  || 0,
-    mAPerLed: parseInt(f.mAPerLed.value) || 60,
     batPin:              parseInt(f.batPin.value)              || 2,
     batMultiplier:       parseFloat(f.batMultiplier.value)     || 2.0,
     batCalibration:      parseFloat(f.batCalibration.value)    || 0.0,
     batMinMv:            parseInt(f.batMinMv.value)            || 3200,
     batMaxMv:            parseInt(f.batMaxMv.value)            || 4200,
-    batCapacityMah:      parseInt(f.batCapacityMah.value)      || 0,
     batIntervalMs:       parseInt(f.batIntervalMs.value)       || 30000,
     batAutoOff:          f.batAutoOff.checked,
     batAutoOffThreshold: parseInt(f.batAutoOffThreshold.value) || 10,
@@ -389,17 +379,14 @@ bool WifiControl::begin(uint32_t timeoutMs) {
 
     _server.on("/endbehavior", HTTP_GET, [this]() {
         int v = _server.arg("v").toInt();
-        if (v < 0 || v > 2) v = 255;  // anything out of range → from file
+        if (v < 0 || v > 3) v = 255;  // anything out of range → from file
         _cfg.endBehavior = (uint8_t)v;
         _player.setEndBehavior(_cfg.endBehavior);
         _server.send(200, "text/plain", "OK");
     });
-    _server.on("/tempo", HTTP_GET, [this]() {
+    _server.on("/nudge", HTTP_GET, [this]() {
         int v = _server.arg("v").toInt();
-        if (v < 1)   v = 1;
-        if (v > 1000) v = 1000;
-        _cfg.tempo = (uint16_t)v;
-        _player.setTempo(_cfg.tempo);
+        _player.nudge(v);
         _server.send(200, "text/plain", "OK");
     });
     _server.on("/brightness", HTTP_GET, [this]() {
@@ -470,6 +457,8 @@ void WifiControl::handleRoot() {
 
 void WifiControl::handlePlay() {
     _effectPlayer.stop();
+    _cfg.autoStart = 0;
+    saveConfig(_cfg);
     if (_sync) {
         _sync->broadcastPlay(_cfg.pixFile, _cfg.endBehavior);
     } else {
@@ -528,16 +517,16 @@ void WifiControl::handleConfigGet() {
     doc["effectDotSize"] = _cfg.effectDotSize;
     doc["paletteSize"]   = _cfg.paletteSize;
     doc["mALimit"]  = _cfg.mALimit;
-    doc["mAPerLed"] = _cfg.mAPerLed;
     doc["batPin"]              = _cfg.batPin;
     doc["batMultiplier"]       = _cfg.batMultiplier;
     doc["batCalibration"]      = _cfg.batCalibration;
     doc["batMinMv"]            = _cfg.batMinMv;
     doc["batMaxMv"]            = _cfg.batMaxMv;
-    doc["batCapacityMah"]      = _cfg.batCapacityMah;
     doc["batIntervalMs"]       = _cfg.batIntervalMs;
     doc["batAutoOff"]          = (bool)_cfg.batAutoOff;
     doc["batAutoOffThreshold"] = _cfg.batAutoOffThreshold;
+    doc["syncChannel"]         = _cfg.syncChannel;
+    doc["autoStart"]           = _cfg.autoStart;
     JsonArray pR = doc.createNestedArray("paletteR");
     JsonArray pG = doc.createNestedArray("paletteG");
     JsonArray pB = doc.createNestedArray("paletteB");
@@ -557,6 +546,10 @@ void WifiControl::handleEffectStart() {
     p.effectId = doc["id"]      | 1;
     p.speed    = doc["speed"]   | 100;
     p.dotSize  = doc["dotSize"] | 3;
+    if (p.speed < 10)   p.speed = 10;
+    if (p.speed > 1000) p.speed = 1000;
+    if (p.dotSize < 1)                      p.dotSize = 1;
+    if (p.dotSize > (uint8_t)_cfg.numLeds)  p.dotSize = (uint8_t)_cfg.numLeds;
     JsonArray palette = doc["palette"];
     p.paletteSize = 0;
     for (JsonObject c : palette) {
@@ -573,6 +566,7 @@ void WifiControl::handleEffectStart() {
     _player.unload();
 
     // Uložit do konfigurace
+    _cfg.autoStart     = 1;
     _cfg.effectId      = p.effectId;
     _cfg.effectSpeed   = p.speed;
     _cfg.effectDotSize = p.dotSize;
@@ -622,17 +616,16 @@ void WifiControl::handleConfigPost() {
     _cfg.effectDotSize = doc["effectDotSize"] | _cfg.effectDotSize;
     _cfg.paletteSize   = doc["paletteSize"]   | _cfg.paletteSize;
     _cfg.mALimit  = doc["mALimit"]  | _cfg.mALimit;
-    _cfg.mAPerLed = doc["mAPerLed"] | _cfg.mAPerLed;
-    _leds.setCurrentLimit(_cfg.mALimit, _cfg.mAPerLed);
+    _leds.setCurrentLimit(_cfg.mALimit, 60);
     _cfg.batPin              = doc["batPin"]              | _cfg.batPin;
     _cfg.batMultiplier       = doc["batMultiplier"]       | _cfg.batMultiplier;
     _cfg.batCalibration      = doc["batCalibration"]      | _cfg.batCalibration;
     _cfg.batMinMv            = doc["batMinMv"]            | _cfg.batMinMv;
     _cfg.batMaxMv            = doc["batMaxMv"]            | _cfg.batMaxMv;
-    _cfg.batCapacityMah      = doc["batCapacityMah"]      | _cfg.batCapacityMah;
     _cfg.batIntervalMs       = doc["batIntervalMs"]       | _cfg.batIntervalMs;
     if (doc.containsKey("batAutoOff")) _cfg.batAutoOff = doc["batAutoOff"] ? 1 : 0;
     _cfg.batAutoOffThreshold = doc["batAutoOffThreshold"] | _cfg.batAutoOffThreshold;
+    _cfg.syncChannel         = doc["syncChannel"]         | _cfg.syncChannel;
     _batMonitor.resetInterval();  // re-measure with new settings
     JsonArray pR = doc["paletteR"], pG = doc["paletteG"], pB = doc["paletteB"];
     for (int i = 0; i < 4; i++) {
@@ -652,9 +645,9 @@ void WifiControl::handleConfigPost() {
 
 void WifiControl::announce() {
     char buf[96];
-    snprintf(buf, sizeof(buf), "AURAX %s %s %04x %u %d",
+    snprintf(buf, sizeof(buf), "AURAX %s %s %04x %u %d %u",
         _cfg.hostname, WiFi.localIP().toString().c_str(), (uint16_t)ESP.getEfuseMac(),
-        _batMonitor.pct(), (int)WiFi.RSSI());
+        _batMonitor.pct(), (int)WiFi.RSSI(), (unsigned)_cfg.syncChannel);
     _udp.beginPacket(IPAddress(255, 255, 255, 255), DISCOVERY_PORT);
     _udp.write((uint8_t*)buf, strlen(buf));
     _udp.endPacket();
@@ -671,8 +664,9 @@ void WifiControl::receivePeers() {
     char* host     = strtok(nullptr, " ");
     char* ip       = strtok(nullptr, " ");
     char* chipHex  = strtok(nullptr, " ");
-    char* batPctStr = strtok(nullptr, " ");
-    char* rssiStr   = strtok(nullptr, " ");
+    char* batPctStr     = strtok(nullptr, " ");
+    char* rssiStr       = strtok(nullptr, " ");
+    char* syncChStr     = strtok(nullptr, " ");
     if (!cmd || strcmp(cmd, "AURAX") != 0 || !host || !ip) return;
 
     // Ignorovat vlastní broadcast — kontrola vždy podle IP, nezávisle na hostname
@@ -680,9 +674,10 @@ void WifiControl::receivePeers() {
     senderIp.fromString(ip);
     if (senderIp == WiFi.localIP()) return;
 
-    uint16_t senderChipId = chipHex ? (uint16_t)strtoul(chipHex, nullptr, 16) : 0;
-    uint8_t  senderBatPct = batPctStr ? (uint8_t)atoi(batPctStr) : 0;
-    int8_t   senderRssi   = rssiStr   ? (int8_t)atoi(rssiStr)    : 0;
+    uint16_t senderChipId   = chipHex   ? (uint16_t)strtoul(chipHex, nullptr, 16) : 0;
+    uint8_t  senderBatPct   = batPctStr ? (uint8_t)atoi(batPctStr) : 0;
+    int8_t   senderRssi     = rssiStr   ? (int8_t)atoi(rssiStr)    : 0;
+    uint8_t  senderSyncCh   = syncChStr ? (uint8_t)atoi(syncChStr) : 0;
     uint16_t myChipId     = (uint16_t)ESP.getEfuseMac();
 
     if (strcmp(host, _cfg.hostname) == 0) {
@@ -706,18 +701,20 @@ void WifiControl::receivePeers() {
     for (int i = 0; i < _peerCount; i++) {
         if (strcmp(_peers[i].hostname, host) == 0) {
             _peers[i].ip.fromString(ip);
-            _peers[i].lastSeenMs = millis();
-            _peers[i].batPct = senderBatPct;
-            _peers[i].rssi   = senderRssi;
+            _peers[i].lastSeenMs  = millis();
+            _peers[i].batPct      = senderBatPct;
+            _peers[i].rssi        = senderRssi;
+            _peers[i].syncChannel = senderSyncCh;
             return;
         }
     }
     if (_peerCount < MAX_PEERS) {
         strlcpy(_peers[_peerCount].hostname, host, sizeof(_peers[_peerCount].hostname));
         _peers[_peerCount].ip.fromString(ip);
-        _peers[_peerCount].lastSeenMs = millis();
-        _peers[_peerCount].batPct = senderBatPct;
-        _peers[_peerCount].rssi   = senderRssi;
+        _peers[_peerCount].lastSeenMs  = millis();
+        _peers[_peerCount].batPct      = senderBatPct;
+        _peers[_peerCount].rssi        = senderRssi;
+        _peers[_peerCount].syncChannel = senderSyncCh;
         _peerCount++;
         LOG("[discovery] peer: %s (%s)\n", host, ip);
     }
@@ -749,10 +746,11 @@ void WifiControl::handlePeers() {
     String json = "[";
     for (int i = 0; i < _peerCount; i++) {
         if (i > 0) json += ",";
-        json += "{\"hostname\":\"" + String(_peers[i].hostname) + "\","
-              + "\"ip\":\""        + _peers[i].ip.toString()    + "\","
-              + "\"bat_pct\":"     + String(_peers[i].batPct)   + ","
-              + "\"rssi\":"        + String(_peers[i].rssi)     + "}";
+        json += "{\"hostname\":\""    + String(_peers[i].hostname)    + "\","
+              + "\"ip\":\""         + _peers[i].ip.toString()       + "\","
+              + "\"bat_pct\":"      + String(_peers[i].batPct)      + ","
+              + "\"rssi\":"         + String(_peers[i].rssi)        + ","
+              + "\"sync_channel\":" + String(_peers[i].syncChannel) + "}";
     }
     json += "]";
     _server.send(200, "application/json", json);

@@ -223,6 +223,10 @@ void PixPlayer::setTempo(uint16_t pct) {
     _tempo = pct < 1 ? 1 : (pct > 1000 ? 1000 : pct);
 }
 
+void PixPlayer::nudge(int32_t ms) {
+    _programStartUs -= (int64_t)ms * 1000;
+}
+
 void PixPlayer::setEndBehavior(uint8_t v) {
     _endBehaviorOverride = v;
 }
@@ -279,6 +283,7 @@ bool PixPlayer::update() {
     while (programUs >= (int64_t)_cmds[_curCmd].endTime * 1000) {
         _curCmd++;
         _curCol = 0;
+        _pingPongReverse = false;
         if (_curCmd >= _numCmds) {
             if (effectiveBehavior == PixEndBehavior::Exit) {
                 _loaded = false;
@@ -332,8 +337,22 @@ bool PixPlayer::update() {
 
     _nextFrameUs = now + 1000000LL * 100LL / ((int64_t)cmd.frequency * (int64_t)_tempo);
 
-    if (++_curCol >= (int)cmd.height) {
-        _curCol = 0;  // loop frames within the time window
+    if (effectiveBehavior == PixEndBehavior::PingPong) {
+        if (_pingPongReverse) {
+            if (--_curCol < 0) {
+                _curCol = 1;
+                _pingPongReverse = false;
+            }
+        } else {
+            if (++_curCol >= (int)cmd.height) {
+                _curCol = (int)cmd.height - 2;
+                _pingPongReverse = true;
+            }
+        }
+    } else {
+        if (++_curCol >= (int)cmd.height) {
+            _curCol = 0;
+        }
     }
     return true;
 }

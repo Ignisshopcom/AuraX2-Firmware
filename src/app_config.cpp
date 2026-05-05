@@ -4,6 +4,70 @@
 #include <ArduinoJson.h>
 #include <string.h>
 
+bool saveConfig(const AppConfig& cfg);  // forward decl — defined below
+
+static void importFromWled(AppConfig& cfg) {
+    if (!LittleFS.exists("/cfg.json")) return;
+
+    StaticJsonDocument<200> filter;
+    filter["nw"]["ins"][0]["ssid"]          = true;
+    filter["hw"]["led"]["ins"][0]["len"]    = true;
+    filter["hw"]["led"]["ins"][0]["type"]   = true;
+    filter["hw"]["led"]["ins"][0]["pin"][0] = true;
+    filter["hw"]["led"]["ins"][0]["pin"][1] = true;
+    filter["hw"]["led"]["maxpwr"]           = true;
+    filter["id"]["mdns"]                    = true;
+    filter["def"]["bri"]                    = true;
+
+    StaticJsonDocument<512> doc;
+    {
+        File f = LittleFS.open("/cfg.json", "r");
+        if (!f) return;
+        DeserializationError err = deserializeJson(doc, f, DeserializationOption::Filter(filter));
+        f.close();
+        if (err) return;
+    }
+
+    const char* ssid = doc["nw"]["ins"][0]["ssid"] | "";
+    if (strlen(ssid)) strlcpy(cfg.ssid, ssid, sizeof(cfg.ssid));
+
+    int wledType = doc["hw"]["led"]["ins"][0]["type"] | -1;
+    if (wledType >= 0) {
+        cfg.ledType = (wledType == 51) ? 1 : 0;
+        cfg.numLeds = doc["hw"]["led"]["ins"][0]["len"] | cfg.numLeds;
+        cfg.dataPin = doc["hw"]["led"]["ins"][0]["pin"][0] | cfg.dataPin;
+        if (cfg.ledType == 1)
+            cfg.clkPin = doc["hw"]["led"]["ins"][0]["pin"][1] | cfg.clkPin;
+    }
+
+    int maxpwr = doc["hw"]["led"]["maxpwr"] | -1;
+    if (maxpwr >= 0) cfg.mALimit = (uint16_t)maxpwr;
+
+    const char* mdns = doc["id"]["mdns"] | "";
+    if (strlen(mdns) && strcmp(mdns, "x") != 0)
+        strlcpy(cfg.hostname, mdns, sizeof(cfg.hostname));
+
+    int wbri = doc["def"]["bri"] | -1;
+    if (wbri >= 0)
+        cfg.brightness = (wbri == 0) ? 0 : (uint8_t)((wbri * 100 + 127) / 255);
+
+    if (LittleFS.exists("/wsec.json")) {
+        StaticJsonDocument<64> wsecFilter;
+        wsecFilter["nw"]["ins"][0]["psk"] = true;
+        StaticJsonDocument<128> wsec;
+        File wf = LittleFS.open("/wsec.json", "r");
+        if (wf) {
+            if (deserializeJson(wsec, wf, DeserializationOption::Filter(wsecFilter)) == DeserializationError::Ok) {
+                const char* psk = wsec["nw"]["ins"][0]["psk"] | "";
+                if (strlen(psk)) strlcpy(cfg.password, psk, sizeof(cfg.password));
+            }
+            wf.close();
+        }
+    }
+
+    LOGLN("[cfg] imported settings from WLED /cfg.json");
+}
+
 static AppConfig defaults() {
     AppConfig cfg = {};
     cfg.tempo        = 100;
@@ -13,16 +77,15 @@ static AppConfig defaults() {
     cfg.effectDotSize = 3;
     cfg.paletteSize   = 1;
     cfg.paletteR[0]   = 255;
-    cfg.mAPerLed      = 60;
     cfg.batPin              = 8;
     cfg.batMultiplier       = 2.904f;
     cfg.batCalibration      = 0.344f;
     cfg.batMinMv            = 3000;
     cfg.batMaxMv            = 4200;
-    cfg.batCapacityMah      = 1000;
     cfg.batIntervalMs       = 30000;
     cfg.batAutoOff          = 0;
     cfg.batAutoOffThreshold = 10;
+    cfg.syncChannel         = 1;
     cfg.ledType = LED_TYPE;
     cfg.numLeds = NUM_LEDS;
     cfg.dataPin = (LED_TYPE == LED_TYPE_APA102) ? LED_DATA_PIN : WS_DATA_PIN;
@@ -35,6 +98,13 @@ static AppConfig defaults() {
 
 AppConfig loadConfig() {
     AppConfig cfg = defaults();
+    if (!LittleFS.exists(CFG_FILE)) {
+        importFromWled(cfg);
+        if (strlen(cfg.hostname) == 0)
+            strlcpy(cfg.hostname, "aurax", sizeof(cfg.hostname));
+        saveConfig(cfg);
+        return cfg;
+    }
     File f = LittleFS.open(CFG_FILE, "r");
     if (!f) return cfg;
 
@@ -56,16 +126,16 @@ AppConfig loadConfig() {
         cfg.effectDotSize = doc["effectDotSize"] | cfg.effectDotSize;
         cfg.paletteSize   = doc["paletteSize"]   | cfg.paletteSize;
         cfg.mALimit   = doc["mALimit"]   | cfg.mALimit;
-        cfg.mAPerLed  = doc["mAPerLed"]  | cfg.mAPerLed;
         cfg.batPin              = doc["batPin"]              | cfg.batPin;
         cfg.batMultiplier       = doc["batMultiplier"]       | cfg.batMultiplier;
         cfg.batCalibration      = doc["batCalibration"]      | cfg.batCalibration;
         cfg.batMinMv            = doc["batMinMv"]            | cfg.batMinMv;
         cfg.batMaxMv            = doc["batMaxMv"]            | cfg.batMaxMv;
-        cfg.batCapacityMah      = doc["batCapacityMah"]      | cfg.batCapacityMah;
         cfg.batIntervalMs       = doc["batIntervalMs"]       | cfg.batIntervalMs;
         cfg.batAutoOff          = doc["batAutoOff"]          | cfg.batAutoOff;
         cfg.batAutoOffThreshold = doc["batAutoOffThreshold"] | cfg.batAutoOffThreshold;
+        cfg.syncChannel         = doc["syncChannel"]         | cfg.syncChannel;
+        cfg.autoStart           = doc["autoStart"]           | 0;
         JsonArray pR = doc["paletteR"], pG = doc["paletteG"], pB = doc["paletteB"];
         for (int i = 0; i < 4; i++) {
             if (i < (int)pR.size()) cfg.paletteR[i] = pR[i];
@@ -97,16 +167,16 @@ bool saveConfig(const AppConfig& cfg) {
     doc["effectDotSize"] = cfg.effectDotSize;
     doc["paletteSize"]   = cfg.paletteSize;
     doc["mALimit"]  = cfg.mALimit;
-    doc["mAPerLed"] = cfg.mAPerLed;
     doc["batPin"]              = cfg.batPin;
     doc["batMultiplier"]       = cfg.batMultiplier;
     doc["batCalibration"]      = cfg.batCalibration;
     doc["batMinMv"]            = cfg.batMinMv;
     doc["batMaxMv"]            = cfg.batMaxMv;
-    doc["batCapacityMah"]      = cfg.batCapacityMah;
     doc["batIntervalMs"]       = cfg.batIntervalMs;
     doc["batAutoOff"]          = cfg.batAutoOff;
     doc["batAutoOffThreshold"] = cfg.batAutoOffThreshold;
+    doc["syncChannel"]         = cfg.syncChannel;
+    doc["autoStart"]           = cfg.autoStart;
     JsonArray pR = doc.createNestedArray("paletteR");
     JsonArray pG = doc.createNestedArray("paletteG");
     JsonArray pB = doc.createNestedArray("paletteB");

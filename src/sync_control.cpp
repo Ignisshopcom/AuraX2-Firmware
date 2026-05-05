@@ -15,7 +15,12 @@ SyncControl::SyncControl(PixPlayer& player, EffectPlayer& effectPlayer)
     _instance = this;
 }
 
-bool SyncControl::begin() {
+bool SyncControl::begin(uint8_t syncChannel) {
+    _syncChannel = syncChannel;
+    if (_syncChannel == 0) {
+        LOGLN("[sync] channel 0 — sync disabled");
+        return true;
+    }
     _queue = xQueueCreate(4, sizeof(Packet));
     if (!_queue) {
         LOGLN("[sync] queue alloc failed");
@@ -36,7 +41,7 @@ bool SyncControl::begin() {
     peer.ifidx   = WIFI_IF_STA;
     peer.encrypt  = false;
     esp_now_add_peer(&peer);
-    LOG("[sync] channel %d\n", peer.channel);
+    LOG("[sync] wifi channel %d, sync channel %d\n", peer.channel, _syncChannel);
 
     LOGLN("[sync] ESP-NOW ready");
     return true;
@@ -45,6 +50,7 @@ bool SyncControl::begin() {
 // Called from ESP-NOW callback — ISR-safe, no blocking allowed.
 void SyncControl::recvCb(const uint8_t* mac, const uint8_t* data, int len) {
     if (!_instance || !_instance->_queue || len < (int)sizeof(Packet)) return;
+    if (_instance->_syncChannel == 0) return;
     Packet pkt;
     memcpy(&pkt, data, sizeof(Packet));
     xQueueSendFromISR(_instance->_queue, &pkt, nullptr);
@@ -59,6 +65,10 @@ void SyncControl::process() {
 }
 
 void SyncControl::handlePacket(const Packet& pkt) {
+    if (pkt.channel != _syncChannel) {
+        LOG("[sync] ignored packet (ch %d != %d)\n", pkt.channel, _syncChannel);
+        return;
+    }
     if (pkt.cmd == CMD_PLAY) {
         LOG("[sync] play: %s endBeh=%u in %u ms\n", pkt.play.file, pkt.play.endBehavior, pkt.play.delayMs);
         _effectPlayer.stop();
@@ -92,10 +102,22 @@ void SyncControl::handlePacket(const Packet& pkt) {
 void SyncControl::broadcastPlay(const char* file, uint8_t endBehavior, uint32_t delayMs) {
     Packet pkt = {};
     pkt.cmd              = CMD_PLAY;
+    pkt.channel          = _syncChannel;
     pkt.play.delayMs     = delayMs;
     pkt.play.endBehavior = endBehavior;
     strncpy(pkt.play.file, file, sizeof(pkt.play.file) - 1);
 
+    if (_syncChannel == 0) {
+        // sync disabled — play locally only
+        _effectPlayer.stop();
+        _player.stopTask();
+        int err = _player.load(file);
+        if (err) { LOG("[sync] load failed: %d\n", err); return; }
+        _player.setEndBehavior(endBehavior);
+        _player.scheduleStart(esp_timer_get_time() + (int64_t)delayMs * 1000);
+        _player.startTask(1);
+        return;
+    }
     esp_err_t r = esp_now_send(BROADCAST, (uint8_t*)&pkt, sizeof(pkt));
     if (r != ESP_OK) LOG("[sync] send failed: 0x%x\n", r);
 
@@ -110,7 +132,15 @@ void SyncControl::broadcastPlay(const char* file, uint8_t endBehavior, uint32_t 
 
 void SyncControl::broadcastStop() {
     Packet pkt = {};
-    pkt.cmd = CMD_STOP;
+    pkt.cmd     = CMD_STOP;
+    pkt.channel = _syncChannel;
+
+    if (_syncChannel == 0) {
+        _effectPlayer.stop();
+        _player.stopTask();
+        _player.unload();
+        return;
+    }
     esp_err_t r = esp_now_send(BROADCAST, (uint8_t*)&pkt, sizeof(pkt));
     if (r != ESP_OK) LOG("[sync] send failed: 0x%x\n", r);
 
@@ -122,6 +152,7 @@ void SyncControl::broadcastStop() {
 void SyncControl::broadcastEffect(const EffectParams& p) {
     Packet pkt = {};
     pkt.cmd               = CMD_EFFECT;
+    pkt.channel           = _syncChannel;
     pkt.effect.effectId   = p.effectId;
     pkt.effect.speed      = p.speed;
     pkt.effect.dotSize    = p.dotSize;
@@ -132,6 +163,12 @@ void SyncControl::broadcastEffect(const EffectParams& p) {
         pkt.effect.paletteB[i] = p.palette[i].b;
     }
 
+    if (_syncChannel == 0) {
+        _player.stopTask();
+        _player.unload();
+        _effectPlayer.start(p);
+        return;
+    }
     esp_err_t r = esp_now_send(BROADCAST, (uint8_t*)&pkt, sizeof(pkt));
     if (r != ESP_OK) LOG("[sync] send failed: 0x%x\n", r);
 

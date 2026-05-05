@@ -13,7 +13,8 @@ public:
     SyncControl(PixPlayer& player, EffectPlayer& effectPlayer);
 
     // Call after WiFi.mode(WIFI_STA). Returns false on failure.
-    bool begin();
+    // syncChannel: 1–10 = group filter; 0 = sync disabled (ignore all packets, don't send).
+    bool begin(uint8_t syncChannel = 1);
 
     // Call from the wifi_ctrl task loop — processes received packets.
     void process();
@@ -48,6 +49,7 @@ private:
 
     struct __attribute__((packed)) Packet {
         uint8_t cmd;
+        uint8_t channel;  // sync channel 1–10; receivers ignore packets with mismatched channel
         union {
             PlayData   play;
             EffectData effect;
@@ -59,5 +61,6 @@ private:
 
     PixPlayer&    _player;
     EffectPlayer& _effectPlayer;
-    QueueHandle_t _queue = nullptr;
+    QueueHandle_t _queue      = nullptr;
+    uint8_t       _syncChannel = 1;
 };

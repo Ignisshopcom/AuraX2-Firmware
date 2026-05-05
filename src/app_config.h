@@ -25,17 +25,19 @@ struct AppConfig {
     uint8_t  paletteB[4];
     // Current limiting
     uint16_t mALimit;   // max mA total draw; 0 = no limit
-    uint16_t mAPerLed;  // mA per LED at full white (R+G+B=255); default 60
     // Battery monitoring
     uint8_t  batPin;              // ADC pin
     float    batMultiplier;       // voltage divider ratio (e.g. 2.0 for 1:2 divider)
     float    batCalibration;      // offset correction in V
     uint16_t batMinMv;            // 0% threshold in mV
     uint16_t batMaxMv;            // 100% threshold in mV
-    uint16_t batCapacityMah;      // capacity in mAh (informational)
     uint32_t batIntervalMs;       // measurement period in ms
     uint8_t  batAutoOff;          // 1 = enable auto-off when low
     uint8_t  batAutoOffThreshold; // auto-off threshold in %
+    // Sync channel
+    uint8_t  syncChannel;  // 1–10 = ESP-NOW sync group; 0 = sync disabled
+    // Boot state: 0 = autoplay program, 1 = restore last effect
+    uint8_t  autoStart;
 };
 
 // Load from /config.json — falls back to compile-time defaults if missing

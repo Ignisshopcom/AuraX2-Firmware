@@ -6,9 +6,10 @@
 
 // progEndBehavior values
 enum class PixEndBehavior : uint8_t {
-    Exit   = 0,
-    Repeat = 1,
-    Keep   = 2,
+    Exit     = 0,
+    Repeat   = 1,
+    Keep     = 2,
+    PingPong = 3,   // columns reverse direction at each end (mirror effect)
 };
 
 class PixPlayer {
@@ -35,8 +36,9 @@ public:
     void blackout();   // stop playback and turn off all LEDs
     void setBrightness(uint8_t pct);   // delegates to ILedDriver::setBrightness()
     void setTempo(uint16_t pct);       // 100 = normal, 50 = half speed, 200 = double speed
+    void nudge(int32_t ms);            // shift program timeline (+ = forward, - = backward)
     // Override end-of-show behavior. 255 = use value from .pix file (default).
-    // 0 = Exit (blackout), 1 = Repeat (loop), 2 = Keep last frame.
+    // 0 = Exit (blackout), 1 = Repeat (loop), 2 = Keep last frame, 3 = PingPong.
     void setEndBehavior(uint8_t v);
 
     bool isLoaded()     const { return _loaded; }
@@ -96,9 +98,10 @@ private:
     uint32_t         _framesExpected     = 0;
 
     uint16_t         _tempo               = 100;  // playback speed %; 100=normal, 50=half, 200=double
-    uint8_t          _endBehaviorOverride = 255;  // 255=from file, 0=Exit, 1=Repeat, 2=Keep
+    uint8_t          _endBehaviorOverride = 255;  // 255=from file, 0=Exit, 1=Repeat, 2=Keep, 3=PingPong
     bool             _keepFrozen          = false; // set when Keep behavior locks last frame
     bool             _inPause             = false; // true = jsme v pauze, clear() již zavolán
+    bool             _pingPongReverse     = false; // true = playing columns backward in PingPong mode
 
     TaskHandle_t     _taskHandle  = nullptr;
     volatile bool    _taskRunning = false;

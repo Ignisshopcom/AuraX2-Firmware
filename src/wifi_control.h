@@ -48,6 +48,7 @@ private:
         uint32_t  lastSeenMs;
         uint8_t   batPct;
         int8_t    rssi;
+        uint8_t   syncChannel;
     };
 
     PixPlayer&    _player;

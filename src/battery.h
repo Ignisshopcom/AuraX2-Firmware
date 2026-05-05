@@ -12,12 +12,15 @@ public:
         if (!_cfg) return false;
         uint32_t now = millis();
         if (_lastMs != 0 && now - _lastMs < _cfg->batIntervalMs) return false;
-        _lastMs = now;
 
-        int sum = 0;
-        for (int i = 0; i < 8; i++) sum += analogReadMilliVolts(_cfg->batPin);
-        float mv = (sum / 8.0f + _cfg->batCalibration * 1000.0f) * _cfg->batMultiplier;
-        _mv = (uint16_t)(mv < 0 ? 0 : mv > 65535 ? 65535 : mv);
+        float raw = (analogReadMilliVolts(_cfg->batPin) + _cfg->batCalibration * 1000.0f)
+                    * _cfg->batMultiplier;
+        if (_lastMs == 0)
+            _mvf = raw;
+        else
+            _mvf += 0.05f * (raw - _mvf);
+        _lastMs = now;
+        _mv = (uint16_t)(_mvf < 0 ? 0 : _mvf > 65535 ? 65535 : _mvf);
 
         if (_mv >= _cfg->batMaxMv) _pct = 100;
         else if (_mv <= _cfg->batMinMv) _pct = 0;
@@ -42,6 +45,7 @@ public:
 private:
     AppConfig* _cfg          = nullptr;
     uint32_t   _lastMs       = 0;
+    float      _mvf          = 0.0f;
     uint16_t   _mv           = 0;
     uint8_t    _pct          = 0;
     bool       _autoOffActive = false;
