@@ -345,8 +345,8 @@ bool PixPlayer::update() {
             }
         } else {
             if (++_curCol >= (int)cmd.height) {
-                _curCol = (int)cmd.height - 2;
-                _pingPongReverse = true;
+                _curCol = (cmd.height > 1) ? (int)cmd.height - 2 : 0;
+                _pingPongReverse = (cmd.height > 1);
             }
         }
     } else {

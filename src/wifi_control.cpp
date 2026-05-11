@@ -548,8 +548,8 @@ void WifiControl::handleEffectStart() {
     p.dotSize  = doc["dotSize"] | 3;
     if (p.speed < 10)   p.speed = 10;
     if (p.speed > 1000) p.speed = 1000;
-    if (p.dotSize < 1)                      p.dotSize = 1;
-    if (p.dotSize > (uint8_t)_cfg.numLeds)  p.dotSize = (uint8_t)_cfg.numLeds;
+    if (p.dotSize < 1)                  p.dotSize = 1;
+    if (p.dotSize > _cfg.numLeds)       p.dotSize = _cfg.numLeds;
     JsonArray palette = doc["palette"];
     p.paletteSize = 0;
     for (JsonObject c : palette) {
@@ -598,7 +598,10 @@ void WifiControl::handleConfigPost() {
         return;
     }
     _cfg.ledType = doc["ledType"] | _cfg.ledType;
-    _cfg.numLeds = doc["numLeds"] | _cfg.numLeds;
+    {
+        uint16_t n = doc["numLeds"] | _cfg.numLeds;
+        if (n >= 1 && n <= 2048) _cfg.numLeds = n;
+    }
     _cfg.dataPin = doc["dataPin"] | _cfg.dataPin;
     _cfg.clkPin  = doc["clkPin"]  | _cfg.clkPin;
     strlcpy(_cfg.ssid,     doc["ssid"]     | _cfg.ssid,     sizeof(_cfg.ssid));
@@ -620,9 +623,15 @@ void WifiControl::handleConfigPost() {
     _cfg.batPin              = doc["batPin"]              | _cfg.batPin;
     _cfg.batMultiplier       = doc["batMultiplier"]       | _cfg.batMultiplier;
     _cfg.batCalibration      = doc["batCalibration"]      | _cfg.batCalibration;
-    _cfg.batMinMv            = doc["batMinMv"]            | _cfg.batMinMv;
-    _cfg.batMaxMv            = doc["batMaxMv"]            | _cfg.batMaxMv;
-    _cfg.batIntervalMs       = doc["batIntervalMs"]       | _cfg.batIntervalMs;
+    {
+        uint16_t mn = doc["batMinMv"] | _cfg.batMinMv;
+        uint16_t mx = doc["batMaxMv"] | _cfg.batMaxMv;
+        if (mx > mn) { _cfg.batMinMv = mn; _cfg.batMaxMv = mx; }
+    }
+    {
+        uint32_t iv = doc["batIntervalMs"] | _cfg.batIntervalMs;
+        if (iv >= 100) _cfg.batIntervalMs = iv;
+    }
     if (doc.containsKey("batAutoOff")) _cfg.batAutoOff = doc["batAutoOff"] ? 1 : 0;
     _cfg.batAutoOffThreshold = doc["batAutoOffThreshold"] | _cfg.batAutoOffThreshold;
     _cfg.syncChannel         = doc["syncChannel"]         | _cfg.syncChannel;

@@ -70,13 +70,14 @@ void SyncControl::handlePacket(const Packet& pkt) {
         return;
     }
     if (pkt.cmd == CMD_PLAY) {
-        LOG("[sync] play: %s endBeh=%u in %u ms\n", pkt.play.file, pkt.play.endBehavior, pkt.play.delayMs);
+        uint32_t delayMs = pkt.play.delayMs > 30000 ? 30000 : pkt.play.delayMs;
+        LOG("[sync] play: %s endBeh=%u in %u ms\n", pkt.play.file, pkt.play.endBehavior, delayMs);
         _effectPlayer.stop();
         _player.stopTask();
         int err = _player.load(pkt.play.file);
         if (err) { LOG("[sync] load failed: %d\n", err); return; }
         _player.setEndBehavior(pkt.play.endBehavior);
-        _player.scheduleStart(esp_timer_get_time() + (int64_t)pkt.play.delayMs * 1000);
+        _player.scheduleStart(esp_timer_get_time() + (int64_t)delayMs * 1000);
         _player.startTask(1);
     } else if (pkt.cmd == CMD_STOP) {
         LOGLN("[sync] stop");
@@ -88,10 +89,10 @@ void SyncControl::handlePacket(const Packet& pkt) {
         _player.stopTask();
         _player.unload();
         EffectParams p = {};
-        p.effectId   = pkt.effect.effectId;
-        p.speed      = pkt.effect.speed;
-        p.dotSize    = pkt.effect.dotSize;
-        p.paletteSize = pkt.effect.paletteSize;
+        p.effectId    = pkt.effect.effectId;
+        p.speed       = pkt.effect.speed   < 10   ? 10   : (pkt.effect.speed   > 1000 ? 1000 : pkt.effect.speed);
+        p.dotSize     = pkt.effect.dotSize < 1    ? 1    : pkt.effect.dotSize;
+        p.paletteSize = pkt.effect.paletteSize > 4 ? 4   : pkt.effect.paletteSize;
         for (int i = 0; i < p.paletteSize && i < 4; i++) {
             p.palette[i] = {pkt.effect.paletteR[i], pkt.effect.paletteG[i], pkt.effect.paletteB[i]};
         }

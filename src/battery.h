@@ -22,7 +22,7 @@ public:
         _lastMs = now;
         _mv = (uint16_t)(_mvf < 0 ? 0 : _mvf > 65535 ? 65535 : _mvf);
 
-        if (_mv >= _cfg->batMaxMv) _pct = 100;
+        if (_mv >= _cfg->batMaxMv || _cfg->batMaxMv <= _cfg->batMinMv) _pct = 100;
         else if (_mv <= _cfg->batMinMv) _pct = 0;
         else _pct = (uint8_t)(((uint32_t)(_mv - _cfg->batMinMv) * 100) /
                                (_cfg->batMaxMv - _cfg->batMinMv));

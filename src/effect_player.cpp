@@ -18,6 +18,7 @@ void EffectPlayer::start(const EffectParams& p) {
         case 2:  _effect = new AndroidEffect(); break;
         default: _effect = new SolidEffect();   break;
     }
+    if (!_effect) return;  // OOM — better than crashing in reset()
     _effect->reset(p, _leds.numLeds());
     _taskRunning = true;
     xTaskCreatePinnedToCore(taskEntry, "effect", 4096, this, 4, &_taskHandle, 1);
