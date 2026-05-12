@@ -1,21 +1,92 @@
-<!DOCTYPE html><html><head>
+<!DOCTYPE html><html lang="cs"><head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>AuraX</title>
 <style>
-  body { font-family: sans-serif; max-width: 500px; margin: 40px auto; padding: 0 16px; }
-  h1 { font-size: 1.4rem; }
-  button { padding: 10px 20px; margin: 4px; font-size: 1rem; cursor: pointer; border: none; border-radius: 4px; }
-  .play { background:#2a2; color:#fff; }
-  .stop { background:#a22; color:#fff; }
-  .save { background:#24a; color:#fff; }
-  .upload-area { border: 2px dashed #aaa; padding: 20px; text-align: center; border-radius: 8px; margin: 16px 0; }
-  details { margin-top: 16px; }
-  summary { cursor: pointer; font-weight: bold; padding: 8px 0; }
-  .cfg-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 12px 0; }
-  .cfg-grid label { display: flex; flex-direction: column; font-size: 0.85rem; }
-  .cfg-grid input, .cfg-grid select { padding: 4px; margin-top: 2px; font-size: 1rem; }
-  #status, #upProg, #fwProg { font-size: 0.9rem; color: #555; margin-top: 8px; }
+:root {
+  --bg:      #1a1a1a;
+  --surface: #252525;
+  --border:  #333;
+  --text:    #ddd;
+  --muted:   #777;
+  --accent:  #e07b39;
+  --green:   #2d7a3a;
+  --red:     #7a2d2d;
+  --blue:    #2d4a7a;
+}
+* { box-sizing: border-box; }
+body {
+  font-family: sans-serif;
+  max-width: 500px;
+  margin: 32px auto;
+  padding: 0 16px 40px;
+  background: var(--bg);
+  color: var(--text);
+}
+h1 { font-size: 1.4rem; margin: 0 0 20px; color: var(--accent); letter-spacing: .05em; }
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+button {
+  padding: 10px 20px; margin: 4px; font-size: 1rem;
+  cursor: pointer; border: none; border-radius: 6px;
+  transition: filter .15s;
+}
+button:hover  { filter: brightness(1.2); }
+button:active { filter: brightness(0.85); }
+.play   { background: var(--green); color: #fff; }
+.stop   { background: var(--red);   color: #fff; }
+.save   { background: var(--blue);  color: #fff; }
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 14px 16px;
+  margin: 10px 0;
+}
+details.card > summary {
+  cursor: pointer; font-weight: bold;
+  list-style: none; display: flex; align-items: center; gap: 8px;
+}
+details.card > summary::-webkit-details-marker { display: none; }
+details.card > summary::before {
+  content: '▶'; font-size: .65rem; color: var(--accent);
+  transition: transform .2s; flex-shrink: 0;
+}
+details.card[open] > summary::before { transform: rotate(90deg); }
+details.card > summary ~ * { margin-top: 12px; }
+input[type=text], input[type=number], input[type=password], select {
+  background: var(--bg); color: var(--text);
+  border: 1px solid var(--border); border-radius: 4px;
+  padding: 5px 8px; font-size: .95rem; width: 100%;
+}
+input[type=range] {
+  -webkit-appearance: none; width: 100%;
+  height: 4px; background: var(--border); border-radius: 2px;
+  outline: none; cursor: pointer;
+}
+input[type=range]::-webkit-slider-thumb {
+  -webkit-appearance: none; width: 18px; height: 18px;
+  border-radius: 50%; background: var(--accent); cursor: pointer;
+}
+input[type=range]::-moz-range-thumb {
+  width: 18px; height: 18px; border-radius: 50%;
+  background: var(--accent); border: none; cursor: pointer;
+}
+.cfg-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 8px 0; }
+.cfg-grid label { display: flex; flex-direction: column; font-size: .82rem; color: var(--muted); gap: 4px; }
+.dz {
+  border: 2px dashed var(--border); border-radius: 6px;
+  padding: 16px; text-align: center; color: var(--muted);
+  transition: border-color .2s;
+}
+.dz:hover { border-color: var(--accent); }
+.dz p { margin: 0 0 10px; }
+#status { font-size: .85rem; color: var(--muted); }
+#status b { color: var(--text); }
+#status a { color: var(--accent); }
+#peers { font-size: .85rem; color: var(--muted); margin-top: 4px; padding: 0 2px; }
+#peers a { color: var(--accent); }
+.prog { font-size: .85rem; color: var(--muted); margin: 6px 0 0; }
 </style>
 </head><body>
 <h1>AuraX</h1>
@@ -26,20 +97,22 @@
   <button class="stop" onclick="fetch('/off').then(refresh)">&#9866; Off</button>
 </div>
 
-<div style="margin:12px 0;display:flex;align-items:center;gap:8px">
-  <span style="font-size:0.9rem;white-space:nowrap">&#9728; Jas</span>
-  <input type="range" id="bri" min="0" max="100" style="flex:1" oninput="setBri(this.value)">
-  <span id="briVal" style="font-size:0.9rem;min-width:72px;text-align:right">PIX soubor</span>
-</div>
-<div style="margin:12px 0;display:flex;align-items:center;gap:8px">
-  <span style="font-size:0.9rem;white-space:nowrap">Sync</span>
-  <button onclick="nudge(-100)" style="padding:6px 14px">&#9664; &minus;100ms</button>
-  <button onclick="nudge(100)" style="padding:6px 14px">+100ms &#9654;</button>
+<div class="card" style="margin-top:14px">
+  <div style="display:flex;align-items:center;gap:10px">
+    <span style="font-size:.9rem;white-space:nowrap">&#9728; Jas</span>
+    <input type="range" id="bri" min="0" max="100" oninput="setBri(this.value)">
+    <span id="briVal" style="font-size:.9rem;min-width:72px;text-align:right">PIX soubor</span>
+  </div>
+  <div style="display:flex;align-items:center;gap:8px;margin-top:12px;flex-wrap:wrap">
+    <span style="font-size:.9rem;color:var(--muted);white-space:nowrap">Sync</span>
+    <button onclick="nudge(-100)" style="padding:6px 14px;font-size:.85rem">&#9664; &minus;100ms</button>
+    <button onclick="nudge(100)"  style="padding:6px 14px;font-size:.85rem">+100ms &#9654;</button>
+  </div>
 </div>
 
-<details id="efxPanel">
+<details class="card" id="efxPanel">
   <summary>&#10024; Efekty</summary>
-  <div class="cfg-grid" style="margin-top:8px">
+  <div class="cfg-grid">
     <label>Efekt
       <select id="efxId">
         <option value="1">Solid</option>
@@ -47,39 +120,43 @@
       </select>
     </label>
     <label>&#352;&#237;&#345;ka
-      <input type="number" id="efxDot" value="3" min="1" max="20" style="width:60px">
+      <input type="number" id="efxDot" value="3" min="1" max="20" style="width:70px">
     </label>
     <label style="grid-column:1/-1">Rychlost
-      <input type="range" id="efxSpeed" value="100" min="10" max="1000" style="width:100%">
+      <input type="range" id="efxSpeed" value="100" min="10" max="1000">
     </label>
   </div>
-  <div style="margin:8px 0">
-    <span style="font-size:0.85rem">Paleta:</span>
-    <div id="palette" style="display:inline-flex;flex-wrap:wrap;gap:4px;align-items:center;vertical-align:middle"></div>
-    <button onclick="addColor()" style="padding:2px 8px;font-size:1rem">+</button>
+  <div style="margin:8px 0;display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+    <span style="font-size:.85rem;color:var(--muted)">Paleta</span>
+    <div id="palette" style="display:inline-flex;flex-wrap:wrap;gap:4px;align-items:center"></div>
+    <button onclick="addColor()" style="padding:3px 10px;font-size:1.1rem;line-height:1">+</button>
   </div>
   <button class="play" onclick="startEffect()">&#9654; Spustit efekt</button>
 </details>
 
-<div class="upload-area">
-  <p>Nahr&#225;t .pix soubor</p>
-  <input type="file" id="file" accept=".pix">
-  <br><br>
-  <button onclick="upload()">Nahrát</button>
-  <p id="upProg"></p>
+<div class="card">
+  <div class="dz">
+    <p>Nahr&#225;t .pix soubor</p>
+    <input type="file" id="file" accept=".pix">
+    <br><br>
+    <button onclick="upload()">Nahr&#225;t</button>
+    <p id="upProg" class="prog"></p>
+  </div>
 </div>
 
-<div id="status">načítám...</div>
-<div id="peers" style="font-size:0.9rem;margin-top:6px;color:#555"></div>
+<div id="status" class="card">na&#269;&#237;t&#225;m&#8230;</div>
+<div id="peers"></div>
 
-<div style="margin-top:24px;display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-  <span style="font-size:0.85rem">Firmware (.bin)</span>
-  <input type="file" id="fw" accept=".bin" style="font-size:0.8rem;max-width:180px">
-  <button class="save" onclick="updateFw()" style="padding:6px 12px;font-size:0.85rem">Nahrát</button>
-  <span id="fwProg" style="font-size:0.85rem;color:#555"></span>
+<div class="card" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+  <span style="font-size:.85rem;color:var(--muted)">Firmware (.bin)</span>
+  <input type="file" id="fw" accept=".bin" style="font-size:.8rem;max-width:180px;width:auto">
+  <button class="save" onclick="updateFw()" style="padding:6px 14px;font-size:.85rem">Nahr&#225;t</button>
+  <span id="fwProg" class="prog" style="margin:0"></span>
 </div>
 
-<p style="margin-top:24px"><a href="/experimental" style="font-size:0.85rem;color:#aaa">&#9881; Experimental</a></p>
+<p style="margin-top:20px;padding:0 2px">
+  <a href="/experimental" style="font-size:.85rem;color:var(--muted)">&#9881; Experimental</a>
+</p>
 
 <script>
 function nudge(ms) { fetch('/nudge?v=' + ms); }
@@ -129,7 +206,7 @@ function refresh() {
       +(d.frames_expected?' &nbsp;|&nbsp; snímky: '+d.frames_rendered+'/'+d.frames_expected+(d.frames_expected>d.frames_rendered?' ⚠':''):'')
       +'<br>'+(d.ap_mode?'&#128246; AP: ':'IP: ')+'<a href="http://'+d.ip+'">'+d.ip+'</a>'
       +(d.hostname?' &nbsp;|&nbsp; '+d.hostname+'.local':'')
-      +(d.ap_mode?' <span style="color:#a60">(Windows: použij IP odkaz)</span>':'')
+      +(d.ap_mode?' <span style="color:#e07b39">(Windows: použij IP odkaz)</span>':'')
       +' &nbsp;|&nbsp; &#128267; '+d.battery_pct+'% ('+d.battery_mv+' mV)'
       +(!d.ap_mode?rssiBar(d.rssi):'');
   });
