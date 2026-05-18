@@ -1,7 +1,6 @@
 import { useState } from 'preact/hooks'
-import type { Config, Color } from '../lib/types'
+import type { Config } from '../lib/types'
 import type { EffectValues } from '../lib/EffectPanel'
-import { EffectPanel } from '../lib/EffectPanel'
 
 type FormState = {
   ledType: number; numLeds: number; dataPin: number; clkPin: number
@@ -11,7 +10,9 @@ type FormState = {
   batIntervalMs: number; batAutoOff: boolean; batAutoOffThreshold: number
 }
 
-export function ConfigForm({ config }: { config: Config }) {
+type Props = { config: Config; effect: EffectValues; onEffectChange: (patch: Partial<EffectValues>) => void }
+
+export function ConfigForm({ config, effect }: Props) {
   const [msg, setMsg] = useState('')
   const [form, setForm] = useState<FormState>({
     ledType: config.ledType ?? 1, numLeds: config.numLeds ?? 144,
@@ -25,14 +26,6 @@ export function ConfigForm({ config }: { config: Config }) {
     batAutoOff: config.batAutoOff ?? false, batAutoOffThreshold: config.batAutoOffThreshold ?? 10,
   })
   const set = (patch: Partial<FormState>) => setForm((prev) => ({ ...prev, ...patch }))
-
-  const [effect, setEffect] = useState<EffectValues>({
-    effectId: config.effectId ?? 1, effectSpeed: config.effectSpeed ?? 100,
-    effectDotSize: config.effectDotSize ?? 3,
-    palette: (config.paletteR ?? [255]).map((r, i) => ({
-      r, g: (config.paletteG ?? [])[i] ?? 0, b: (config.paletteB ?? [])[i] ?? 0,
-    })) as Color[],
-  })
 
   function save() {
     fetch('/config', {
@@ -124,26 +117,11 @@ export function ConfigForm({ config }: { config: Config }) {
         </div>
       </details>
 
-      <EffectPanel {...effect} onChange={(patch) => setEffect((prev) => ({ ...prev, ...patch }))} />
-
       <div style="margin-top:4px">
         <button type="button" class="save" onClick={save}>Uložit</button>
         <button type="button" class="reboot" onClick={reboot}>Reboot</button>
       </div>
       {msg && <p class="cfg-msg">{msg}</p>}
-
-      <hr />
-      <div class="fw-row">
-        <span class="fw-label">Firmware (.bin)</span>
-        <input type="file" accept=".bin" class="fw-input" onChange={(e) => {
-          const file = (e.currentTarget as HTMLInputElement).files?.[0]
-          if (!file) return
-          setMsg('Nahrávám firmware...')
-          const fd = new FormData()
-          fd.append('firmware', file, file.name)
-          fetch('/update', { method: 'POST', body: fd }).then((r) => r.text()).then(setMsg)
-        }} />
-      </div>
     </details>
   )
 }
