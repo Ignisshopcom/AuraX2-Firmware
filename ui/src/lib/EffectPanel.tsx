@@ -38,7 +38,7 @@ export function EffectPanel({ effectId, effectSpeed, effectDotSize, palette, onC
           </select>
         </label>
         <label>Šířka
-          <input type="number" value={effectDotSize} min={1} max={20} style="width:70px"
+          <input type="number" value={effectDotSize} min={1} style="width:70px"
             onInput={(e) => onChange({ effectDotSize: +(e.currentTarget as HTMLInputElement).value })} />
         </label>
         <label style="grid-column:1/-1">Rychlost
