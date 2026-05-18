@@ -7,9 +7,25 @@
 #include <ArduinoOTA.h>
 #include <Update.h>
 #include <esp_wifi.h>
+#include <mdns.h>
 #include "web_html.h"
 
 // ── WifiControl ───────────────────────────────────────────────────────────────
+
+void WifiControl::mdnsBegin(const char* hostname) {
+    if (MDNS.begin(hostname)) {
+        MDNS.addService("http", "tcp", 80);
+        LOG("[mdns] http://%s.local\n", hostname);
+    }
+    if (strcmp(hostname, "aurax") != 0) {
+        mdns_ip_addr_t addr = {};
+        addr.addr.type = ESP_IPADDR_TYPE_V4;
+        addr.addr.u_addr.ip4.addr = (_apMode ? WiFi.softAPIP() : WiFi.localIP());
+        addr.next = nullptr;
+        if (mdns_delegate_hostname_add("aurax", &addr) == ESP_OK)
+            LOGLN("[mdns] alias: aurax.local → " + String(hostname) + ".local");
+    }
+}
 
 WifiControl::WifiControl(PixPlayer& player, EffectPlayer& effectPlayer, ILedDriver& leds, AppConfig& cfg, SyncControl* sync)
     : _player(player), _effectPlayer(effectPlayer), _leds(leds), _cfg(cfg), _sync(sync) {}
@@ -54,6 +70,11 @@ bool WifiControl::begin(uint32_t timeoutMs) {
 
     _server.on("/",            HTTP_GET, [this]() { handleRoot(); });
     _server.on("/experimental", HTTP_GET, [this]() {
+        if (strcmp(_cfg.hostname, "aurax") != 0 && _server.hostHeader() == "aurax.local") {
+            _server.sendHeader("Location", "http://" + String(_cfg.hostname) + ".local/experimental");
+            _server.send(302, "text/plain", "");
+            return;
+        }
         _server.send_P(200, "text/html", EXPERIMENTAL_HTML);
     });
     _server.on("/play",   HTTP_GET,  [this]() { handlePlay();      });
@@ -143,10 +164,7 @@ bool WifiControl::begin(uint32_t timeoutMs) {
 
     strlcpy(_wantedHostname, _cfg.hostname, sizeof(_wantedHostname));
 
-    if (MDNS.begin(_cfg.hostname)) {
-        MDNS.addService("http", "tcp", 80);
-        LOG("[mdns] http://%s.local\n", _cfg.hostname);
-    }
+    mdnsBegin(_cfg.hostname);
 
     if (!_apMode) {
         _udp.begin(DISCOVERY_PORT);
@@ -179,6 +197,11 @@ void WifiControl::handle() {
 // ── handlers ──────────────────────────────────────────────────────────────────
 
 void WifiControl::handleRoot() {
+    if (strcmp(_cfg.hostname, "aurax") != 0 && _server.hostHeader() == "aurax.local") {
+        _server.sendHeader("Location", "http://" + String(_cfg.hostname) + ".local/");
+        _server.send(302, "text/plain", "");
+        return;
+    }
     _server.send_P(200, "text/html", CLIENT_HTML);
 }
 
@@ -428,7 +451,7 @@ void WifiControl::receivePeers() {
             senderIp.toString().c_str(), senderChipId, myChipId, newHost);
         strlcpy(_cfg.hostname, newHost, sizeof(_cfg.hostname));
         MDNS.end();
-        if (MDNS.begin(_cfg.hostname)) MDNS.addService("http", "tcp", 80);
+        mdnsBegin(_cfg.hostname);
         announce();
         return;
     }
@@ -468,7 +491,7 @@ void WifiControl::expirePeers() {
             if (wasBlockingWanted && strcmp(_cfg.hostname, _wantedHostname) != 0) {
                 strlcpy(_cfg.hostname, _wantedHostname, sizeof(_cfg.hostname));
                 MDNS.end();
-                if (MDNS.begin(_cfg.hostname)) MDNS.addService("http", "tcp", 80);
+                mdnsBegin(_cfg.hostname);
                 LOG("[mdns] reclaimed http://%s.local\n", _cfg.hostname);
                 announce();
             }

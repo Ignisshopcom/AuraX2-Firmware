@@ -38,6 +38,7 @@ private:
     void handleConfigPost();
     void handleOta();
 
+    void mdnsBegin(const char* hostname);
     void announce();
     void receivePeers();
     void expirePeers();
