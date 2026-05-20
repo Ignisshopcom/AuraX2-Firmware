@@ -32,7 +32,8 @@ export function ConfigForm({ config, effect }: Props) {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        ...form, ...effect,
+        ...form,
+        effectId: effect.effectId, effectSpeed: effect.effectSpeed, effectDotSize: effect.effectDotSize,
         paletteSize: effect.palette.length,
         paletteR: effect.palette.map((c) => c.r),
         paletteG: effect.palette.map((c) => c.g),

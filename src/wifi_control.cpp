@@ -342,7 +342,7 @@ void WifiControl::handleEffectStop() {
 }
 
 void WifiControl::handleConfigPost() {
-    StaticJsonDocument<1024> doc;
+    StaticJsonDocument<2048> doc;
     if (deserializeJson(doc, _server.arg("plain")) != DeserializationError::Ok) {
         _server.send(400, "text/plain", "JSON error");
         return;
