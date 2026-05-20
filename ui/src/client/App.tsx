@@ -6,7 +6,7 @@ import { PeerList } from '../lib/PeerList'
 import { BriSync } from '../lib/BriSync'
 import { EffectPanel } from '../lib/EffectPanel'
 import { UploadCard } from '../lib/UploadCard'
-import { FirmwareCard } from '../lib/FirmwareCard'
+import { SettingsCard } from '../lib/SettingsCard'
 
 export function App() {
   const [status, setStatus] = useState<StatusResponse | null>(null)
@@ -58,7 +58,7 @@ export function App() {
       <UploadCard onUploaded={refresh} />
       {status && <StatusCard status={status} />}
       <PeerList peers={peers} />
-      <FirmwareCard />
+      {config && <SettingsCard config={config} />}
     </>
   )
 }
