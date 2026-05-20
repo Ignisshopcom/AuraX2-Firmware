@@ -51,7 +51,7 @@ export function App() {
       <p style="margin:0 0 16px">
         <a href="/" style="font-size:.85rem;color:var(--muted)">← Zpět</a>
       </p>
-      <h1>AuraX <span class="exp-label">EXPERIMENTAL</span></h1>
+      <h1>AuraX <span class="exp-label">EXPERIMENTAL</span>{status?.hostname && <span class="muted" style="font-size:.75em;font-weight:normal"> {status.hostname}</span>}</h1>
       <div>
         <button class="play" onClick={() => fetch('/play').then(refresh)}>▶ Play</button>
         <button class="stop" onClick={() => fetch('/stop').then(refresh)}>■ Stop</button>
