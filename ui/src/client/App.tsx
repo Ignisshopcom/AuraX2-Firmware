@@ -47,7 +47,7 @@ export function App() {
 
   return (
     <>
-      <h1>AuraX</h1>
+      <h1>AuraX {status?.hostname && <span class="muted" style="font-size:.75em;font-weight:normal">{status.hostname}</span>}</h1>
       <div>
         <button class="play" onClick={() => fetch('/play').then(refresh)}>▶ Play</button>
         <button class="stop" onClick={() => fetch('/stop').then(refresh)}>■ Stop</button>
