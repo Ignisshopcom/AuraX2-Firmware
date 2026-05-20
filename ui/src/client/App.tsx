@@ -59,9 +59,6 @@ export function App() {
       {status && <StatusCard status={status} />}
       <PeerList peers={peers} />
       <FirmwareCard />
-      <p style="margin-top:20px;padding:0 2px">
-        <a href="/experimental" style="font-size:.85rem;color:var(--muted)">⚙ Experimental</a>
-      </p>
     </>
   )
 }
