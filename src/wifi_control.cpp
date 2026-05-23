@@ -35,6 +35,9 @@ bool WifiControl::begin(uint32_t timeoutMs) {
         _apMode = true;
     } else {
         WiFi.mode(WIFI_STA);
+        WiFi.setSleep(false);
+        WiFi.setHostname(_cfg.hostname);
+        esp_wifi_set_ps(WIFI_PS_NONE);
         for (int attempt = 1; attempt <= 2 && !_apMode; attempt++) {
             WiFi.begin(_cfg.ssid, _cfg.password);
             LOG("[wifi] connecting to %s (pokus %d/2)", _cfg.ssid, attempt);
@@ -62,19 +65,18 @@ bool WifiControl::begin(uint32_t timeoutMs) {
     if (_apMode) {
         WiFi.disconnect(true);
         WiFi.mode(WIFI_AP);
+        WiFi.setSleep(false);
         char apSsid[32];
         snprintf(apSsid, sizeof(apSsid), "AuraX-%04X", (uint16_t)ESP.getEfuseMac());
+        WiFi.softAPsetHostname(_cfg.hostname);
         WiFi.softAP(apSsid);
+        _dns.start(53, "*", WiFi.softAPIP());
         LOG("[wifi] AP mode: SSID=%s IP=%s\n", apSsid, WiFi.softAPIP().toString().c_str());
+        LOG("[dns] captive DNS: *.local -> %s\n", WiFi.softAPIP().toString().c_str());
     }
 
     _server.on("/",            HTTP_GET, [this]() { handleRoot(); });
     _server.on("/experimental", HTTP_GET, [this]() {
-        if (strcmp(_cfg.hostname, "aurax") != 0 && _server.hostHeader() == "aurax.local") {
-            _server.sendHeader("Location", "http://" + String(_cfg.hostname) + ".local/experimental");
-            _server.send(302, "text/plain", "");
-            return;
-        }
         _server.send_P(200, "text/html", EXPERIMENTAL_HTML);
     });
     _server.on("/play",   HTTP_GET,  [this]() { handlePlay();      });
@@ -180,6 +182,7 @@ bool WifiControl::begin(uint32_t timeoutMs) {
 
 void WifiControl::handle() {
     _server.handleClient();
+    if (_apMode) _dns.processNextRequest();
     if (_batMonitor.update()) {
         _player.stopTask();
         _player.unload();
@@ -197,11 +200,6 @@ void WifiControl::handle() {
 // ── handlers ──────────────────────────────────────────────────────────────────
 
 void WifiControl::handleRoot() {
-    if (strcmp(_cfg.hostname, "aurax") != 0 && _server.hostHeader() == "aurax.local") {
-        _server.sendHeader("Location", "http://" + String(_cfg.hostname) + ".local/");
-        _server.send(302, "text/plain", "");
-        return;
-    }
     _server.send_P(200, "text/html", CLIENT_HTML);
 }
 

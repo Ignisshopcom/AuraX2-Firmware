@@ -1,5 +1,6 @@
 #pragma once
 
+#include <DNSServer.h>
 #include <WebServer.h>
 #include <WiFi.h>
 #include <LittleFS.h>
@@ -63,6 +64,7 @@ private:
     bool         _uploadError = false;
     bool         _apMode = false;
 
+    DNSServer      _dns;
     WiFiUDP        _udp;
     Peer           _peers[MAX_PEERS];
     int            _peerCount      = 0;
