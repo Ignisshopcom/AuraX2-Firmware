@@ -38,6 +38,29 @@ String WifiControl::rootUrl() const {
     return "http://" + activeIP().toString() + "/";
 }
 
+bool WifiControl::isIpHost(const String& host) const {
+    if (host.length() == 0) return false;
+    for (size_t i = 0; i < host.length(); i++) {
+        char c = host.charAt(i);
+        if (c == ':') break;  // strip optional :port
+        if (c != '.' && (c < '0' || c > '9')) return false;
+    }
+    return true;
+}
+
+bool WifiControl::shouldRedirectCaptive() {
+    if (!_apMode) return false;
+    String host = _server.hostHeader();
+    if (host.length() == 0) return false;
+    host.toLowerCase();
+    int portSep = host.indexOf(':');
+    if (portSep >= 0) host = host.substring(0, portSep);
+    if (isIpHost(host)) return false;
+    if (host == "aurax.local" || host == "aurax") return false;
+    if (host == String(_cfg.hostname) + ".local" || host == String(_cfg.hostname)) return false;
+    return true;
+}
+
 bool WifiControl::begin(uint32_t timeoutMs) {
     if (strlen(_cfg.ssid) == 0) {
         _apMode = true;
@@ -76,8 +99,11 @@ bool WifiControl::begin(uint32_t timeoutMs) {
         WiFi.setSleep(false);
         char apSsid[32];
         snprintf(apSsid, sizeof(apSsid), "AuraX-%04X", (uint16_t)ESP.getEfuseMac());
+        IPAddress apIP(4, 3, 2, 1);
+        WiFi.softAPConfig(apIP, apIP, IPAddress(255, 255, 255, 0));
         WiFi.softAPsetHostname(_cfg.hostname);
         WiFi.softAP(apSsid);
+        _dns.setErrorReplyCode(DNSReplyCode::NoError);
         _dns.start(53, "*", WiFi.softAPIP());
         LOG("[wifi] AP mode: SSID=%s IP=%s\n", apSsid, WiFi.softAPIP().toString().c_str());
         LOG("[dns] captive DNS: *.local -> %s\n", WiFi.softAPIP().toString().c_str());
@@ -221,12 +247,16 @@ void WifiControl::handle() {
 // ── handlers ──────────────────────────────────────────────────────────────────
 
 void WifiControl::handleRoot() {
+    if (shouldRedirectCaptive()) {
+        handleCaptivePortal();
+        return;
+    }
     _server.send_P(200, "text/html", CLIENT_HTML);
 }
 
 void WifiControl::handleCaptivePortal() {
-    if (!_apMode) {
-        _server.send(204, "text/plain", "");
+    if (!_apMode || !shouldRedirectCaptive()) {
+        _server.send_P(200, "text/html", CLIENT_HTML);
         return;
     }
     _server.sendHeader("Location", rootUrl());

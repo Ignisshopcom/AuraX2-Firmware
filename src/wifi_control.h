@@ -43,6 +43,8 @@ private:
     void mdnsBegin(const char* hostname);
     IPAddress activeIP() const;
     String rootUrl() const;
+    bool isIpHost(const String& host) const;
+    bool shouldRedirectCaptive();
     void announce();
     void receivePeers();
     void expirePeers();
