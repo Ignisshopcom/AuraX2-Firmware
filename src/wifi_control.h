@@ -15,13 +15,15 @@ static constexpr uint16_t DISCOVERY_PORT   = 4210;
 static constexpr int      MAX_PEERS        = 8;
 static constexpr uint32_t PEER_EXPIRE_MS   = 90000;
 static constexpr uint32_t ANNOUNCE_INTERVAL_MS = 30000;
+static constexpr uint32_t STA_CONNECT_TIMEOUT_MS = 60000;
+static constexpr uint32_t STA_RETRY_INTERVAL_MS = 10000;
 
 class WifiControl {
 public:
     WifiControl(PixPlayer& player, EffectPlayer& effectPlayer, ILedDriver& leds, AppConfig& cfg, SyncControl* sync = nullptr);
 
     // Connect to WiFi and start HTTP server. Returns false on timeout.
-    bool begin(uint32_t timeoutMs = 10000);
+    bool begin(uint32_t timeoutMs = STA_CONNECT_TIMEOUT_MS);
 
     // Call from loop() — processes pending HTTP requests
     void handle();
@@ -45,6 +47,11 @@ private:
     String rootUrl() const;
     bool isIpHost(const String& host) const;
     bool shouldRedirectCaptive();
+    bool connectSta(uint32_t timeoutMs);
+    void startFallbackAp();
+    void stopFallbackAp();
+    void startStaServices();
+    void maintainWifi();
     void announce();
     void receivePeers();
     void expirePeers();
@@ -69,6 +76,9 @@ private:
     bool         _uploadError = false;
     bool         _apMode = false;
     bool         _apActive = false;
+    bool         _staServicesStarted = false;
+    uint32_t     _lastStaRetryMs = 0;
+    uint32_t     _staDisconnectedSinceMs = 0;
 
     DNSServer      _dns;
     WiFiUDP        _udp;

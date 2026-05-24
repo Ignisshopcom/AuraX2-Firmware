@@ -62,55 +62,101 @@ bool WifiControl::shouldRedirectCaptive() {
     return true;
 }
 
+bool WifiControl::connectSta(uint32_t timeoutMs) {
+    WiFi.softAPdisconnect(true);
+    _dns.stop();
+    _apActive = false;
+    _apMode = false;
+
+    WiFi.mode(WIFI_STA);
+    WiFi.setSleep(false);
+    WiFi.setHostname(_cfg.hostname);
+    esp_wifi_set_ps(WIFI_PS_NONE);
+    WiFi.disconnect(false);
+    WiFi.config(IPAddress((uint32_t)0), IPAddress((uint32_t)0), IPAddress((uint32_t)0));
+    delay(100);
+    WiFi.begin(_cfg.ssid, _cfg.password);
+    WiFi.setHostname(_cfg.hostname);
+    LOG("[wifi] connecting to %s", _cfg.ssid);
+
+    uint32_t start = millis();
+    while (WiFi.status() != WL_CONNECTED && millis() - start < timeoutMs) {
+        delay(250);
+        LOG("%c", '.');
+    }
+    if (WiFi.status() != WL_CONNECTED) {
+        LOGLN("\n[wifi] connect timeout");
+        WiFi.disconnect(false);
+        return false;
+    }
+
+    _staDisconnectedSinceMs = 0;
+    _lastStaRetryMs = 0;
+    LOG("\n[wifi] connected, IP: %s\n", WiFi.localIP().toString().c_str());
+    return true;
+}
+
+void WifiControl::startFallbackAp() {
+    if (_apActive) return;
+
+    _apMode = true;
+    WiFi.disconnect(false);
+    WiFi.mode(strlen(_cfg.ssid) ? WIFI_AP_STA : WIFI_AP);
+    WiFi.setSleep(false);
+
+    char apSsid[32];
+    snprintf(apSsid, sizeof(apSsid), "AuraX-%04X", (uint16_t)ESP.getEfuseMac());
+    IPAddress apIP(192, 168, 4, 1);
+    WiFi.softAPConfig(apIP, apIP, IPAddress(255, 255, 255, 0));
+    WiFi.softAPsetHostname(_cfg.hostname);
+    WiFi.softAP(apSsid);
+    _apActive = true;
+    _dns.setErrorReplyCode(DNSReplyCode::NoError);
+    _dns.start(53, "*", WiFi.softAPIP());
+    LOG("[wifi] AP fallback: SSID=%s IP=%s\n", apSsid, WiFi.softAPIP().toString().c_str());
+
+    if (strlen(_cfg.ssid)) {
+        WiFi.begin(_cfg.ssid, _cfg.password);
+        _lastStaRetryMs = millis();
+        LOGLN("[wifi] background STA retry enabled");
+    }
+}
+
+void WifiControl::stopFallbackAp() {
+    if (!_apActive) return;
+    _dns.stop();
+    WiFi.softAPdisconnect(true);
+    _apActive = false;
+    _apMode = false;
+    WiFi.mode(WIFI_STA);
+    WiFi.setSleep(false);
+    esp_wifi_set_ps(WIFI_PS_NONE);
+    LOG("[wifi] AP disabled, STA IP: %s\n", WiFi.localIP().toString().c_str());
+}
+
+void WifiControl::startStaServices() {
+    if (_staServicesStarted || WiFi.status() != WL_CONNECTED) return;
+    MDNS.end();
+    mdnsBegin(_cfg.hostname);
+    NBNS.begin(_cfg.hostname);
+    _udp.begin(DISCOVERY_PORT);
+    announce();
+    ArduinoOTA.setHostname(_cfg.hostname);
+    ArduinoOTA.begin();
+    _staServicesStarted = true;
+    LOG("[ota] ArduinoOTA ready\n");
+}
+
 bool WifiControl::begin(uint32_t timeoutMs) {
+    WiFi.persistent(false);
+    WiFi.softAPdisconnect(true);
+
     if (strlen(_cfg.ssid) == 0) {
-        _apMode = true;
-    } else {
-        WiFi.mode(WIFI_STA);
-        WiFi.setSleep(false);
-        WiFi.setHostname(_cfg.hostname);
-        esp_wifi_set_ps(WIFI_PS_NONE);
-        for (int attempt = 1; attempt <= 2 && !_apMode; attempt++) {
-            WiFi.begin(_cfg.ssid, _cfg.password);
-            LOG("[wifi] connecting to %s (pokus %d/2)", _cfg.ssid, attempt);
-            uint32_t start = millis();
-            while (WiFi.status() != WL_CONNECTED) {
-                if (millis() - start > timeoutMs) {
-                    WiFi.disconnect(true);
-                    if (attempt < 2)
-                        LOGLN("\n[wifi] timeout, zkouším znovu");
-                    else
-                        LOGLN("\n[wifi] timeout, starting AP");
-                    break;
-                }
-                delay(250);
-                LOG("%c", '.');
-            }
-            if (WiFi.status() == WL_CONNECTED) {
-                LOG("\n[wifi] connected, IP: %s\n", WiFi.localIP().toString().c_str());
-            } else if (attempt == 2) {
-                _apMode = true;
-            }
-        }
+        LOGLN("[wifi] no STA config, starting AP");
+        startFallbackAp();
+    } else if (!connectSta(timeoutMs)) {
+        startFallbackAp();
     }
-
-    if (_apMode) {
-        WiFi.disconnect(true);
-        WiFi.mode(WIFI_AP);
-        WiFi.setSleep(false);
-        char apSsid[32];
-        snprintf(apSsid, sizeof(apSsid), "AuraX-%04X", (uint16_t)ESP.getEfuseMac());
-        IPAddress apIP(192, 168, 4, 1);
-        WiFi.softAPConfig(apIP, apIP, IPAddress(255, 255, 255, 0));
-        WiFi.softAPsetHostname(_cfg.hostname);
-        WiFi.softAP(apSsid);
-        _apActive = true;
-        _dns.setErrorReplyCode(DNSReplyCode::NoError);
-        _dns.start(53, "*", WiFi.softAPIP());
-        LOG("[wifi] AP mode: SSID=%s IP=%s\n", apSsid, WiFi.softAPIP().toString().c_str());
-        LOG("[dns] captive DNS: *.local -> %s\n", WiFi.softAPIP().toString().c_str());
-    }
-
     _server.on("/",            HTTP_GET, [this]() { handleRoot(); });
     _server.on("/experimental", HTTP_GET, [this]() {
         _server.send_P(200, "text/html", EXPERIMENTAL_HTML);
@@ -193,7 +239,7 @@ bool WifiControl::begin(uint32_t timeoutMs) {
     _server.on("/connecttest.txt",    HTTP_GET, [this]() { handleCaptivePortal(); });
     _server.on("/ncsi.txt",           HTTP_GET, [this]() { handleCaptivePortal(); });
     _server.onNotFound([this]() {
-        if (_apMode) {
+        if (_apActive) {
             handleCaptivePortal();
         } else {
             _server.send(404, "text/plain", "Not found");
@@ -215,31 +261,52 @@ bool WifiControl::begin(uint32_t timeoutMs) {
 
     strlcpy(_wantedHostname, _cfg.hostname, sizeof(_wantedHostname));
 
-    mdnsBegin(_cfg.hostname);
-
-    if (!_apMode) {
-        NBNS.begin(_cfg.hostname);
-        _udp.begin(DISCOVERY_PORT);
-        announce();
-
-        ArduinoOTA.setHostname(_cfg.hostname);
-        ArduinoOTA.begin();
-        LOG("[ota] ArduinoOTA ready\n");
+    if (_apMode) {
+        mdnsBegin(_cfg.hostname);
+    } else {
+        startStaServices();
     }
 
     return true;
 }
 
+void WifiControl::maintainWifi() {
+    if (strlen(_cfg.ssid) == 0) return;
+
+    uint32_t now = millis();
+    if (WiFi.status() == WL_CONNECTED) {
+        _staDisconnectedSinceMs = 0;
+        if (_apActive) {
+            stopFallbackAp();
+            startStaServices();
+        }
+        return;
+    }
+
+    if (_staDisconnectedSinceMs == 0) _staDisconnectedSinceMs = now;
+    if (now - _lastStaRetryMs > STA_RETRY_INTERVAL_MS) {
+        LOG("[wifi] reconnecting to %s\n", _cfg.ssid);
+        WiFi.begin(_cfg.ssid, _cfg.password);
+        _lastStaRetryMs = now;
+    }
+
+    if (!_apActive && now - _staDisconnectedSinceMs > STA_CONNECT_TIMEOUT_MS) {
+        LOGLN("[wifi] reconnect timeout, starting AP fallback");
+        startFallbackAp();
+    }
+}
+
 void WifiControl::handle() {
     _server.handleClient();
     if (_apActive) _dns.processNextRequest();
+    maintainWifi();
     if (_batMonitor.update()) {
         _player.stopTask();
         _player.unload();
         _leds.clear();
         LOG("[bat] auto-off: battery %u%% (<= %u%%)\n", _batMonitor.pct(), _cfg.batAutoOffThreshold);
     }
-    if (!_apMode) {
+    if (!_apMode && WiFi.status() == WL_CONNECTED) {
         ArduinoOTA.handle();
         receivePeers();
         expirePeers();
