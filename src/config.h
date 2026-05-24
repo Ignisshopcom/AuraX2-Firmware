@@ -1,6 +1,6 @@
 #pragma once
 
-#define WIFI_SSID     "AuraX"
+#define WIFI_SSID     ""
 #define WIFI_PASSWORD ""
 
 // LED strip type — change to LED_TYPE_WS281X for WS2812B/WS2811 strips

@@ -476,6 +476,17 @@ void WifiControl::handleConfigPost() {
         _server.send(400, "text/plain", "JSON error");
         return;
     }
+    bool wifiChanged = false;
+    if (doc.containsKey("ssid") &&
+        strcmp(doc["ssid"] | "", _cfg.ssid) != 0)
+        wifiChanged = true;
+    if (doc.containsKey("password") &&
+        strcmp(doc["password"] | "", _cfg.password) != 0)
+        wifiChanged = true;
+    if (doc.containsKey("hostname") &&
+        strcmp(doc["hostname"] | "", _cfg.hostname) != 0)
+        wifiChanged = true;
+
     _cfg.ledType = doc["ledType"] | _cfg.ledType;
     {
         uint16_t n = doc["numLeds"] | _cfg.numLeds;
@@ -523,7 +534,13 @@ void WifiControl::handleConfigPost() {
     }
 
     if (saveConfig(_cfg)) {
-        _server.send(200, "text/plain", "Uloženo — reboot pro aktivaci");
+        if (wifiChanged) {
+            _server.send(200, "text/plain", "Uloženo — restartuji WiFi");
+            delay(750);
+            esp_restart();
+        } else {
+            _server.send(200, "text/plain", "Uloženo");
+        }
     } else {
         _server.send(500, "text/plain", "Chyba zápisu");
     }
