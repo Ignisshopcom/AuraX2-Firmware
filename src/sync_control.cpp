@@ -58,6 +58,7 @@ void SyncControl::recvCb(const uint8_t* mac, const uint8_t* data, int len) {
 
 // Called from wifi_ctrl task — safe to block, do I/O, call vTaskDelay.
 void SyncControl::process() {
+    if (!_queue) return;
     Packet pkt;
     if (xQueueReceive(_queue, &pkt, 0) == pdTRUE) {
         handlePacket(pkt);

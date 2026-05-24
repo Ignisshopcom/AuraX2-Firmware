@@ -15,8 +15,8 @@ static constexpr uint16_t DISCOVERY_PORT   = 4210;
 static constexpr int      MAX_PEERS        = 8;
 static constexpr uint32_t PEER_EXPIRE_MS   = 90000;
 static constexpr uint32_t ANNOUNCE_INTERVAL_MS = 30000;
-static constexpr uint32_t STA_CONNECT_TIMEOUT_MS = 60000;
-static constexpr uint32_t STA_RETRY_INTERVAL_MS = 10000;
+static constexpr uint32_t STA_CONNECT_TIMEOUT_MS = 12000;
+static constexpr uint32_t STA_RETRY_INTERVAL_MS = 18000;
 
 class WifiControl {
 public:
@@ -47,6 +47,7 @@ private:
     String rootUrl() const;
     bool isIpHost(const String& host) const;
     bool shouldRedirectCaptive();
+    uint8_t apClientCount() const;
     bool connectSta(uint32_t timeoutMs);
     void startFallbackAp();
     void stopFallbackAp();
@@ -76,6 +77,7 @@ private:
     bool         _uploadError = false;
     bool         _apMode = false;
     bool         _apActive = false;
+    bool         _apHadClient = false;
     bool         _staServicesStarted = false;
     uint32_t     _lastStaRetryMs = 0;
     uint32_t     _staDisconnectedSinceMs = 0;

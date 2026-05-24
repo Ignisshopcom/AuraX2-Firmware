@@ -85,7 +85,7 @@ static AppConfig defaults() {
     cfg.batIntervalMs       = 30000;
     cfg.batAutoOff          = 0;
     cfg.batAutoOffThreshold = 10;
-    cfg.syncChannel         = 1;
+    cfg.syncChannel         = 0;
     cfg.ledType = LED_TYPE;
     cfg.numLeds = NUM_LEDS;
     cfg.dataPin = (LED_TYPE == LED_TYPE_APA102) ? LED_DATA_PIN : WS_DATA_PIN;

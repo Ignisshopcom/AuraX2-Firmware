@@ -62,21 +62,32 @@ bool WifiControl::shouldRedirectCaptive() {
     return true;
 }
 
+uint8_t WifiControl::apClientCount() const {
+    if (!_apActive) return 0;
+    wifi_sta_list_t stationList;
+    if (esp_wifi_ap_get_sta_list(&stationList) != ESP_OK) return 0;
+    return stationList.num;
+}
+
 bool WifiControl::connectSta(uint32_t timeoutMs) {
-    WiFi.softAPdisconnect(true);
     _dns.stop();
     _apActive = false;
     _apMode = false;
+    _apHadClient = false;
+    _staServicesStarted = false;
 
+    WiFi.disconnect(true);
+    WiFi.config(IPAddress((uint32_t)0), IPAddress((uint32_t)0), IPAddress((uint32_t)0));
+    WiFi.softAPdisconnect(true);
     WiFi.mode(WIFI_STA);
-    WiFi.setSleep(false);
     WiFi.setHostname(_cfg.hostname);
     esp_wifi_set_ps(WIFI_PS_NONE);
-    WiFi.disconnect(false);
-    WiFi.config(IPAddress((uint32_t)0), IPAddress((uint32_t)0), IPAddress((uint32_t)0));
     delay(100);
     WiFi.begin(_cfg.ssid, _cfg.password);
+    WiFi.setSleep(false);
     WiFi.setHostname(_cfg.hostname);
+    _lastStaRetryMs = millis();
+    _staDisconnectedSinceMs = _lastStaRetryMs;
     LOG("[wifi] connecting to %s", _cfg.ssid);
 
     uint32_t start = millis();
@@ -86,7 +97,6 @@ bool WifiControl::connectSta(uint32_t timeoutMs) {
     }
     if (WiFi.status() != WL_CONNECTED) {
         LOGLN("\n[wifi] connect timeout");
-        WiFi.disconnect(false);
         return false;
     }
 
@@ -100,7 +110,7 @@ void WifiControl::startFallbackAp() {
     if (_apActive) return;
 
     _apMode = true;
-    WiFi.disconnect(false);
+    _apHadClient = false;
     WiFi.mode(strlen(_cfg.ssid) ? WIFI_AP_STA : WIFI_AP);
     WiFi.setSleep(false);
 
@@ -118,7 +128,7 @@ void WifiControl::startFallbackAp() {
     if (strlen(_cfg.ssid)) {
         WiFi.begin(_cfg.ssid, _cfg.password);
         _lastStaRetryMs = millis();
-        LOGLN("[wifi] background STA retry enabled");
+        LOGLN("[wifi] background STA retry enabled until AP client connects");
     }
 }
 
@@ -278,7 +288,39 @@ void WifiControl::maintainWifi() {
         _staDisconnectedSinceMs = 0;
         if (_apActive) {
             stopFallbackAp();
-            startStaServices();
+        }
+        startStaServices();
+        return;
+    }
+
+    if (_staServicesStarted) {
+        MDNS.end();
+        _udp.stop();
+        _staServicesStarted = false;
+        _lastAnnounceMs = 0;
+        LOGLN("[wifi] disconnected");
+    }
+
+    if (_apActive) {
+        uint8_t clients = apClientCount();
+        if (clients > 0) {
+            if (!_apHadClient) {
+                _apHadClient = true;
+                WiFi.disconnect(false);
+                LOG("[wifi] AP client connected (%u), pausing STA scan\n", clients);
+            }
+            return;
+        }
+        if (_apHadClient) {
+            _apHadClient = false;
+            _lastStaRetryMs = 0;
+            LOGLN("[wifi] AP client left, resuming STA scan");
+        }
+        if (now - _lastStaRetryMs > STA_RETRY_INTERVAL_MS) {
+            LOG("[wifi] AP fallback retry to %s\n", _cfg.ssid);
+            WiFi.mode(WIFI_AP_STA);
+            WiFi.begin(_cfg.ssid, _cfg.password);
+            _lastStaRetryMs = now;
         }
         return;
     }
