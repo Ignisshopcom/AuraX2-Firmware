@@ -4,6 +4,7 @@
 #include <ArduinoJson.h>
 #include <WiFi.h>
 #include <ESPmDNS.h>
+#include <NetBIOS.h>
 #include <ArduinoOTA.h>
 #include <Update.h>
 #include <esp_wifi.h>
@@ -35,8 +36,7 @@ IPAddress WifiControl::activeIP() const {
 }
 
 String WifiControl::rootUrl() const {
-    IPAddress ip = _apActive ? WiFi.softAPIP() : activeIP();
-    return "http://" + ip.toString() + "/";
+    return "http://" + activeIP().toString() + "/";
 }
 
 bool WifiControl::isIpHost(const String& host) const {
@@ -97,11 +97,6 @@ bool WifiControl::begin(uint32_t timeoutMs) {
     if (_apMode) {
         WiFi.disconnect(true);
         WiFi.mode(WIFI_AP);
-    } else {
-        WiFi.mode(WIFI_AP_STA);
-    }
-
-    if (_apMode || WiFi.status() == WL_CONNECTED) {
         WiFi.setSleep(false);
         char apSsid[32];
         snprintf(apSsid, sizeof(apSsid), "AuraX-%04X", (uint16_t)ESP.getEfuseMac());
@@ -223,6 +218,7 @@ bool WifiControl::begin(uint32_t timeoutMs) {
     mdnsBegin(_cfg.hostname);
 
     if (!_apMode) {
+        NBNS.begin(_cfg.hostname);
         _udp.begin(DISCOVERY_PORT);
         announce();
 
