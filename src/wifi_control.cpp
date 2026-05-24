@@ -35,7 +35,8 @@ IPAddress WifiControl::activeIP() const {
 }
 
 String WifiControl::rootUrl() const {
-    return "http://" + activeIP().toString() + "/";
+    IPAddress ip = _apActive ? WiFi.softAPIP() : activeIP();
+    return "http://" + ip.toString() + "/";
 }
 
 bool WifiControl::isIpHost(const String& host) const {
@@ -49,7 +50,7 @@ bool WifiControl::isIpHost(const String& host) const {
 }
 
 bool WifiControl::shouldRedirectCaptive() {
-    if (!_apMode) return false;
+    if (!_apActive) return false;
     String host = _server.hostHeader();
     if (host.length() == 0) return false;
     host.toLowerCase();
@@ -96,13 +97,19 @@ bool WifiControl::begin(uint32_t timeoutMs) {
     if (_apMode) {
         WiFi.disconnect(true);
         WiFi.mode(WIFI_AP);
+    } else {
+        WiFi.mode(WIFI_AP_STA);
+    }
+
+    if (_apMode || WiFi.status() == WL_CONNECTED) {
         WiFi.setSleep(false);
         char apSsid[32];
         snprintf(apSsid, sizeof(apSsid), "AuraX-%04X", (uint16_t)ESP.getEfuseMac());
-        IPAddress apIP(4, 3, 2, 1);
+        IPAddress apIP(192, 168, 4, 1);
         WiFi.softAPConfig(apIP, apIP, IPAddress(255, 255, 255, 0));
         WiFi.softAPsetHostname(_cfg.hostname);
         WiFi.softAP(apSsid);
+        _apActive = true;
         _dns.setErrorReplyCode(DNSReplyCode::NoError);
         _dns.start(53, "*", WiFi.softAPIP());
         LOG("[wifi] AP mode: SSID=%s IP=%s\n", apSsid, WiFi.softAPIP().toString().c_str());
@@ -229,7 +236,7 @@ bool WifiControl::begin(uint32_t timeoutMs) {
 
 void WifiControl::handle() {
     _server.handleClient();
-    if (_apMode) _dns.processNextRequest();
+    if (_apActive) _dns.processNextRequest();
     if (_batMonitor.update()) {
         _player.stopTask();
         _player.unload();
@@ -255,7 +262,7 @@ void WifiControl::handleRoot() {
 }
 
 void WifiControl::handleCaptivePortal() {
-    if (!_apMode || !shouldRedirectCaptive()) {
+    if (!_apActive || !shouldRedirectCaptive()) {
         _server.send_P(200, "text/html", CLIENT_HTML);
         return;
     }

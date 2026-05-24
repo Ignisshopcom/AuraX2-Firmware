@@ -68,6 +68,7 @@ private:
     File         _uploadFile;
     bool         _uploadError = false;
     bool         _apMode = false;
+    bool         _apActive = false;
 
     DNSServer      _dns;
     WiFiUDP        _udp;
