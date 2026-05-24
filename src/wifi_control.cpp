@@ -30,6 +30,14 @@ void WifiControl::mdnsBegin(const char* hostname) {
 WifiControl::WifiControl(PixPlayer& player, EffectPlayer& effectPlayer, ILedDriver& leds, AppConfig& cfg, SyncControl* sync)
     : _player(player), _effectPlayer(effectPlayer), _leds(leds), _cfg(cfg), _sync(sync) {}
 
+IPAddress WifiControl::activeIP() const {
+    return _apMode ? WiFi.softAPIP() : WiFi.localIP();
+}
+
+String WifiControl::rootUrl() const {
+    return "http://" + activeIP().toString() + "/";
+}
+
 bool WifiControl::begin(uint32_t timeoutMs) {
     if (strlen(_cfg.ssid) == 0) {
         _apMode = true;
@@ -150,6 +158,19 @@ bool WifiControl::begin(uint32_t timeoutMs) {
     _server.on("/effect",      HTTP_POST, [this]() { handleEffectStart(); });
     _server.on("/effect/stop", HTTP_GET,  [this]() { handleEffectStop();  });
     _server.on("/peers",  HTTP_GET,  [this]() { handlePeers(); });
+    _server.on("/generate_204",       HTTP_GET, [this]() { handleCaptivePortal(); });
+    _server.on("/gen_204",            HTTP_GET, [this]() { handleCaptivePortal(); });
+    _server.on("/hotspot-detect.html", HTTP_GET, [this]() { handleCaptivePortal(); });
+    _server.on("/library/test/success.html", HTTP_GET, [this]() { handleCaptivePortal(); });
+    _server.on("/connecttest.txt",    HTTP_GET, [this]() { handleCaptivePortal(); });
+    _server.on("/ncsi.txt",           HTTP_GET, [this]() { handleCaptivePortal(); });
+    _server.onNotFound([this]() {
+        if (_apMode) {
+            handleCaptivePortal();
+        } else {
+            _server.send(404, "text/plain", "Not found");
+        }
+    });
     _server.on("/update", HTTP_POST,
         [this]() {
             _server.send(Update.hasError() ? 500 : 200, "text/plain",
@@ -201,6 +222,16 @@ void WifiControl::handle() {
 
 void WifiControl::handleRoot() {
     _server.send_P(200, "text/html", CLIENT_HTML);
+}
+
+void WifiControl::handleCaptivePortal() {
+    if (!_apMode) {
+        _server.send(204, "text/plain", "");
+        return;
+    }
+    _server.sendHeader("Location", rootUrl());
+    _server.sendHeader("Cache-Control", "no-store");
+    _server.send(302, "text/plain", "");
 }
 
 void WifiControl::handlePlay() {

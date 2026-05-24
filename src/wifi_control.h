@@ -38,8 +38,11 @@ private:
     void handleConfigGet();
     void handleConfigPost();
     void handleOta();
+    void handleCaptivePortal();
 
     void mdnsBegin(const char* hostname);
+    IPAddress activeIP() const;
+    String rootUrl() const;
     void announce();
     void receivePeers();
     void expirePeers();
