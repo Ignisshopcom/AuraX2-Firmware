@@ -6,9 +6,7 @@
 #include <ESPmDNS.h>
 #include <NetBIOS.h>
 #include <ArduinoOTA.h>
-#include <HTTPClient.h>
 #include <Update.h>
-#include <WiFiClientSecure.h>
 #include <esp_wifi.h>
 #include <mdns.h>
 #include "web_html.h"
@@ -76,16 +74,16 @@ uint8_t WifiControl::apClientCount() const {
     return stationList.num;
 }
 
-String WifiControl::deviceId() const {
-    uint64_t mac = ESP.getEfuseMac();
-    char id[13];
-    snprintf(id, sizeof(id), "%04X%08X", (uint16_t)(mac >> 32), (uint32_t)mac);
-    return String(id);
+const char* WifiControl::staSsid() const {
+    return (_cfg.wifiMode == WIFI_MODE_GROUP_CLIENT) ? _cfg.groupSsid : _cfg.ssid;
 }
 
-String WifiControl::locatorUrl() const {
-    if (strlen(AURAX_LOCATOR_BASE_URL) == 0) return "";
-    return String(AURAX_LOCATOR_BASE_URL) + "/" + deviceId();
+const char* WifiControl::staPassword() const {
+    return (_cfg.wifiMode == WIFI_MODE_GROUP_CLIENT) ? _cfg.groupPassword : _cfg.password;
+}
+
+const char* WifiControl::groupPassword() const {
+    return (strlen(_cfg.groupPassword) >= 8) ? _cfg.groupPassword : "";
 }
 
 bool WifiControl::connectSta(uint32_t timeoutMs) {
@@ -94,8 +92,6 @@ bool WifiControl::connectSta(uint32_t timeoutMs) {
     _apMode = false;
     _apHadClient = false;
     _staServicesStarted = false;
-    _lastLocatorMs = 0;
-    _locatorRegistered = false;
 
     WiFi.disconnect(true);
     WiFi.setHostname(_cfg.hostname);
@@ -104,12 +100,12 @@ bool WifiControl::connectSta(uint32_t timeoutMs) {
     WiFi.mode(WIFI_STA);
     esp_wifi_set_ps(WIFI_PS_NONE);
     delay(100);
-    WiFi.begin(_cfg.ssid, _cfg.password);
+    WiFi.begin(staSsid(), staPassword());
     WiFi.setSleep(false);
     WiFi.setHostname(_cfg.hostname);
     _lastStaRetryMs = millis();
     _staDisconnectedSinceMs = _lastStaRetryMs;
-    LOG("[wifi] connecting to %s", _cfg.ssid);
+    LOG("[wifi] connecting to %s", staSsid());
 
     uint32_t start = millis();
     while (WiFi.status() != WL_CONNECTED && millis() - start < timeoutMs) {
@@ -133,7 +129,7 @@ void WifiControl::startFallbackAp() {
     _apMode = true;
     _apHadClient = false;
     WiFi.setHostname(_cfg.hostname);
-    WiFi.mode(strlen(_cfg.ssid) ? WIFI_AP_STA : WIFI_AP);
+    WiFi.mode(strlen(staSsid()) ? WIFI_AP_STA : WIFI_AP);
     WiFi.setSleep(false);
 
     char apSsid[32];
@@ -147,11 +143,35 @@ void WifiControl::startFallbackAp() {
     _dns.start(53, "*", WiFi.softAPIP());
     LOG("[wifi] AP fallback: SSID=%s IP=%s\n", apSsid, WiFi.softAPIP().toString().c_str());
 
-    if (strlen(_cfg.ssid)) {
-        WiFi.begin(_cfg.ssid, _cfg.password);
+    if (strlen(staSsid())) {
+        WiFi.begin(staSsid(), staPassword());
         _lastStaRetryMs = millis();
         LOGLN("[wifi] background STA retry enabled until AP client connects");
     }
+}
+
+void WifiControl::startGroupMasterAp() {
+    _dns.stop();
+    _apMode = true;
+    _apActive = true;
+    _apHadClient = false;
+    _staServicesStarted = false;
+
+    WiFi.disconnect(true);
+    WiFi.softAPdisconnect(true);
+    WiFi.setHostname(_cfg.hostname);
+    WiFi.mode(WIFI_AP_STA);
+    WiFi.setSleep(false);
+    esp_wifi_set_ps(WIFI_PS_NONE);
+
+    IPAddress apIP(192, 168, 4, 1);
+    WiFi.softAPConfig(apIP, apIP, IPAddress(255, 255, 255, 0));
+    WiFi.softAPsetHostname(_cfg.hostname);
+    bool ok = WiFi.softAP(_cfg.groupSsid, strlen(groupPassword()) ? groupPassword() : nullptr, GROUP_AP_CHANNEL);
+    _dns.setErrorReplyCode(DNSReplyCode::NoError);
+    _dns.start(53, "*", WiFi.softAPIP());
+    LOG("[wifi] group master: SSID=%s IP=%s %s\n",
+        _cfg.groupSsid, WiFi.softAPIP().toString().c_str(), ok ? "" : "(softAP failed)");
 }
 
 void WifiControl::stopFallbackAp() {
@@ -168,7 +188,8 @@ void WifiControl::stopFallbackAp() {
 }
 
 void WifiControl::startStaServices() {
-    if (_staServicesStarted || WiFi.status() != WL_CONNECTED) return;
+    bool groupMaster = (_cfg.wifiMode == WIFI_MODE_GROUP_MASTER && _apActive);
+    if (_staServicesStarted || (!groupMaster && WiFi.status() != WL_CONNECTED)) return;
     MDNS.end();
     mdnsBegin(_cfg.hostname);
     NBNS.begin(_cfg.hostname);
@@ -178,54 +199,16 @@ void WifiControl::startStaServices() {
     ArduinoOTA.begin();
     _staServicesStarted = true;
     LOG("[ota] ArduinoOTA ready\n");
-    registerLocator(true);
-}
-
-void WifiControl::registerLocator(bool force) {
-    if (strlen(AURAX_LOCATOR_ENDPOINT) == 0) return;
-    if (_apMode || WiFi.status() != WL_CONNECTED) return;
-
-    uint32_t now = millis();
-    uint32_t interval = _locatorRegistered ? LOCATOR_REGISTER_INTERVAL_MS : LOCATOR_RETRY_INTERVAL_MS;
-    if (!force && now - _lastLocatorMs < interval) return;
-    _lastLocatorMs = now;
-
-    StaticJsonDocument<256> doc;
-    doc["id"]       = deviceId();
-    doc["hostname"] = _cfg.hostname;
-    doc["localIp"]  = WiFi.localIP().toString();
-    doc["fw"]       = "aurax2";
-    String body;
-    serializeJson(doc, body);
-
-    HTTPClient http;
-    WiFiClient plainClient;
-    WiFiClientSecure secureClient;
-    String endpoint = AURAX_LOCATOR_ENDPOINT;
-    bool ok = false;
-    if (endpoint.startsWith("https://")) {
-        secureClient.setInsecure();
-        ok = http.begin(secureClient, endpoint);
-    } else {
-        ok = http.begin(plainClient, endpoint);
-    }
-    if (!ok) {
-        LOGLN("[locator] begin failed");
-        return;
-    }
-    http.setTimeout(2500);
-    http.addHeader("Content-Type", "application/json");
-    int code = http.POST(body);
-    http.end();
-    _locatorRegistered = (code >= 200 && code < 300);
-    LOG("[locator] register %s -> HTTP %d\n", locatorUrl().c_str(), code);
 }
 
 bool WifiControl::begin(uint32_t timeoutMs) {
     WiFi.persistent(false);
     WiFi.softAPdisconnect(true);
 
-    if (strlen(_cfg.ssid) == 0) {
+    if (_cfg.wifiMode == WIFI_MODE_GROUP_MASTER) {
+        LOGLN("[wifi] starting group master AP");
+        startGroupMasterAp();
+    } else if (strlen(staSsid()) == 0) {
         LOGLN("[wifi] no STA config, starting AP");
         startFallbackAp();
     } else if (!connectSta(timeoutMs)) {
@@ -335,7 +318,9 @@ bool WifiControl::begin(uint32_t timeoutMs) {
 
     strlcpy(_wantedHostname, _cfg.hostname, sizeof(_wantedHostname));
 
-    if (_apMode) {
+    if (_cfg.wifiMode == WIFI_MODE_GROUP_MASTER) {
+        startStaServices();
+    } else if (_apMode) {
         mdnsBegin(_cfg.hostname);
     } else {
         startStaServices();
@@ -345,7 +330,12 @@ bool WifiControl::begin(uint32_t timeoutMs) {
 }
 
 void WifiControl::maintainWifi() {
-    if (strlen(_cfg.ssid) == 0) return;
+    if (_cfg.wifiMode == WIFI_MODE_GROUP_MASTER) {
+        if (!_apActive) startGroupMasterAp();
+        startStaServices();
+        return;
+    }
+    if (strlen(staSsid()) == 0) return;
 
     uint32_t now = millis();
     if (WiFi.status() == WL_CONNECTED) {
@@ -381,9 +371,9 @@ void WifiControl::maintainWifi() {
             LOGLN("[wifi] AP client left, resuming STA scan");
         }
         if (now - _lastStaRetryMs > STA_RETRY_INTERVAL_MS) {
-            LOG("[wifi] AP fallback retry to %s\n", _cfg.ssid);
+            LOG("[wifi] AP fallback retry to %s\n", staSsid());
             WiFi.mode(WIFI_AP_STA);
-            WiFi.begin(_cfg.ssid, _cfg.password);
+            WiFi.begin(staSsid(), staPassword());
             _lastStaRetryMs = now;
         }
         return;
@@ -391,8 +381,8 @@ void WifiControl::maintainWifi() {
 
     if (_staDisconnectedSinceMs == 0) _staDisconnectedSinceMs = now;
     if (now - _lastStaRetryMs > STA_RETRY_INTERVAL_MS) {
-        LOG("[wifi] reconnecting to %s\n", _cfg.ssid);
-        WiFi.begin(_cfg.ssid, _cfg.password);
+        LOG("[wifi] reconnecting to %s\n", staSsid());
+        WiFi.begin(staSsid(), staPassword());
         _lastStaRetryMs = now;
     }
 
@@ -412,12 +402,11 @@ void WifiControl::handle() {
         _leds.clear();
         LOG("[bat] auto-off: battery %u%% (<= %u%%)\n", _batMonitor.pct(), _cfg.batAutoOffThreshold);
     }
-    if (!_apMode && WiFi.status() == WL_CONNECTED) {
+    if (_staServicesStarted) {
         ArduinoOTA.handle();
         receivePeers();
         expirePeers();
         if (millis() - _lastAnnounceMs > ANNOUNCE_INTERVAL_MS) announce();
-        registerLocator();
     }
 }
 
@@ -470,6 +459,13 @@ void WifiControl::handleStop() {
 
 void WifiControl::handleStatus() {
     auto st = _player.stats();
+    char apSsid[32] = "";
+    if (_apActive) {
+        if (_cfg.wifiMode == WIFI_MODE_GROUP_MASTER)
+            strlcpy(apSsid, _cfg.groupSsid, sizeof(apSsid));
+        else
+            snprintf(apSsid, sizeof(apSsid), "AuraX-%04X", (uint16_t)ESP.getEfuseMac());
+    }
     String json = "{";
     json += "\"playing\":"          + String(_player.isLoaded() ? "true" : "false") + ",";
     json += "\"commands\":"         + String(_player.numCommands()) + ",";
@@ -478,8 +474,8 @@ void WifiControl::handleStatus() {
     json += "\"frames_expected\":"  + String(st.framesExpected) + ",";
     json += "\"ip\":\""             + (_apMode ? WiFi.softAPIP() : WiFi.localIP()).toString() + "\",";
     json += "\"hostname\":\""       + String(_cfg.hostname) + "\",";
-    json += "\"device_id\":\""      + deviceId() + "\",";
-    json += "\"locator_url\":\""    + locatorUrl() + "\",";
+    json += "\"wifi_mode\":"        + String(_cfg.wifiMode) + ",";
+    json += "\"ap_ssid\":\""        + String(apSsid) + "\",";
     json += "\"ap_mode\":"          + String(_apMode ? "true" : "false") + ",";
     json += "\"battery_mv\":"       + String(_batMonitor.mv()) + ",";
     json += "\"battery_pct\":"      + String(_batMonitor.pct()) + ",";
@@ -489,13 +485,16 @@ void WifiControl::handleStatus() {
 }
 
 void WifiControl::handleConfigGet() {
-    StaticJsonDocument<1024> doc;
+    StaticJsonDocument<1536> doc;
     doc["ledType"]  = _cfg.ledType;
     doc["numLeds"]  = _cfg.numLeds;
     doc["dataPin"]  = _cfg.dataPin;
     doc["clkPin"]   = _cfg.clkPin;
+    doc["wifiMode"] = _cfg.wifiMode;
     doc["ssid"]     = _cfg.ssid;
     doc["password"] = _cfg.password;
+    doc["groupSsid"] = _cfg.groupSsid;
+    doc["groupPassword"] = _cfg.groupPassword;
     doc["pixFile"]    = _cfg.pixFile;
     doc["brightness"] = _cfg.brightness;
     doc["tempo"]       = _cfg.tempo;
@@ -585,6 +584,7 @@ void WifiControl::handleConfigPost() {
         _server.send(400, "text/plain", "JSON error");
         return;
     }
+    bool hasSyncChannel = doc.containsKey("syncChannel");
     bool wifiChanged = false;
     if (doc.containsKey("ssid") &&
         strcmp(doc["ssid"] | "", _cfg.ssid) != 0)
@@ -595,6 +595,15 @@ void WifiControl::handleConfigPost() {
     if (doc.containsKey("hostname") &&
         strcmp(doc["hostname"] | "", _cfg.hostname) != 0)
         wifiChanged = true;
+    if (doc.containsKey("wifiMode") &&
+        (uint8_t)(doc["wifiMode"] | _cfg.wifiMode) != _cfg.wifiMode)
+        wifiChanged = true;
+    if (doc.containsKey("groupSsid") &&
+        strcmp(doc["groupSsid"] | "", _cfg.groupSsid) != 0)
+        wifiChanged = true;
+    if (doc.containsKey("groupPassword") &&
+        strcmp(doc["groupPassword"] | "", _cfg.groupPassword) != 0)
+        wifiChanged = true;
 
     _cfg.ledType = doc["ledType"] | _cfg.ledType;
     {
@@ -603,8 +612,18 @@ void WifiControl::handleConfigPost() {
     }
     _cfg.dataPin = doc["dataPin"] | _cfg.dataPin;
     _cfg.clkPin  = doc["clkPin"]  | _cfg.clkPin;
+    {
+        uint8_t mode = doc["wifiMode"] | _cfg.wifiMode;
+        if (mode <= WIFI_MODE_GROUP_CLIENT) _cfg.wifiMode = mode;
+    }
     strlcpy(_cfg.ssid,     doc["ssid"]     | _cfg.ssid,     sizeof(_cfg.ssid));
     strlcpy(_cfg.password, doc["password"] | _cfg.password, sizeof(_cfg.password));
+    strlcpy(_cfg.groupSsid, doc["groupSsid"] | _cfg.groupSsid, sizeof(_cfg.groupSsid));
+    strlcpy(_cfg.groupPassword, doc["groupPassword"] | _cfg.groupPassword, sizeof(_cfg.groupPassword));
+    if (strlen(_cfg.groupSsid) == 0)
+        strlcpy(_cfg.groupSsid, GROUP_WIFI_SSID, sizeof(_cfg.groupSsid));
+    if (strlen(_cfg.groupPassword) > 0 && strlen(_cfg.groupPassword) < 8)
+        strlcpy(_cfg.groupPassword, GROUP_WIFI_PASSWORD, sizeof(_cfg.groupPassword));
     strlcpy(_cfg.pixFile,  doc["pixFile"]  | _cfg.pixFile,  sizeof(_cfg.pixFile));
     strlcpy(_cfg.hostname, doc["hostname"] | _cfg.hostname, sizeof(_cfg.hostname));
     _cfg.brightness = doc["brightness"] | _cfg.brightness;
@@ -634,6 +653,8 @@ void WifiControl::handleConfigPost() {
     if (doc.containsKey("batAutoOff")) _cfg.batAutoOff = doc["batAutoOff"] ? 1 : 0;
     _cfg.batAutoOffThreshold = doc["batAutoOffThreshold"] | _cfg.batAutoOffThreshold;
     _cfg.syncChannel         = doc["syncChannel"]         | _cfg.syncChannel;
+    if (!hasSyncChannel && _cfg.wifiMode != WIFI_MODE_NORMAL && _cfg.syncChannel == 0)
+        _cfg.syncChannel = 1;
     _batMonitor.resetInterval();  // re-measure with new settings
     JsonArray pR = doc["paletteR"], pG = doc["paletteG"], pB = doc["paletteB"];
     for (int i = 0; i < 4; i++) {
@@ -660,8 +681,8 @@ void WifiControl::handleConfigPost() {
 void WifiControl::announce() {
     char buf[96];
     snprintf(buf, sizeof(buf), "AURAX %s %s %04x %u %d %u",
-        _cfg.hostname, WiFi.localIP().toString().c_str(), (uint16_t)ESP.getEfuseMac(),
-        _batMonitor.pct(), (int)WiFi.RSSI(), (unsigned)_cfg.syncChannel);
+        _cfg.hostname, activeIP().toString().c_str(), (uint16_t)ESP.getEfuseMac(),
+        _batMonitor.pct(), _apMode ? 0 : (int)WiFi.RSSI(), (unsigned)_cfg.syncChannel);
     _udp.beginPacket(IPAddress(255, 255, 255, 255), DISCOVERY_PORT);
     _udp.write((uint8_t*)buf, strlen(buf));
     _udp.endPacket();
@@ -686,7 +707,7 @@ void WifiControl::receivePeers() {
     // Ignorovat vlastní broadcast — kontrola vždy podle IP, nezávisle na hostname
     IPAddress senderIp;
     senderIp.fromString(ip);
-    if (senderIp == WiFi.localIP()) return;
+    if (senderIp == activeIP()) return;
 
     uint16_t senderChipId   = chipHex   ? (uint16_t)strtoul(chipHex, nullptr, 16) : 0;
     uint8_t  senderBatPct   = batPctStr ? (uint8_t)atoi(batPctStr) : 0;

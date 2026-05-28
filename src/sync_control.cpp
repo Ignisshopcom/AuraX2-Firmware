@@ -37,11 +37,19 @@ bool SyncControl::begin(uint8_t syncChannel) {
 
     esp_now_peer_info_t peer = {};
     memcpy(peer.peer_addr, BROADCAST, 6);
-    peer.channel = WiFi.channel();  // must match AP channel
-    peer.ifidx   = WIFI_IF_STA;
+    uint8_t primaryChannel = WiFi.channel();
+    wifi_second_chan_t secondChannel = WIFI_SECOND_CHAN_NONE;
+    esp_wifi_get_channel(&primaryChannel, &secondChannel);
+    wifi_mode_t mode = WIFI_MODE_NULL;
+    esp_wifi_get_mode(&mode);
+    peer.channel = primaryChannel;  // must match AP channel
+    peer.ifidx   = (mode == WIFI_MODE_AP || (mode == WIFI_MODE_APSTA && WiFi.status() != WL_CONNECTED))
+        ? WIFI_IF_AP
+        : WIFI_IF_STA;
     peer.encrypt  = false;
     esp_now_add_peer(&peer);
-    LOG("[sync] wifi channel %d, sync channel %d\n", peer.channel, _syncChannel);
+    LOG("[sync] wifi channel %d, if=%s, sync channel %d\n",
+        peer.channel, peer.ifidx == WIFI_IF_AP ? "AP" : "STA", _syncChannel);
 
     LOGLN("[sync] ESP-NOW ready");
     return true;

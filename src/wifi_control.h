@@ -17,8 +17,7 @@ static constexpr uint32_t PEER_EXPIRE_MS   = 90000;
 static constexpr uint32_t ANNOUNCE_INTERVAL_MS = 30000;
 static constexpr uint32_t STA_CONNECT_TIMEOUT_MS = 12000;
 static constexpr uint32_t STA_RETRY_INTERVAL_MS = 18000;
-static constexpr uint32_t LOCATOR_REGISTER_INTERVAL_MS = 300000;
-static constexpr uint32_t LOCATOR_RETRY_INTERVAL_MS = 15000;
+static constexpr uint8_t  GROUP_AP_CHANNEL = 6;
 
 class WifiControl {
 public:
@@ -50,13 +49,14 @@ private:
     bool isIpHost(const String& host) const;
     bool shouldRedirectCaptive();
     uint8_t apClientCount() const;
-    String deviceId() const;
-    String locatorUrl() const;
+    const char* staSsid() const;
+    const char* staPassword() const;
+    const char* groupPassword() const;
     bool connectSta(uint32_t timeoutMs);
     void startFallbackAp();
+    void startGroupMasterAp();
     void stopFallbackAp();
     void startStaServices();
-    void registerLocator(bool force = false);
     void maintainWifi();
     void announce();
     void receivePeers();
@@ -86,8 +86,6 @@ private:
     bool         _staServicesStarted = false;
     uint32_t     _lastStaRetryMs = 0;
     uint32_t     _staDisconnectedSinceMs = 0;
-    uint32_t     _lastLocatorMs = 0;
-    bool         _locatorRegistered = false;
 
     DNSServer      _dns;
     WiFiUDP        _udp;

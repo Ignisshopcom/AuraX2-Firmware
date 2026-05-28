@@ -90,8 +90,11 @@ static AppConfig defaults() {
     cfg.numLeds = NUM_LEDS;
     cfg.dataPin = (LED_TYPE == LED_TYPE_APA102) ? LED_DATA_PIN : WS_DATA_PIN;
     cfg.clkPin  = LED_CLK_PIN;
+    cfg.wifiMode = WIFI_MODE_NORMAL;
     strncpy(cfg.ssid,     WIFI_SSID,     sizeof(cfg.ssid)     - 1);
     strncpy(cfg.password, WIFI_PASSWORD, sizeof(cfg.password) - 1);
+    strncpy(cfg.groupSsid, GROUP_WIFI_SSID, sizeof(cfg.groupSsid) - 1);
+    strncpy(cfg.groupPassword, GROUP_WIFI_PASSWORD, sizeof(cfg.groupPassword) - 1);
     strncpy(cfg.pixFile,  PIX_FILE,      sizeof(cfg.pixFile)  - 1);
     return cfg;
 }
@@ -108,14 +111,18 @@ AppConfig loadConfig() {
     File f = LittleFS.open(CFG_FILE, "r");
     if (!f) return cfg;
 
-    StaticJsonDocument<1024> doc;
+    StaticJsonDocument<1536> doc;
     if (deserializeJson(doc, f) == DeserializationError::Ok) {
         cfg.ledType = doc["ledType"] | cfg.ledType;
         cfg.numLeds = doc["numLeds"] | cfg.numLeds;
         cfg.dataPin = doc["dataPin"] | cfg.dataPin;
         cfg.clkPin  = doc["clkPin"]  | cfg.clkPin;
+        cfg.wifiMode = doc["wifiMode"] | cfg.wifiMode;
+        if (cfg.wifiMode > WIFI_MODE_GROUP_CLIENT) cfg.wifiMode = WIFI_MODE_NORMAL;
         strlcpy(cfg.ssid,     doc["ssid"]     | cfg.ssid,     sizeof(cfg.ssid));
         strlcpy(cfg.password, doc["password"] | cfg.password, sizeof(cfg.password));
+        strlcpy(cfg.groupSsid, doc["groupSsid"] | cfg.groupSsid, sizeof(cfg.groupSsid));
+        strlcpy(cfg.groupPassword, doc["groupPassword"] | cfg.groupPassword, sizeof(cfg.groupPassword));
         strlcpy(cfg.pixFile,  doc["pixFile"]  | cfg.pixFile,  sizeof(cfg.pixFile));
         strlcpy(cfg.hostname, doc["hostname"] | "",            sizeof(cfg.hostname));
         cfg.brightness    = doc["brightness"]    | cfg.brightness;
@@ -146,17 +153,24 @@ AppConfig loadConfig() {
     f.close();
     if (strlen(cfg.hostname) == 0)
         strlcpy(cfg.hostname, "aurax", sizeof(cfg.hostname));
+    if (strlen(cfg.groupSsid) == 0)
+        strlcpy(cfg.groupSsid, GROUP_WIFI_SSID, sizeof(cfg.groupSsid));
+    if (strlen(cfg.groupPassword) > 0 && strlen(cfg.groupPassword) < 8)
+        strlcpy(cfg.groupPassword, GROUP_WIFI_PASSWORD, sizeof(cfg.groupPassword));
     return cfg;
 }
 
 bool saveConfig(const AppConfig& cfg) {
-    StaticJsonDocument<1024> doc;
+    StaticJsonDocument<1536> doc;
     doc["ledType"]  = cfg.ledType;
     doc["numLeds"]  = cfg.numLeds;
     doc["dataPin"]  = cfg.dataPin;
     doc["clkPin"]   = cfg.clkPin;
+    doc["wifiMode"] = cfg.wifiMode;
     doc["ssid"]     = cfg.ssid;
     doc["password"] = cfg.password;
+    doc["groupSsid"] = cfg.groupSsid;
+    doc["groupPassword"] = cfg.groupPassword;
     doc["pixFile"]  = cfg.pixFile;
     doc["hostname"]   = cfg.hostname;
     doc["brightness"] = cfg.brightness;

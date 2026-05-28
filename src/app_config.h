@@ -3,13 +3,20 @@
 
 #define CFG_FILE "/config.json"
 
+static constexpr uint8_t WIFI_MODE_NORMAL       = 0;
+static constexpr uint8_t WIFI_MODE_GROUP_MASTER = 1;
+static constexpr uint8_t WIFI_MODE_GROUP_CLIENT = 2;
+
 struct AppConfig {
     uint8_t  ledType;       // 1=APA102, 0=WS281x  (LED_TYPE_APA102 / LED_TYPE_WS281X)
     uint16_t numLeds;
     uint8_t  dataPin;       // MOSI for APA102, DATA for WS281x
     uint8_t  clkPin;        // CLK for APA102
+    uint8_t  wifiMode;      // 0=normal STA+fallback AP, 1=group AP, 2=group client
     char     ssid[64];
     char     password[64];
+    char     groupSsid[32];
+    char     groupPassword[64];
     char     pixFile[64];
     char     hostname[32];  // mDNS hostname bez .local; "" → auto z chip ID
     uint8_t  brightness;    // 0 = use per-pixel brightness from .pix file, 1–100 = global override %

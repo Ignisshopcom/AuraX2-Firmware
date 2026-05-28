@@ -5,6 +5,7 @@ import type { EffectValues } from '../lib/EffectPanel'
 type FormState = {
   ledType: number; numLeds: number; dataPin: number; clkPin: number
   pixFile: string; ssid: string; password: string; hostname: string
+  wifiMode: number; groupSsid: string; groupPassword: string
   syncChannel: number; mALimit: number; batPin: number; batMultiplier: number
   batCalibration: number; batMinMv: number; batMaxMv: number
   batIntervalMs: number; batAutoOff: boolean; batAutoOffThreshold: number
@@ -19,6 +20,8 @@ export function ConfigForm({ config, effect }: Props) {
     dataPin: config.dataPin ?? 6, clkPin: config.clkPin ?? 5,
     pixFile: config.pixFile ?? '/show.pix', ssid: config.ssid ?? '',
     password: config.password ?? '', hostname: config.hostname ?? 'aurax',
+    wifiMode: config.wifiMode ?? 0, groupSsid: config.groupSsid ?? 'AuraX-GROUP',
+    groupPassword: config.groupPassword ?? 'aurax1234',
     syncChannel: config.syncChannel ?? 0, mALimit: config.mALimit ?? 0,
     batPin: config.batPin ?? 2, batMultiplier: config.batMultiplier ?? 2.0,
     batCalibration: config.batCalibration ?? 0.0, batMinMv: config.batMinMv ?? 3200,
@@ -74,12 +77,35 @@ export function ConfigForm({ config, effect }: Props) {
         <label style="grid-column:1/-1">PIX soubor
           <input type="text" value={form.pixFile} onInput={(e) => set({ pixFile: str(e) })} style="width:100%" />
         </label>
-        <label>WiFi SSID
-          <input type="text" value={form.ssid} onInput={(e) => set({ ssid: str(e) })} />
+        <label style="grid-column:1/-1">Režim sítě
+          <select value={form.wifiMode} onChange={(e) => {
+            const wifiMode = num(e)
+            set({ wifiMode, syncChannel: wifiMode === 0 ? form.syncChannel : (form.syncChannel || 1) })
+          }}>
+            <option value={0}>WiFi / hotspot klient</option>
+            <option value={1}>Group master</option>
+            <option value={2}>Group client</option>
+          </select>
         </label>
-        <label>WiFi heslo
-          <input type="password" value={form.password} onInput={(e) => set({ password: str(e) })} />
-        </label>
+        {form.wifiMode === 0 ? (
+          <>
+            <label>WiFi SSID
+              <input type="text" value={form.ssid} onInput={(e) => set({ ssid: str(e) })} />
+            </label>
+            <label>WiFi heslo
+              <input type="password" value={form.password} onInput={(e) => set({ password: str(e) })} />
+            </label>
+          </>
+        ) : (
+          <>
+            <label>Group SSID
+              <input type="text" value={form.groupSsid} onInput={(e) => set({ groupSsid: str(e) })} />
+            </label>
+            <label>Group heslo
+              <input type="password" value={form.groupPassword} minLength={8} onInput={(e) => set({ groupPassword: str(e) })} />
+            </label>
+          </>
+        )}
         <label style="grid-column:1/-1">Hostname (.local)
           <input type="text" value={form.hostname} pattern="[a-z0-9-]+" placeholder="aurax-xxxx"
             onInput={(e) => set({ hostname: str(e) })} style="width:100%" />

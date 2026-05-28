@@ -2,6 +2,7 @@ import type { StatusResponse } from './types'
 import { RssiBar } from './RssiBar'
 
 export function StatusCard({ status }: { status: StatusResponse }) {
+  const mode = status.wifi_mode === 1 ? 'Group master' : status.wifi_mode === 2 ? 'Group client' : ''
   return (
     <div class="card status">
       Stav: <b>{status.playing ? 'přehrává' : 'zastaveno'}</b>
@@ -17,17 +18,13 @@ export function StatusCard({ status }: { status: StatusResponse }) {
       {status.ap_mode ? '📶 AP: ' : 'IP: '}
       <a href={`http://${status.ip}`}>{status.ip}</a>
       {status.hostname && <>&nbsp;|&nbsp;{status.hostname}.local</>}
+      {mode && <>&nbsp;|&nbsp;{mode}</>}
+      {status.ap_mode && status.ap_ssid && <>&nbsp;|&nbsp;{status.ap_ssid}</>}
       {status.ap_mode && (
         <span style="color:var(--accent)">&nbsp;(Windows: použij IP odkaz)</span>
       )}
       &nbsp;|&nbsp;🔋 {status.battery_pct}% ({status.battery_mv} mV)
       {!status.ap_mode && <RssiBar dbm={status.rssi} separator />}
-      {status.locator_url && (
-        <div class="locator-row">
-          Web: <a href={status.locator_url}>{status.locator_url.replace(/^https?:\/\//, '')}</a>
-          {status.device_id && <>&nbsp;|&nbsp;ID: {status.device_id}</>}
-        </div>
-      )}
     </div>
   )
 }

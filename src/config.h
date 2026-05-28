@@ -2,6 +2,8 @@
 
 #define WIFI_SSID     ""
 #define WIFI_PASSWORD ""
+#define GROUP_WIFI_SSID     "AuraX-GROUP"
+#define GROUP_WIFI_PASSWORD "aurax1234"
 
 // LED strip type — change to LED_TYPE_WS281X for WS2812B/WS2811 strips
 #define LED_TYPE_APA102  1
@@ -18,11 +20,6 @@
 #define NUM_LEDS      45
 
 #define PIX_FILE      "/show.pix"
-
-// Public locator: after STA connect AuraX registers its hotspot/local IP here.
-// Deploy tools/locator-worker to this domain before enabling this for users.
-#define AURAX_LOCATOR_BASE_URL "https://go.aurax.cz"
-#define AURAX_LOCATOR_ENDPOINT "https://go.aurax.cz/api/register"
 
 // Odkomentuj pro debug výpisy na sériový port
 #define PIX_DEBUG

@@ -6,8 +6,8 @@ export interface StatusResponse {
   frames_expected?: number
   ip: string
   hostname?: string
-  device_id?: string
-  locator_url?: string
+  wifi_mode?: number
+  ap_ssid?: string
   ap_mode?: boolean
   battery_pct: number
   battery_mv: number
@@ -36,6 +36,9 @@ export interface Config {
   pixFile?: string
   ssid?: string
   password?: string
+  wifiMode?: number
+  groupSsid?: string
+  groupPassword?: string
   hostname?: string
   syncChannel?: number
   brightness?: number
