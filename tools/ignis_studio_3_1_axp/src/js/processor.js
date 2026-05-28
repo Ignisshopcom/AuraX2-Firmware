@@ -220,41 +220,56 @@ function processor_process_aurax(project, images, callback)
     const axp_column_repeat = 2;
 
     var commands = [];
+    var blocks = [];
+    var blocksByHash = {};
     var decodedOffset = 0;
 
     for (var i = 0; i < project.timeline.length; i++) {
         var node = project.timeline[i];
-        var image = images[node.hash];
-        var reordered = reorder_image_pixels_RGBA_to_DimBGR(image);
-        var rotated = rotate_image_data_array_right_90(image.width, image.height, reordered);
-        var raw = uint32ArrayToBuffer(rotated);
-        var encoded = encodeAuraXColumns(raw, image.height, image.width);
-        var rawCodec = { codec: axp_codec_raw, data: raw };
-        var chosen = encoded.data.length < raw.length ? encoded : rawCodec;
+        var block = blocksByHash[node.hash];
+
+        if (!block) {
+            var image = images[node.hash];
+            var reordered = reorder_image_pixels_RGBA_to_DimBGR(image);
+            var rotated = rotate_image_data_array_right_90(image.width, image.height, reordered);
+            var raw = uint32ArrayToBuffer(rotated);
+            var encoded = encodeAuraXColumns(raw, image.height, image.width);
+            var rawCodec = { codec: axp_codec_raw, data: raw };
+            var chosen = encoded.data.length < raw.length ? encoded : rawCodec;
+
+            block = {
+                hash: node.hash,
+                width: image.height,
+                height: image.width,
+                decodedOffset: decodedOffset,
+                codec: chosen.codec,
+                data: chosen.data,
+            };
+            decodedOffset += raw.length;
+            blocksByHash[node.hash] = block;
+            blocks.push(block);
+        }
 
         commands.push({
             startTime: Math.max(0, node.start),
             endTime: node.end,
-            width: image.height,
-            height: image.width,
+            width: block.width,
+            height: block.height,
             frequency: Math.min(node.frequency, config.project.max_line_frequency || 2500),
-            decodedOffset: decodedOffset,
-            codec: chosen.codec,
-            data: chosen.data,
+            block: block,
             isLast: (i == project.timeline.length - 1) ? 1 : 0,
         });
-        decodedOffset += raw.length;
     }
 
     var commandWords = 10;
     var headerBytes = (6 * 4) + (commands.length * commandWords * 4);
     var dataOffset = headerBytes;
     var totalBytes = headerBytes;
-    for (var c = 0; c < commands.length; c++) {
-        commands[c].dataOffset = dataOffset;
-        commands[c].dataSize = commands[c].data.length;
-        dataOffset += commands[c].data.length;
-        totalBytes += commands[c].data.length;
+    for (var b = 0; b < blocks.length; b++) {
+        blocks[b].dataOffset = dataOffset;
+        blocks[b].dataSize = blocks[b].data.length;
+        dataOffset += blocks[b].data.length;
+        totalBytes += blocks[b].data.length;
     }
 
     var buf = Buffer.allocUnsafe(totalBytes);
@@ -269,17 +284,20 @@ function processor_process_aurax(project, images, callback)
 
     for (var c = 0; c < commands.length; c++) {
         var cmd = commands[c];
+        var block = cmd.block;
         pos = writeDw(buf, pos, cmd.startTime);
         pos = writeDw(buf, pos, cmd.endTime);
         pos = writeDw(buf, pos, cmd.width);
         pos = writeDw(buf, pos, cmd.height);
         pos = writeDw(buf, pos, cmd.frequency);
-        pos = writeDw(buf, pos, cmd.dataOffset);
-        pos = writeDw(buf, pos, cmd.dataSize);
-        pos = writeDw(buf, pos, cmd.decodedOffset);
-        pos = writeDw(buf, pos, cmd.codec);
+        pos = writeDw(buf, pos, block.dataOffset);
+        pos = writeDw(buf, pos, block.dataSize);
+        pos = writeDw(buf, pos, block.decodedOffset);
+        pos = writeDw(buf, pos, block.codec);
         pos = writeDw(buf, pos, cmd.isLast);
-        cmd.data.copy(buf, cmd.dataOffset);
+    }
+    for (var b = 0; b < blocks.length; b++) {
+        blocks[b].data.copy(buf, blocks[b].dataOffset);
     }
 
     callback(buf);
