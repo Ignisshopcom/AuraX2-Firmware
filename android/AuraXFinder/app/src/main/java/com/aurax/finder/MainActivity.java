@@ -2,9 +2,9 @@ package com.aurax.finder;
 
 import android.app.Activity;
 import android.content.Context;
-import android.content.Intent;
 import android.graphics.Color;
-import android.net.Uri;
+import android.graphics.Typeface;
+import android.graphics.drawable.GradientDrawable;
 import android.net.wifi.WifiManager;
 import android.os.Bundle;
 import android.os.Handler;
@@ -16,6 +16,7 @@ import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
 import android.widget.Button;
+import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
@@ -47,12 +48,13 @@ import java.util.concurrent.TimeUnit;
 
 public class MainActivity extends Activity {
     private static final int DISCOVERY_PORT = 4210;
-    private static final int BG = Color.rgb(23, 23, 23);
-    private static final int SURFACE = Color.rgb(36, 36, 36);
-    private static final int BORDER = Color.rgb(58, 58, 58);
-    private static final int TEXT = Color.rgb(235, 231, 226);
-    private static final int MUTED = Color.rgb(155, 148, 141);
-    private static final int ACCENT = Color.rgb(224, 123, 57);
+    private static final int BG = Color.rgb(19, 19, 19);
+    private static final int SURFACE = Color.rgb(31, 31, 31);
+    private static final int SURFACE_ALT = Color.rgb(42, 42, 42);
+    private static final int BORDER = Color.rgb(55, 55, 55);
+    private static final int TEXT = Color.rgb(242, 237, 231);
+    private static final int MUTED = Color.rgb(154, 148, 140);
+    private static final int ACCENT = Color.rgb(234, 104, 32);
 
     private final Handler main = new Handler(Looper.getMainLooper());
     private final Map<String, Device> devices = new LinkedHashMap<>();
@@ -78,34 +80,47 @@ public class MainActivity extends Activity {
 
     private void showFinder() {
         showingWebView = false;
+
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
-        root.setPadding(dp(16), dp(18), dp(16), dp(12));
+        root.setPadding(dp(18), dp(18), dp(18), dp(10));
         root.setBackgroundColor(BG);
 
-        TextView title = text("AuraX Finder", 24, TEXT);
-        title.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
-        root.addView(title);
+        LinearLayout header = new LinearLayout(this);
+        header.setOrientation(LinearLayout.HORIZONTAL);
+        header.setGravity(Gravity.CENTER_VERTICAL);
+        header.setPadding(0, 0, 0, dp(14));
 
-        status = text("Hledam zarizeni v siti...", 14, MUTED);
-        status.setPadding(0, dp(6), 0, dp(10));
+        ImageView icon = new ImageView(this);
+        icon.setImageResource(R.drawable.ignis_icon);
+        icon.setAdjustViewBounds(true);
+        header.addView(icon, new LinearLayout.LayoutParams(dp(44), dp(44)));
+
+        LinearLayout titleBlock = new LinearLayout(this);
+        titleBlock.setOrientation(LinearLayout.VERTICAL);
+        titleBlock.setPadding(dp(12), 0, dp(12), 0);
+        TextView title = text("AuraX Finder", 24, TEXT);
+        title.setTypeface(Typeface.DEFAULT_BOLD);
+        titleBlock.addView(title);
+        TextView subtitle = text("Local devices", 13, MUTED);
+        titleBlock.addView(subtitle);
+        header.addView(titleBlock, new LinearLayout.LayoutParams(0, -2, 1));
+
+        header.addView(button("Scan", v -> startScan()), new LinearLayout.LayoutParams(dp(92), dp(44)));
+        root.addView(header);
+
+        status = text("Scanning...", 14, MUTED);
+        status.setPadding(0, 0, 0, dp(10));
         root.addView(status);
 
-        LinearLayout actions = new LinearLayout(this);
-        actions.setOrientation(LinearLayout.HORIZONTAL);
-        actions.setGravity(Gravity.CENTER_VERTICAL);
-        actions.addView(button("Scan", v -> startScan()), new LinearLayout.LayoutParams(0, dp(46), 1));
-        actions.addView(space(dp(8), 1));
-        actions.addView(button("192.168.4.1", v -> openDevice(new Device("AuraX Group", "192.168.4.1"))),
-            new LinearLayout.LayoutParams(0, dp(46), 1));
-        root.addView(actions);
-
         ScrollView scroll = new ScrollView(this);
+        scroll.setFillViewport(false);
         list = new LinearLayout(this);
         list.setOrientation(LinearLayout.VERTICAL);
-        list.setPadding(0, dp(12), 0, dp(16));
+        list.setPadding(0, dp(2), 0, dp(16));
         scroll.addView(list);
         root.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1));
+
         setContentView(root);
         renderDevices();
     }
@@ -115,7 +130,7 @@ public class MainActivity extends Activity {
         stopUdp();
         devices.clear();
         renderDevices();
-        status.setText("Hledam pres UDP a HTTP scan...");
+        if (status != null) status.setText("Scanning...");
 
         workers = Executors.newFixedThreadPool(36);
         acquireMulticastLock();
@@ -203,9 +218,9 @@ public class MainActivity extends Activity {
             sleep(6500);
             main.post(() -> {
                 if (devices.isEmpty()) {
-                    status.setText("Nic nenalezeno. Zkontroluj stejnou WiFi/hotspot a zkus Scan znovu.");
+                    status.setText("No devices found");
                 } else {
-                    status.setText("Nalezeno zarizeni: " + devices.size());
+                    status.setText(deviceCountText());
                 }
             });
         });
@@ -237,6 +252,7 @@ public class MainActivity extends Activity {
         String ip = isPrivateIp(p[2]) ? p[2] : fallbackIp;
         Device d = new Device(host, ip);
         if (p.length > 4) d.battery = p[4];
+        if (p.length > 5) d.rssi = p[5];
         if (p.length > 6) d.sync = p[6];
         addDevice(d);
     }
@@ -259,6 +275,7 @@ public class MainActivity extends Activity {
             Device d = new Device(host, ip);
             d.battery = json.has("battery_pct") ? String.valueOf(json.optInt("battery_pct")) : "";
             d.sync = json.has("sync_channel") ? String.valueOf(json.optInt("sync_channel")) : "";
+            d.rssi = json.has("rssi") ? String.valueOf(json.optInt("rssi")) : "";
             addDevice(d);
         } catch (Exception ignored) {
         } finally {
@@ -269,20 +286,25 @@ public class MainActivity extends Activity {
     private void addDevice(Device device) {
         if (!isPrivateIp(device.ip)) return;
         main.post(() -> {
-            String key = device.hostname + "@" + device.ip;
-            devices.put(key, device);
-            status.setText("Nalezeno zarizeni: " + devices.size());
+            devices.put(device.ip, device);
+            if (status != null) status.setText(deviceCountText());
             renderDevices();
         });
+    }
+
+    private String deviceCountText() {
+        int count = devices.size();
+        return count == 1 ? "1 device found" : count + " devices found";
     }
 
     private void renderDevices() {
         if (list == null) return;
         list.removeAllViews();
         if (devices.isEmpty()) {
-            TextView empty = text("Zatim zadne zarizeni. Appka posloucha UDP broadcasty a skenuje lokalni sit.", 15, MUTED);
-            empty.setPadding(0, dp(16), 0, 0);
-            list.addView(empty);
+            TextView empty = text("No devices found", 16, MUTED);
+            empty.setGravity(Gravity.CENTER);
+            empty.setPadding(0, dp(72), 0, 0);
+            list.addView(empty, new LinearLayout.LayoutParams(-1, -2));
             return;
         }
         for (Device d : devices.values()) {
@@ -293,33 +315,72 @@ public class MainActivity extends Activity {
     private View deviceCard(Device d) {
         LinearLayout card = new LinearLayout(this);
         card.setOrientation(LinearLayout.VERTICAL);
-        card.setPadding(dp(14), dp(12), dp(14), dp(12));
-        card.setBackgroundColor(SURFACE);
+        card.setPadding(dp(15), dp(14), dp(15), dp(14));
+        card.setBackground(rounded(SURFACE, 8, BORDER));
+        card.setClickable(true);
+        card.setOnClickListener(v -> openDevice(d));
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, -2);
         lp.setMargins(0, 0, 0, dp(10));
         card.setLayoutParams(lp);
 
-        TextView name = text(d.hostname + ".local", 18, TEXT);
-        name.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
-        card.addView(name);
+        LinearLayout top = new LinearLayout(this);
+        top.setOrientation(LinearLayout.HORIZONTAL);
+        top.setGravity(Gravity.CENTER_VERTICAL);
 
-        String meta = d.ip;
-        if (!TextUtils.isEmpty(d.battery)) meta += "  |  baterie " + d.battery + "%";
-        if (!TextUtils.isEmpty(d.sync) && !"0".equals(d.sync)) meta += "  |  sync " + d.sync;
-        TextView info = text(meta, 14, MUTED);
-        info.setPadding(0, dp(4), 0, dp(10));
-        card.addView(info);
+        TextView name = text(displayName(d.hostname), 19, TEXT);
+        name.setTypeface(Typeface.DEFAULT_BOLD);
+        name.setSingleLine(true);
+        name.setEllipsize(TextUtils.TruncateAt.END);
+        top.addView(name, new LinearLayout.LayoutParams(0, -2, 1));
 
-        LinearLayout row = new LinearLayout(this);
-        row.setOrientation(LinearLayout.HORIZONTAL);
-        row.addView(button("Otevrit", v -> openDevice(d)), new LinearLayout.LayoutParams(0, dp(44), 1));
-        row.addView(space(dp(8), 1));
-        row.addView(button("Prohlizec", v -> {
-            Intent intent = new Intent(Intent.ACTION_VIEW, Uri.parse("http://" + d.ip + "/"));
-            startActivity(intent);
-        }), new LinearLayout.LayoutParams(0, dp(44), 1));
-        card.addView(row);
+        TextView chevron = text(">", 22, ACCENT);
+        chevron.setGravity(Gravity.CENTER);
+        top.addView(chevron, new LinearLayout.LayoutParams(dp(24), -2));
+        card.addView(top);
+
+        LinearLayout meta = new LinearLayout(this);
+        meta.setOrientation(LinearLayout.HORIZONTAL);
+        meta.setGravity(Gravity.LEFT);
+        meta.setPadding(0, dp(12), 0, 0);
+        meta.addView(chip("Battery " + valueOrDash(d.battery, "%")));
+        meta.addView(chip(syncText(d.sync)));
+        meta.addView(chip(wifiText(d.rssi)));
+        card.addView(meta);
+
         return card;
+    }
+
+    private TextView chip(String value) {
+        TextView tv = text(value, 12, MUTED);
+        tv.setSingleLine(true);
+        tv.setBackground(rounded(SURFACE_ALT, 999, BORDER));
+        tv.setPadding(dp(9), dp(6), dp(9), dp(6));
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-2, -2);
+        lp.setMargins(0, 0, dp(7), 0);
+        tv.setLayoutParams(lp);
+        return tv;
+    }
+
+    private String displayName(String host) {
+        if (TextUtils.isEmpty(host)) return "aurax";
+        String out = host;
+        if (out.endsWith(".local")) out = out.substring(0, out.length() - 6);
+        return out;
+    }
+
+    private String valueOrDash(String value, String suffix) {
+        if (TextUtils.isEmpty(value)) return "--";
+        return value + suffix;
+    }
+
+    private String syncText(String value) {
+        if (TextUtils.isEmpty(value) || "0".equals(value)) return "Sync off";
+        return "Sync " + value;
+    }
+
+    private String wifiText(String value) {
+        if (TextUtils.isEmpty(value) || "0".equals(value)) return "Wi-Fi --";
+        return "Wi-Fi " + value + " dBm";
     }
 
     private void openDevice(Device d) {
@@ -336,16 +397,17 @@ public class MainActivity extends Activity {
         bar.setGravity(Gravity.CENTER_VERTICAL);
         bar.setPadding(dp(8), dp(8), dp(8), dp(8));
         bar.setBackgroundColor(BG);
-        bar.addView(button("Zpet", v -> showFinder()), new LinearLayout.LayoutParams(dp(84), dp(44)));
+        bar.addView(button("Back", v -> showFinder()), new LinearLayout.LayoutParams(dp(82), dp(44)));
 
-        TextView title = text(d.hostname, 16, TEXT);
+        TextView title = text(displayName(d.hostname), 16, TEXT);
         title.setGravity(Gravity.CENTER_VERTICAL);
         title.setSingleLine(true);
         title.setEllipsize(TextUtils.TruncateAt.END);
+        title.setPadding(dp(10), 0, dp(10), 0);
         bar.addView(title, new LinearLayout.LayoutParams(0, dp(44), 1));
 
         WebView web = new WebView(this);
-        bar.addView(button("Reload", v -> web.reload()), new LinearLayout.LayoutParams(dp(96), dp(44)));
+        bar.addView(button("Reload", v -> web.reload()), new LinearLayout.LayoutParams(dp(92), dp(44)));
         root.addView(bar);
 
         WebSettings settings = web.getSettings();
@@ -372,8 +434,10 @@ public class MainActivity extends Activity {
         Button b = new Button(this);
         b.setText(label);
         b.setTextColor(Color.WHITE);
+        b.setTextSize(14);
         b.setAllCaps(false);
-        b.setBackgroundColor(ACCENT);
+        b.setTypeface(Typeface.DEFAULT_BOLD);
+        b.setBackground(rounded(ACCENT, 8, 0));
         b.setOnClickListener(click);
         return b;
     }
@@ -386,10 +450,12 @@ public class MainActivity extends Activity {
         return tv;
     }
 
-    private View space(int width, int height) {
-        View v = new View(this);
-        v.setLayoutParams(new LinearLayout.LayoutParams(width, height));
-        return v;
+    private GradientDrawable rounded(int color, int radiusDp, int strokeColor) {
+        GradientDrawable bg = new GradientDrawable();
+        bg.setColor(color);
+        bg.setCornerRadius(dp(radiusDp));
+        if (strokeColor != 0) bg.setStroke(dp(1), strokeColor);
+        return bg;
     }
 
     private int dp(int value) {
@@ -432,6 +498,7 @@ public class MainActivity extends Activity {
         final String ip;
         String battery = "";
         String sync = "";
+        String rssi = "";
 
         Device(String hostname, String ip) {
             this.hostname = TextUtils.isEmpty(hostname) ? "aurax" : hostname;

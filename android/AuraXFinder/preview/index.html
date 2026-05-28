@@ -1,0 +1,178 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AuraX Finder Preview</title>
+<style>
+  :root {
+    --bg: #131313;
+    --panel: #1f1f1f;
+    --panel-2: #2a2a2a;
+    --border: #373737;
+    --text: #f2ede7;
+    --muted: #9a948c;
+    --accent: #ea6820;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    min-height: 100vh;
+    background: #0e0e0e;
+    color: var(--text);
+    font: 15px/1.35 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    display: grid;
+    place-items: center;
+    padding: 22px;
+  }
+  .phone {
+    width: min(390px, 100%);
+    min-height: 780px;
+    background: var(--bg);
+    border: 1px solid #303030;
+    border-radius: 28px;
+    overflow: hidden;
+    box-shadow: 0 22px 70px rgba(0, 0, 0, .45);
+  }
+  .screen { padding: 18px; }
+  .top {
+    display: grid;
+    grid-template-columns: 44px 1fr 92px;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 14px;
+  }
+  .logo {
+    width: 44px;
+    height: 44px;
+    object-fit: contain;
+  }
+  h1 {
+    margin: 0;
+    font-size: 24px;
+    line-height: 1.05;
+    color: var(--text);
+  }
+  .subtitle {
+    margin: 2px 0 0;
+    color: var(--muted);
+    font-size: 13px;
+  }
+  button {
+    min-height: 44px;
+    border: 0;
+    border-radius: 8px;
+    background: var(--accent);
+    color: #fff;
+    font: inherit;
+    font-weight: 800;
+    cursor: pointer;
+  }
+  .status {
+    color: var(--muted);
+    font-size: 14px;
+    margin: 0 0 12px;
+  }
+  .device {
+    display: block;
+    width: 100%;
+    text-align: left;
+    border: 1px solid var(--border);
+    background: var(--panel);
+    border-radius: 8px;
+    padding: 14px 15px;
+    margin-bottom: 10px;
+    color: inherit;
+    cursor: pointer;
+  }
+  .device:active { filter: brightness(.9); }
+  .device-head {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  .name {
+    min-width: 0;
+    flex: 1;
+    font-size: 19px;
+    font-weight: 850;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+  .arrow {
+    color: var(--accent);
+    font-size: 22px;
+    font-weight: 700;
+  }
+  .meta {
+    display: flex;
+    gap: 7px;
+    flex-wrap: wrap;
+    margin-top: 12px;
+  }
+  .chip {
+    background: var(--panel-2);
+    color: var(--muted);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    padding: 6px 9px;
+    font-size: 12px;
+    white-space: nowrap;
+  }
+  @media (max-width: 430px) {
+    body { padding: 0; background: var(--bg); }
+    .phone { width: 100%; min-height: 100vh; border-radius: 0; border: 0; box-shadow: none; }
+  }
+</style>
+
+<div class="phone">
+  <main class="screen">
+    <header class="top">
+      <img class="logo" src="ignis_icon.png" alt="">
+      <div>
+        <h1>AuraX Finder</h1>
+        <p class="subtitle">Local devices</p>
+      </div>
+      <button>Scan</button>
+    </header>
+
+    <p class="status">3 devices found</p>
+
+    <button class="device">
+      <span class="device-head">
+        <span class="name">aurax</span>
+        <span class="arrow">&gt;</span>
+      </span>
+      <span class="meta">
+        <span class="chip">Battery 87%</span>
+        <span class="chip">Sync 1</span>
+        <span class="chip">Wi-Fi -58 dBm</span>
+      </span>
+    </button>
+
+    <button class="device">
+      <span class="device-head">
+        <span class="name">aurax-7c2a</span>
+        <span class="arrow">&gt;</span>
+      </span>
+      <span class="meta">
+        <span class="chip">Battery 72%</span>
+        <span class="chip">Sync 1</span>
+        <span class="chip">Wi-Fi -66 dBm</span>
+      </span>
+    </button>
+
+    <button class="device">
+      <span class="device-head">
+        <span class="name">stage-left</span>
+        <span class="arrow">&gt;</span>
+      </span>
+      <span class="meta">
+        <span class="chip">Battery --</span>
+        <span class="chip">Sync off</span>
+        <span class="chip">Wi-Fi --</span>
+      </span>
+    </button>
+  </main>
+</div>
+</html>
