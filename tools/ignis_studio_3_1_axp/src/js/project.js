@@ -1295,8 +1295,50 @@ IgnisProject.prototype.export = function (savedialog)
 
             //console.log(data); return;
 
-            var exportTechnology = this.getExportTechnology();
-            var exportProcessor = exportTechnology == 'aurax' ? processor_process_aurax : processor_process;
+            var target = $('#drives').val();
+
+            if (!target || target.length <= 0) {
+                for (var i in this.timeline) {
+                    var n = this.timeline[i];
+                    if (n.mirror) {
+                        this.timeline[i].hash = this.timeline[i].hash.split('_')[0];
+                    }
+                }
+                app_loading(false);
+                return;
+            }
+
+            if (target[target.length-1] != path.sep) target += path.sep;
+
+            var requestedExt = this.getExportExtension();
+            var fn = target + this.getProjectFilename(false, requestedExt);
+            if ($('#filename-editable-btn').hasClass('active')) {
+                fn = target + this.sanitizeExportFilename($('#export-filename').val(), requestedExt);
+            }
+
+            if (this.saveas) {
+                var tfn = remove_diacritics($('#project-name').val()).toLowerCase();
+                tfn = tfn.replace(/[^a-zA-Z0-9]+/g, ' ').trim().replace(/[ ]+/g, '-');
+                tfn = this.getProjectFilename(true, requestedExt);
+
+                this.configureExportDialogFilters(requestedExt);
+                this.dialog_export_properties.defaultPath = tfn;
+                fn = dialog_save(this.dialog_export_properties);
+            }
+
+            if (!fn) {
+                for (var i in this.timeline) {
+                    var n = this.timeline[i];
+                    if (n.mirror) {
+                        this.timeline[i].hash = this.timeline[i].hash.split('_')[0];
+                    }
+                }
+                app_loading(false);
+                return;
+            }
+
+            var finalTechnology = this.getExportTechnologyForFilename(fn);
+            var exportProcessor = finalTechnology == 'aurax' ? processor_process_aurax : processor_process;
 
             exportProcessor(this, data, $.proxy(function (result) {
 
@@ -1308,45 +1350,19 @@ IgnisProject.prototype.export = function (savedialog)
                     }
                 }
 
-                var target = $('#drives').val();
-
-                if (target && target.length > 0) {
-                    if (target[target.length-1] != path.sep) target += path.sep;
-
-                    var fn = target + this.getProjectFilename(false, this.getExportExtension());
-                    if ($('#filename-editable-btn').hasClass('active')) {
-                        fn = target + this.sanitizeExportFilename($('#export-filename').val(), this.getExportExtension());
-                    }
-
-                    if (this.saveas) {
-                        var tfn = remove_diacritics($('#project-name').val()).toLowerCase();
-                        tfn = tfn.replace(/[^a-zA-Z0-9]+/g, ' ').trim().replace(/[ ]+/g, '-');
-                        tfn = this.getProjectFilename(true, this.getExportExtension());
-
-                        this.dialog_export_properties.defaultPath = tfn;
-                        fn = dialog_save(this.dialog_export_properties);
-                    }
-
-                    if (!fn) {
-                        app_loading(false);
-                        return;
-                    }
-
-                    if (fs.existsSync(fn)) {
-                        fs.unlinkSync(fn);
-                    }
-
-                    fs.writeFile(fn, result, function (e) {
-                        app_loading(false);
-                        if (e === null) {
-                            //alert('Data saved to: ' + fn);
-                            this.ignis.properties.updateDeviceFiles();
-                        } else {
-                            alert('Error saving data! See details in console.');
-                            console.log(e);
-                        }
-                    });
+                if (fs.existsSync(fn)) {
+                    fs.unlinkSync(fn);
                 }
+
+                fs.writeFile(fn, result, $.proxy(function (e) {
+                    app_loading(false);
+                    if (e === null) {
+                        this.ignis.properties.updateDeviceFiles();
+                    } else {
+                        alert('Error saving data! See details in console.');
+                        console.log(e);
+                    }
+                }, this));
             }, this));
         }
     });
@@ -1385,9 +1401,28 @@ IgnisProject.prototype.getExportTechnology = function ()
     return ($('#export-technology').val() == 'aurax') ? 'aurax' : 'photon';
 }
 
+IgnisProject.prototype.getExportTechnologyForFilename = function (filename)
+{
+    var ext = path.extname(filename || '').toLowerCase();
+    if (ext == '.axp') return 'aurax';
+    if (ext == '.pix') return 'photon';
+    return this.getExportTechnology();
+}
+
 IgnisProject.prototype.getExportExtension = function ()
 {
     return this.getExportTechnology() == 'aurax' ? 'axp' : 'pix';
+}
+
+IgnisProject.prototype.configureExportDialogFilters = function (preferredExt)
+{
+    var pix = { name: 'Photon / legacy .pix', extensions: ['pix'] };
+    var axp = { name: 'AuraX compressed .axp', extensions: ['axp'] };
+    var all = { name: 'All Files', extensions: ['*'] };
+
+    this.dialog_export_properties.filters = (preferredExt == 'axp')
+        ? [axp, pix, all]
+        : [pix, axp, all];
 }
 
 IgnisProject.prototype.getProjectFilename = function (nonumber)
