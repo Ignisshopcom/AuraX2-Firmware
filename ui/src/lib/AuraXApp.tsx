@@ -332,9 +332,9 @@ export function AuraXApp() {
               </div>
             </div>
             <label class="upload-zone">
-              <input type="file" accept=".pix" multiple onChange={(e) => uploadFiles((e.currentTarget as HTMLInputElement).files)} />
-              <strong>Upload .pix files</strong>
-              <span>Multiple files are checked against remaining LittleFS space before upload.</span>
+              <input type="file" accept=".pix,.axp" multiple onChange={(e) => uploadFiles((e.currentTarget as HTMLInputElement).files)} />
+              <strong>Upload program files</strong>
+              <span>Photon .pix and AuraX .axp files are checked against remaining LittleFS space before upload.</span>
             </label>
             <div class="program-list">
               {(programs?.files ?? []).map((file) => (
@@ -351,7 +351,7 @@ export function AuraXApp() {
                   </div>
                 </div>
               ))}
-              {programs && programs.files.length === 0 && <p class="empty">No .pix program uploaded yet.</p>}
+              {programs && programs.files.length === 0 && <p class="empty">No program uploaded yet.</p>}
             </div>
           </section>
         )}

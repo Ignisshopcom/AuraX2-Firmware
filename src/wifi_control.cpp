@@ -22,7 +22,11 @@ static String jsonEscape(const String& s) {
     return out;
 }
 
-static String sanitizePixPath(const String& input) {
+static bool isProgramExtension(const String& lowerName) {
+    return lowerName.endsWith(".pix") || lowerName.endsWith(".axp");
+}
+
+static String sanitizeProgramPath(const String& input) {
     String name = input;
     name.replace("\\", "/");
     int slash = name.lastIndexOf('/');
@@ -39,7 +43,7 @@ static String sanitizePixPath(const String& input) {
     if (clean.length() == 0) clean = "show.pix";
     String lower = clean;
     lower.toLowerCase();
-    if (!lower.endsWith(".pix")) clean += ".pix";
+    if (!isProgramExtension(lower)) clean += ".pix";
     return "/" + clean;
 }
 
@@ -79,7 +83,7 @@ static String programDisplayName(const String& path) {
 }
 
 static String numberedProgramPath(uint16_t slot, const String& displayName) {
-    String cleanPath = sanitizePixPath(displayName);
+    String cleanPath = sanitizeProgramPath(displayName);
     String clean = cleanPath.startsWith("/") ? cleanPath.substring(1) : cleanPath;
     if (storedSlotFromPath("/" + clean) != 0 && clean.length() > 4) clean = clean.substring(4);
     char prefix[8];
@@ -98,7 +102,7 @@ static int collectPrograms(ProgramEntry* entries, int maxEntries) {
             if (!name.startsWith("/")) name = "/" + name;
             String lower = name;
             lower.toLowerCase();
-            if (lower.endsWith(".pix")) {
+            if (isProgramExtension(lower)) {
                 entries[count].path = name;
                 entries[count].displayName = programDisplayName(name);
                 entries[count].size = file.size();
@@ -137,7 +141,7 @@ static bool applyProgramOrder(ProgramEntry* entries, int count, AppConfig* cfg) 
 
     for (int i = 0; i < count; i++) {
         if (entries[i].path == selected) selectedIndex = i;
-        tempPaths[i] = "/__aurax_tmp_" + String(i) + ".pix";
+        tempPaths[i] = "/__aurax_tmp_" + String(i);
         if (LittleFS.exists(tempPaths[i])) LittleFS.remove(tempPaths[i]);
         if (!LittleFS.rename(entries[i].path, tempPaths[i])) return false;
     }
@@ -178,7 +182,7 @@ static uint16_t slotForProgramPath(const String& path) {
 static String nextUploadProgramPath(const String& filename) {
     ProgramEntry entries[32];
     int count = collectPrograms(entries, 32);
-    return numberedProgramPath((uint16_t)(count + 1), programDisplayName(sanitizePixPath(filename)));
+    return numberedProgramPath((uint16_t)(count + 1), programDisplayName(sanitizeProgramPath(filename)));
 }
 
 static uint8_t firstSyncChannel(uint16_t mask) {
@@ -762,7 +766,7 @@ void WifiControl::handleProgramSelect() {
             return;
         }
     } else {
-        path = sanitizePixPath(doc["file"] | "");
+        path = sanitizeProgramPath(doc["file"] | "");
     }
     if (!LittleFS.exists(path)) {
         _server.send(404, "text/plain", "Program not found");
@@ -780,7 +784,7 @@ void WifiControl::handleProgramDelete() {
         _server.send(400, "text/plain", "JSON error");
         return;
     }
-    String path = sanitizePixPath(doc["file"] | "");
+    String path = sanitizeProgramPath(doc["file"] | "");
     if (!LittleFS.exists(path)) {
         _server.send(404, "text/plain", "Program not found");
         return;

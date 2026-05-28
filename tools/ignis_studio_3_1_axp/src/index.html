@@ -1,0 +1,380 @@
+<html>
+    <head>
+        <title>Ignis Studio</title>
+        <meta charset="utf-8">
+        <meta http-equiv="Content-Security-Policy" content="default-src 'self' file: data: blob:; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' file: data: blob:; media-src 'self' file: data: blob:; connect-src 'self' file: http://petr.holly.darkyork.com https://ignisshop.com;">
+        <!--<link rel="stylesheet" href="css/fa/regular.min.css">
+        <link rel="stylesheet" href="css/fa/fontawesome.min.css">-->
+        <link rel="stylesheet/less" href="css/app.less">
+        <script>if (typeof module === 'object') {window.module = module; module = undefined;}</script>
+        <script src="js/vendor/less.min.js"></script>
+        <script src="js/vendor/jquery-3.3.1.min.js"></script>
+        <script src="js/vendor/three.min.js"></script>
+        <script src="js/vendor/stats.min.js"></script>
+        <script src="js/config.js"></script>
+        <script src="js/userconf.js"></script>
+        <script src="js/tools.js"></script>
+        <script src="js/app.js"></script>
+        <script src="js/resizer.js"></script>
+        <script src="js/preview.js"></script>
+        <script src="js/audio.js"></script>
+        <script src="js/timeline.js"></script>
+        <script src="js/library.js"></script>
+        <script src="js/project.js"></script>
+        <script src="js/properties.js"></script>
+        <script src="js/processor.js"></script>
+        <script src="js/slider.js"></script>
+        <script src="js/ignis.js"></script>
+        <script>if (window.module) module = window.module;</script>
+    </head>
+    <body>
+        <div id="startup-overlay"><div class="wheel"></div></div>
+        <div id="loading-overlay"><div class="stripe"></div></div>
+        <div id="audio-loading-overlay" style="display: none;"><div class="stripe"></div></div>
+        <div id="drop-overlay" style="display: none;"><div class="middle">Drop images or audio files here...</div></div>
+        <div id="prompt-overlay" style="display: none;">
+            <div id="prompt-window">
+                <div id="prompt-text"></div>
+                <div id="prompt-input-box"><input type="text" id="prompt-input"></div>
+                <button id="prompt-accept">Accept</button>
+                <button id="prompt-cancel">Cancel</button>
+            </div>
+        </div>
+        <div id="top">
+            <div id="top-icon">
+
+            </div>
+            <div id="top-menu">
+                <ul class="menu">
+                    <li>
+                        <a><i class="fas fa-file"></i> File</a>
+                        <ul class="submenu">
+                            <li><a action="project_new">New project</a></li>
+                            <li><a action="project_load">Open project</a></li>
+                            <li><a action="project_save">Save project</a></li>
+                            <li><a action="project_save_as">Save project as...</a></li>
+                            <li hr></li>
+                            <li><a action="exit">Exit</a></li>
+                        </ul>
+                    </li>
+                    <li>
+                        <a action="library_import"><i class="fas fa-file-import"></i> Import</a>
+                    </li>
+                    <li>
+                        <a action="library_delete_all_images"><i class="fas fa-trash-alt"></i> Delete pictures</a>
+                    </li>
+                    <li>
+                        <a action="export_as"><i class="fas fa-file-export"></i> Export As</a>
+                    </li>
+                    <li>
+                        <a action="help"><i class="fas fa-info"></i> Help</a>
+                    </li>
+                    <li>
+                        <a action="project_undo"><i class="fas fa-undo-alt"></i> Undo</a>
+                    </li>
+                    <li>
+                        <a action="project_redo"><i class="fas fa-redo-alt"></i> Redo</a>
+                    </li>
+                    <li id="debug-menu" style="display: none;">
+                        <a><i class="fas fa-bug"></i> Debug Menu</a>
+                        <ul class="submenu">
+                            <li><a action="devtools">Developer tools</a></li>
+                            <li><a action="reload">Reload</a></li>
+                            <li><a action="gen_thumbs">Rebuild Thumbnails</a></li>
+                            <li><a action="chrome_gpu">GPU</a></li>
+                            <li><a action="library_clean">Clean library</a></li>
+                        </ui>
+                    </li>
+                </ul>
+            </div>
+            <div id="window-title" dblaction="maximize">IGNIS Uploader</div>
+            <div id="clipbard-status" style="display: none;"><i class="fas fa-clipboard"></i><div class="count">2</div></div>
+            <div id="window-btns">
+                <!--<button class="btn btn-loading" action="loading"><i class="fas fa-cog fa-spin"></i></button>-->
+                <button class="btn" action="minimize"><i class="fas fa-window-minimize"></i></button>
+                <button class="btn" action="maximize"><i class="fas fa-window-maximize"></i></button>
+                <button class="btn btn-close" action="exit"><i class="fas fa-times"></i></button>
+            </div>
+            <div id="mac-btns">
+                <button class="btn exit" action="exit"><i class="fas fa-times"></i></button>
+                <button class="btn minimize" action="minimize"><i class="fas fa-minus"></i></button>
+                <button class="btn maximize" action="maximize"><i class="fas fa-sort fa-rotate-45"></i></button>
+            </div>
+        </div>
+        <div id="content-panel">
+            <div id="library-panel">
+                <div id="library-menu">
+                    <ul>
+                        <li action="library_images" class="active"><i class="fas fa-image"></i> Pictures</li>
+                        <li action="library_audio"><i class="fas fa-music"></i> Audio</li>
+                    </ul>
+                </div>
+                <div id="library-content">
+                    <div id="library-images"></div>
+                    <div id="library-audio" style="display: none;">
+                        <table class="file-table">
+                            <thead>
+                                <tr>
+                                    <th>Filename</th>
+                                    <th width="60">Format</th>
+                                    <th width="60" align="right">Duration</th>
+                                </tr>
+                            </thead>
+                            <tbody id="library-audio-list"></tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+            <div id="preview-panel">
+                <div id="preview-canvas"></div>
+                <div id="preview-labels"></div>
+                <div id="preview-overlay"></div>
+                <!--<div id="pewview-mode-button"><i id="preview-mode-linex" style="display: none;" class="fas fa-long-arrow-alt-right"></i><i id="preview-mode-rotate" style="display: none;" class="fas fa-undo fa-flip-horizontal"></i><i id="preview-mode-line" class="fas fa-long-arrow-alt-up"></i><i id="preview-mode-center" class="fas fa-sync-alt"></i></div>-->
+                <div id="preview-mode-buttons">
+                    <div mode="0" class="preview-mode-button" id="preview-mode-rotate"><i class="fas fa-undo fa-flip-horizontal"></i></div>
+<div mode="1" class="preview-mode-button" id="preview-mode-line"><i class="fas fa-long-arrow-alt-up"></i></div>
+<div mode="2" class="preview-mode-button" id="preview-mode-linex"><i class="fas fa-long-arrow-alt-right"></i></div>
+<div mode="3" class="preview-mode-button" id="preview-mode-center"><i class="fas fa-sync-alt"></i></div>
+<div mode="4" class="preview-mode-button" id="preview-mode-circle-line"><i class="far fa-circle"></i></div> <!-- Nový náhled -->
+<div mode="5" class="preview-mode-button" id="preview-mode-cyr-wheel"><i class="fas fa-compact-disc"></i></div>
+</div>
+                <div id="preview-layout-buttons">
+                    <div layout="0" class="preview-layout-button selected" id="preview-layout-0"><i class="fas fa-minus"></i></div>
+                    <div layout="1" class="preview-layout-button" id="preview-layout-1"><i class="fas fa-th-large"></i></div>
+                    <div layout="2" class="preview-layout-button" id="preview-layout-2"><i class="fas fa-grip-lines-vertical"></i></div>
+                </div>
+            </div>
+            <div id="properties-panel">
+                <div id="properties-menu">
+                    <ul>
+                        <li action="properties_properties" class="active"><i class="fas fa-cog"></i> Properties</li>
+                        <li action="properties_export"><i class="fas fa-download"></i> Export</li>
+                    </ul>
+                </div>
+                <div id="properties-properties-box">
+                    <div class="properties-box">
+                        <div class="properties-title">Project</div>
+
+                        <div class="field">
+                            <label>Project title</label>
+                            <input type="text" id="project-name" style="text-align: left;">
+                        </div>
+                    </div>
+                    <div class="properties-box">
+                        <div class="properties-title">Timeline</div>
+
+                        <div class="field">
+                            <label>Number of led pixels</label>
+                            <button id="leds-count-custom">Custom</button>
+                            <select id="leds-count"></select>
+                        </div>
+                        <div class="field">
+                            <label>Post-behavior</label>
+                            <select id="project-post">
+                                <option value="0">Exit to standby</option>
+                                <option value="1">Repeat program</option>
+                                <option value="2">Keep last frame</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="properties-box" id="properties-image-box">
+                        <div class="properties-title">Image</div>
+                        <div id="frame-editor">
+                            <div class="field">
+                                <div class="field" id="editor-start-container">
+                                    <label><i class="fas fa-hourglass-start"></i> Start</label>
+                                    <input type="hidden" editor="start" value="0" />
+                                    <div class="time-editor" for="start">
+                                        <div class="minus">-</div>
+                                        <div class="mins">0</div>
+                                        <div class="secs">0</div>
+                                        <div class="millis">0</div>
+                                        <div class="plus">+</div>
+                                    </div>
+                                    <div class="time-ditor-label">
+                                        <div class="mins">minutes</div>
+                                        <div class="secs">seconds</div>
+                                        <div class="millis">millis</div>
+                                    </div>
+                                </div>            
+                                <div class="field" id="editor-end-container">
+                                    <label><i class="fas fa-hourglass-end"></i> End</label>
+                                    <input type="hidden" editor="end" value="0" />
+                                    <div class="time-editor" for="end">
+                                        <div class="minus">-</div>
+                                        <div class="mins">0</div>
+                                        <div class="secs">0</div>
+                                        <div class="millis">0</div>
+                                        <div class="plus">+</div>
+                                    </div>
+                                    <div class="time-ditor-label">
+                                        <div class="mins">minutes</div>
+                                        <div class="secs">seconds</div>
+                                        <div class="millis">millis</div>
+                                    </div>
+                                </div>            
+                                <div class="field">
+                                    <label><i class="fas fa-arrows-alt-h"></i> Space between pictures</label>
+                                    <input type="slider" min="0" max="1000" step="1" editor="gap" value="0">
+                                </div>
+                                <div class="field checkbox">
+                                    <input id="accelerometer-checkbox" type="checkbox" editor="accelerometer" value="0">
+                                    <label for="accelerometer-checkbox"><i class="fas fa-microchip"></i> Accelerometer</label>
+                                </div>
+                                <div class="field" id="freq-field">
+                                    <label><i class="fas fa-tachometer-alt"></i> Line frequency</label>
+                                    <input id="freq_input" type="slider" min="0" max="2500" step="1" editor="frequency" value="0">
+                                </div>
+                                <div class="field" id="picture-freq-field" style="display: none;">
+                                    <label><i class="fas fa-tachometer-alt"></i> Picture frequency</label>
+                                    <input type="slider" min="1" max="100" step="1" editor="picture_frequency" value="0">
+                                </div>
+                                <div class="field">
+                                    <label><i class="fas fa-lightbulb"></i> Brightness</label>
+                                    <input type="slider" min="0" max="100" step="1" value="50" editor="dim">
+                                </div>
+                                <div class="field">
+                                    <label><i class="fas fa-calculator"></i> Image tools</label>
+                                    <div class="value-set">
+                                        <span>Fit [n] count</span>
+                                        <button action="stretch_image">SET</button>
+                                        <input id="fit-image-count" type="text" value="1">
+                                    </div>
+                                </div>
+                                <div class="field image-edit-field">
+                                    <label><i class="fas fa-magic"></i> Edit image</label>
+                                    <div class="image-edit-actions">
+                                        <button action="image_rotate_cw"><i class="fas fa-redo"></i><span>Rotate</span></button>
+                                        <button action="image_flip_h"><i class="fas fa-arrows-alt-h"></i><span>Flip H</span></button>
+                                        <button action="image_flip_v"><i class="fas fa-arrows-alt-v"></i><span>Flip V</span></button>
+                                    </div>
+                                    <div class="image-hue-control">
+                                        <div class="image-hue-row">
+                                            <span class="image-hue-title">Hue</span>
+                                            <input id="image-hue-slider" type="slider" min="-180" max="180" step="1" value="0">
+                                            <input id="image-hue-value" type="text" value="0">
+                                            <button action="image_hue_apply">Apply hue</button>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="field checkbox">
+                                    <input id="mirror-checkbox" type="checkbox" editor="mirror" value="0">
+                                    <label for="mirror-checkbox"><i class="fas fa-layer-group"></i> Mirror</label>
+                                </div>
+                                <div class="field checkbox" id="mgap-rotate">
+                                    <input id="rotate-checkbox" type="checkbox" editor="rotate" value="0">
+                                    <label for="rotate-checkbox"><i class="fas fa-sync-alt"></i> Rotate</label>
+                                </div>
+                                <div class="field checkbox" id="mgap-reverse">
+                                    <input id="reverse-checkbox" type="checkbox" editor="reverse" value="0">
+                                    <label for="reverse-checkbox"><i class="fas fa-exchange-alt"></i> Reverse</label>
+                                </div>
+                                <div class="field" id="mgap-slider">
+                                    <label><i class="fas fa-arrows-alt-h"></i> Center gap</label>
+                                    <input type="slider" min="0" max="100" step="2" value="0" editor="mgap">
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div id="properties-export-box" style="display: none;">
+                    <div class="properties-box full-height">
+                        <div class="properties-title">Export</div>
+
+                        <div class="field" id="export-filename-field">
+                            <label id="ets-label">Timeline</label>
+                            <label>Filename <div id="filename-editable-btn"><i class="fas fa-edit"></i><i class="fas fa-times"></i></div></label>
+                            <select id="export-timeline-select" style="width: 15%; float: right;"></select>
+                            <input type="text" id="export-filename" value="" readonly style="width: 80%;" />
+                        </div>
+
+                        <div class="field" id="export-target-field">
+                            <label>Target</label>
+                            <select id="drives"></select>
+                        </div>
+                        <div class="field" id="export-technology-field">
+                            <label>Technology</label>
+                            <select id="export-technology">
+                                <option value="photon">Photon / legacy .pix</option>
+                                <option value="aurax">AuraX compressed .axp</option>
+                            </select>
+                        </div>
+                        <div class="field" id="export-list-field">
+                            <label>Files on device</label>
+                            <div class="file-explorer" id="file-explorer"></div>
+                        </div>
+                        <div class="field" id="export-buttons-field">
+                            <button action="export"><i class="fas fa-download"></i> Export to device</button>
+                            <button action="file_move_up"><i class="fas fa-angle-up"></i></button>
+                            <button action="file_move_dn"><i class="fas fa-angle-down"></i></button>
+                            <button action="file_delete"><i class="fas fa-trash-alt"></i></button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div id="timeline-switch-menu" style="display: none;">
+            <div class="tsm-item" setprev="0"><i class="far fa-eye"></i> Preview #1</div>
+            <div class="tsm-item" setprev="1"><i class="far fa-eye"></i> Preview #2</div>
+            <div class="tsm-item" setprev="2"><i class="far fa-eye"></i> Preview #3</div>
+            <div class="tsm-item" setprev="3"><i class="far fa-eye"></i> Preview #4</div>
+            <div class="tsm-item" remtl="true"><i class="fas fa-recycle"></i> Remove</div>
+            <div class="tsm-item" movetl="up"><i class="fas fa-chevron-up"></i> Move up</div>
+            <div class="tsm-item" movetl="dn"><i class="fas fa-chevron-down"></i> Move down</div>
+            <div class="tsm-modes">
+                <div class="tsm-mode" setdmode="0"><i class="fas fa-undo fa-flip-horizontal"></i></div>
+                <div class="tsm-mode" setdmode="1"><i class="fas fa-long-arrow-alt-up"></i></div>
+                <div class="tsm-mode" setdmode="2"><i class="fas fa-long-arrow-alt-right"></i></div>
+                <div class="tsm-mode" setdmode="3"><i class="fas fa-sync-alt"></i></div>
+                <div class="tsm-mode" setdmode="4"><i class="far fa-circle"></i></div>
+                <div class="tsm-mode" setdmode="5"><i class="fas fa-compact-disc"></i></div>
+
+            </div>
+        </div>
+        <div id="timeline-left-panel">
+            <div id="timeline-switches">
+                <div id="timeline-switches-scroll">
+                </div>
+            </div>
+            <div id="timeline-height-switch"><i class="fas fa-arrows-alt-v"></i></div>
+        </div>
+        <div id="timeline-panel">
+            <canvas id="timeline-canvas"></canvas>
+            <div id="timeline-timeline">
+                <div id="timeline-zoom"><canvas id="zoom-canvas"></canvas></div>
+                <div id="timeline-scroll">
+                    <div id="timeline-images-wrapper">
+                        <div id="timelines-inactive"></div>
+                        <div id="timeline-images"></div>
+                    </div>
+                    <div id="timeline-audio"></div>
+                    <div id="timeline-cursor">
+                        <div id="timeline-cursor-hit"></div>
+                    </div>
+                    <div class="timeline-helper-cursor" id="timeline-helper-cursor-start"></div>
+                    <div class="timeline-helper-cursor" id="timeline-helper-cursor-end"></div>
+                </div>
+            </div>
+            <div id="timeline-toolbox">
+                <div class="left">
+                    <div class="btn small" action="zoom_in"><i class="fas fa-plus"></i></div>
+                    <div class="btn small" action="zoom_out"><i class="fas fa-minus"></i></div>
+                    <div class="btn small" action="zoom_fit"><i class="fas fa-expand"></i></div>
+                    <div class="btn small active" id="automove-button" action="audio_automove"><i class="fas fa-long-arrow-alt-right"></i></div>
+                </div>
+                <div class="center">
+                    <div class="btn" action="audio_beginning"><i class="fas fa-fast-backward"></i></div>
+                    <div class="btn" action="audio_rewind"><i class="fas fa-backward"></i></div>
+                    <div class="btn" id="play-button" action="audio_play"><i class="fas fa-play"></i></div>
+                    <div class="btn" id="pause-button" action="audio_pause"><i class="fas fa-pause"></i></div>
+                    <div class="btn" action="audio_forward"><i class="fas fa-forward"></i></div>
+                    <div class="btn" action="audio_end"><i class="fas fa-fast-forward"></i></div>
+                </div>
+                <div class="right">
+                    <div id="cursor-time"><i class="fas fa-stopwatch"></i> <span id="cursor-time-time"></span></div>
+                </div>
+            </div>
+        </div>
+        <div id="vertical-splitter"></div>
+    </body>
+</html>

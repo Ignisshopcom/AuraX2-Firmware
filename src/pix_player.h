@@ -54,6 +54,11 @@ public:
 private:
     static constexpr int MAX_CMDS = 64;
 
+    enum class ProgramFormat : uint8_t {
+        Pix = 0,
+        Axp = 1,
+    };
+
     struct Command {
         uint32_t startTime;   // ms — when this command starts in the program timeline
         uint32_t endTime;     // ms — when this command ends (loop until here)
@@ -65,6 +70,7 @@ private:
     };
 
     int  parseHeader(File& f);
+    int  loadAxp(File& f);
     // Returns pointer to 4*width raw bytes [dim,B,G,R] for column col of command cmdIdx.
     // Returns nullptr on error.
     const uint8_t* fetchColumn(int cmdIdx, int col);
@@ -78,6 +84,7 @@ private:
     int     _numCmds     = 0;
     PixEndBehavior _endBehavior = PixEndBehavior::Repeat;
     bool    _loaded      = false;
+    ProgramFormat _format = ProgramFormat::Pix;
 
     // Preloaded mode: entire file image section in PSRAM
     uint8_t* _preloadBuf = nullptr;           // raw bytes for all images

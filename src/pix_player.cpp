@@ -11,6 +11,14 @@ static constexpr uint8_t PIX_LABEL_COMMAND    = 0xA1;
 static constexpr uint8_t PIX_LABEL_CMD_PARAM  = 0xB1;
 static constexpr uint8_t PIX_CMD_PICTURE      = 1;
 
+static constexpr uint32_t AXP_MAGIC           = 0x31505841;  // "AXP1"
+static constexpr uint32_t AXP_VERSION         = 1;
+static constexpr uint32_t AXP_CODEC_RAW       = 0;
+static constexpr uint32_t AXP_CODEC_COLUMNS   = 1;
+static constexpr uint8_t  AXP_COLUMN_RAW      = 0;
+static constexpr uint8_t  AXP_COLUMN_RLE      = 1;
+static constexpr uint8_t  AXP_COLUMN_REPEAT   = 2;
+
 // Program parameter types
 static constexpr uint8_t PP_END_BEHAVIOR      = 0x06;
 
@@ -35,6 +43,20 @@ static bool readDW(File& f, uint32_t& out) {
     return true;
 }
 
+static bool readByte(File& f, uint8_t& out) {
+    int v = f.read();
+    if (v < 0) return false;
+    out = (uint8_t)v;
+    return true;
+}
+
+static bool readU16(File& f, uint16_t& out) {
+    uint8_t b[2];
+    if (f.read(b, 2) != 2) return false;
+    out = (uint16_t)b[0] | ((uint16_t)b[1] << 8);
+    return true;
+}
+
 static void splitDW(uint32_t dw, uint8_t& label, uint8_t& type, uint16_t& size) {
     label = (dw >> 24) & 0xFF;
     type  = (dw >> 16) & 0xFF;
@@ -56,6 +78,7 @@ void PixPlayer::unload() {
     free(_colBuf);               _colBuf     = nullptr;
     _preloaded = false;
     _loaded    = false;
+    _format    = ProgramFormat::Pix;
     _numCmds   = 0;
     _curCmd    = 0;
     _curCol    = 0;
@@ -138,6 +161,106 @@ int PixPlayer::parseHeader(File& f) {
     return _numCmds > 0 ? 0 : 2;
 }
 
+int PixPlayer::loadAxp(File& f) {
+    uint32_t version = 0;
+    uint32_t commandCount = 0;
+    uint32_t numLeds = 0;
+    uint32_t endBehavior = 0;
+    uint32_t decodedBytes = 0;
+
+    if (!readDW(f, version) || !readDW(f, commandCount) || !readDW(f, numLeds) ||
+        !readDW(f, endBehavior) || !readDW(f, decodedBytes)) {
+        return 2;
+    }
+    if (version != AXP_VERSION || commandCount == 0 || commandCount > MAX_CMDS || decodedBytes == 0) return 2;
+
+    struct AxpMeta {
+        uint32_t dataOffset;
+        uint32_t dataSize;
+        uint32_t codec;
+    };
+    AxpMeta meta[MAX_CMDS] = {};
+
+    _numCmds = (int)commandCount;
+    _endBehavior = (PixEndBehavior)(endBehavior & 0xFF);
+    if (_endBehavior > PixEndBehavior::PingPong) _endBehavior = PixEndBehavior::Repeat;
+
+    for (int i = 0; i < _numCmds; i++) {
+        Command& cmd = _cmds[i];
+        memset(&cmd, 0, sizeof(cmd));
+
+        uint32_t isLast = 0;
+        if (!readDW(f, cmd.startTime) || !readDW(f, cmd.endTime) || !readDW(f, cmd.width) ||
+            !readDW(f, cmd.height) || !readDW(f, cmd.frequency) || !readDW(f, meta[i].dataOffset) ||
+            !readDW(f, meta[i].dataSize) || !readDW(f, cmd.offset) || !readDW(f, meta[i].codec) ||
+            !readDW(f, isLast)) {
+            return 2;
+        }
+        cmd.isLast = (isLast != 0);
+        _cmdBufOffset[i] = cmd.offset;
+
+        if (cmd.width == 0 || cmd.height == 0 || cmd.frequency == 0) return 2;
+        if ((uint64_t)cmd.offset + (uint64_t)cmd.width * (uint64_t)cmd.height * 4ULL > decodedBytes) return 2;
+        if (meta[i].codec != AXP_CODEC_RAW && meta[i].codec != AXP_CODEC_COLUMNS) return 2;
+        (void)numLeds;
+    }
+
+    _preloadBuf = (uint8_t*)heap_caps_malloc(decodedBytes, MALLOC_CAP_SPIRAM);
+    if (!_preloadBuf) return 6;
+    memset(_preloadBuf, 0, decodedBytes);
+
+    for (int i = 0; i < _numCmds; i++) {
+        const Command& cmd = _cmds[i];
+        const AxpMeta& m = meta[i];
+        uint8_t* dst = _preloadBuf + _cmdBufOffset[i];
+        size_t rawBytes = (size_t)cmd.width * cmd.height * 4;
+
+        if (!f.seek(m.dataOffset)) return 2;
+
+        if (m.codec == AXP_CODEC_RAW) {
+            if (m.dataSize != rawBytes) return 2;
+            if (f.read(dst, rawBytes) != (int)rawBytes) return 2;
+            continue;
+        }
+
+        for (uint32_t col = 0; col < cmd.height; col++) {
+            uint8_t* colDst = dst + (size_t)col * cmd.width * 4;
+            uint8_t method = 0;
+            if (!readByte(f, method)) return 2;
+
+            if (method == AXP_COLUMN_RAW) {
+                size_t colBytes = (size_t)cmd.width * 4;
+                if (f.read(colDst, colBytes) != (int)colBytes) return 2;
+            } else if (method == AXP_COLUMN_REPEAT) {
+                if (col == 0) return 2;
+                memcpy(colDst, colDst - (size_t)cmd.width * 4, (size_t)cmd.width * 4);
+            } else if (method == AXP_COLUMN_RLE) {
+                uint16_t runs = 0;
+                if (!readU16(f, runs)) return 2;
+                uint32_t written = 0;
+                for (uint16_t r = 0; r < runs; r++) {
+                    uint16_t count = 0;
+                    uint32_t pixel = 0;
+                    if (!readU16(f, count) || !readDW(f, pixel)) return 2;
+                    if (count == 0 || written + count > cmd.width) return 2;
+                    for (uint16_t n = 0; n < count; n++) {
+                        memcpy(colDst + (size_t)(written + n) * 4, &pixel, 4);
+                    }
+                    written += count;
+                }
+                if (written != cmd.width) return 2;
+            } else {
+                return 2;
+            }
+        }
+    }
+
+    _format = ProgramFormat::Axp;
+    _preloaded = true;
+    LOG("[axp] decoded %u bytes into PSRAM, %d commands\n", (unsigned)decodedBytes, _numCmds);
+    return 0;
+}
+
 // ── load ──────────────────────────────────────────────────────────────────────
 
 int PixPlayer::load(const char* path) {
@@ -147,13 +270,40 @@ int PixPlayer::load(const char* path) {
     if (!LittleFS.begin(true)) return 3;
     if (!LittleFS.exists(path)) return 5;
 
-    // Parse header
+    // Detect AuraX compressed format first. Legacy .pix starts with 0xD1 records.
     {
         File f = LittleFS.open(path, "r");
         if (!f) return 4;
-        int err = parseHeader(f);
+        uint32_t magic = 0;
+        if (!readDW(f, magic)) {
+            f.close();
+            return 2;
+        }
+        int err = 0;
+        if (magic == AXP_MAGIC) {
+            err = loadAxp(f);
+        } else {
+            f.seek(0);
+            err = parseHeader(f);
+        }
         f.close();
         if (err) return err;
+    }
+
+    if (_format == ProgramFormat::Axp) {
+        _loaded         = true;
+        _keepFrozen     = false;
+        _inPause        = false;
+        _curCmd         = 0;
+        _curCol         = 0;
+        _framesRendered = 0;
+        _framesExpected = 0;
+        _programStartUs = esp_timer_get_time();
+        _fpsWindowFrames = 0;
+        _fpsWindowStartUs = _programStartUs;
+        _currentFpsX10 = 0;
+        _nextFrameUs    = _programStartUs;
+        return 0;
     }
 
     // Validate
