@@ -11,6 +11,7 @@ export interface StatusResponse {
   ap_mode?: boolean
   battery_pct: number
   battery_mv: number
+  sync_channel?: number
   rssi?: number
 }
 

@@ -23,6 +23,19 @@ bez domeny a bez mobilni aplikace.
 Group master zobrazi ostatni zarizeni v seznamu peeru pres UDP discovery. Sync
 prikazy zustavaji filtrovane pres `syncChannel`, stejne jako v beznem rezimu.
 
+## Android app
+
+`android/AuraXFinder` je jednoducha Android appka pro vyhledani AuraX zarizeni
+v aktualni siti. Po startu:
+
+- posle UDP dotaz `AURAX?` na port `4210`,
+- posloucha odpovedi `AURAX <hostname> <ip> ...`,
+- zkusi HTTP scan lokalnich privatnich siti pres `/status`,
+- otevre web UI zarizeni v aplikaci pres WebView.
+
+Appka nepouziva cloud ani internet. Slouzi jen jako finder a wrapper nad web UI,
+ktere porad bezi primo v ESP.
+
 ## Poznamky
 
 - Group master ma zapnute AP, takze spotrebuje vic energie nez client.

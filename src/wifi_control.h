@@ -14,7 +14,7 @@ class SyncControl;  // forward declaration
 static constexpr uint16_t DISCOVERY_PORT   = 4210;
 static constexpr int      MAX_PEERS        = 8;
 static constexpr uint32_t PEER_EXPIRE_MS   = 90000;
-static constexpr uint32_t ANNOUNCE_INTERVAL_MS = 30000;
+static constexpr uint32_t ANNOUNCE_INTERVAL_MS = 10000;
 static constexpr uint32_t STA_CONNECT_TIMEOUT_MS = 12000;
 static constexpr uint32_t STA_RETRY_INTERVAL_MS = 18000;
 static constexpr uint8_t  GROUP_AP_CHANNEL = 6;

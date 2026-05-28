@@ -479,6 +479,7 @@ void WifiControl::handleStatus() {
     json += "\"ap_mode\":"          + String(_apMode ? "true" : "false") + ",";
     json += "\"battery_mv\":"       + String(_batMonitor.mv()) + ",";
     json += "\"battery_pct\":"      + String(_batMonitor.pct()) + ",";
+    json += "\"sync_channel\":"     + String(_cfg.syncChannel) + ",";
     json += "\"rssi\":"             + String(_apMode ? 0 : WiFi.RSSI());
     json += "}";
     _server.send(200, "application/json", json);
@@ -696,6 +697,10 @@ void WifiControl::receivePeers() {
     _udp.read(buf, sizeof(buf) - 1);
 
     char* cmd      = strtok(buf, " ");
+    if (cmd && strcmp(cmd, "AURAX?") == 0) {
+        announce();
+        return;
+    }
     char* host     = strtok(nullptr, " ");
     char* ip       = strtok(nullptr, " ");
     char* chipHex  = strtok(nullptr, " ");
