@@ -47,8 +47,9 @@ public:
     struct Stats {
         uint32_t framesRendered;  // snímků skutečně vykreslených
         uint32_t framesExpected;  // snímků, které měly být vykresleny podle časování
+        uint16_t fpsX10;          // current rendered FPS * 10
     };
-    Stats stats() const { return {_framesRendered, _framesExpected}; }
+    Stats stats() const { return {_framesRendered, _framesExpected, _currentFpsX10}; }
 
 private:
     static constexpr int MAX_CMDS = 64;
@@ -96,6 +97,9 @@ private:
 
     uint32_t         _framesRendered      = 0;
     uint32_t         _framesExpected     = 0;
+    uint32_t         _fpsWindowFrames    = 0;
+    int64_t          _fpsWindowStartUs   = 0;
+    uint16_t         _currentFpsX10      = 0;
 
     uint16_t         _tempo               = 100;  // playback speed %; 100=normal, 50=half, 200=double
     uint8_t          _endBehaviorOverride = 255;  // 255=from file, 0=Exit, 1=Repeat, 2=Keep, 3=PingPong

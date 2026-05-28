@@ -59,6 +59,8 @@ void PixPlayer::unload() {
     _numCmds   = 0;
     _curCmd    = 0;
     _curCol    = 0;
+    _currentFpsX10 = 0;
+    _fpsWindowFrames = 0;
 }
 
 // ── parsing ───────────────────────────────────────────────────────────────────
@@ -211,6 +213,9 @@ int PixPlayer::load(const char* path) {
     _framesRendered = 0;
     _framesExpected = 0;
     _programStartUs = esp_timer_get_time();
+    _fpsWindowFrames = 0;
+    _fpsWindowStartUs = _programStartUs;
+    _currentFpsX10 = 0;
     _nextFrameUs    = _programStartUs;
     return 0;
 }
@@ -240,6 +245,9 @@ void PixPlayer::blackout() {
 void PixPlayer::scheduleStart(int64_t atUs) {
     _framesRendered = 0;
     _framesExpected = 0;
+    _fpsWindowFrames = 0;
+    _fpsWindowStartUs = atUs;
+    _currentFpsX10 = 0;
     _inPause        = false;
     _programStartUs = atUs;
     _nextFrameUs    = atUs;
@@ -315,11 +323,29 @@ bool PixPlayer::update() {
     _inPause = false;
 
     const Command& cmd = _cmds[_curCmd];
-    {
-        int64_t frameIntervalUs = 1000000LL * 100LL / ((int64_t)cmd.frequency * (int64_t)_tempo);
-        _framesExpected += (now - _nextFrameUs) / frameIntervalUs + 1;
-        _framesRendered++;
+    int64_t frameIntervalUs = 1000000LL * 100LL / ((int64_t)cmd.frequency * (int64_t)_tempo);
+    if (frameIntervalUs < 1) frameIntervalUs = 1;
+    _framesExpected += (now - _nextFrameUs) / frameIntervalUs + 1;
+    _framesRendered++;
+    _fpsWindowFrames++;
+    int64_t fpsElapsedUs = now - _fpsWindowStartUs;
+    if (fpsElapsedUs >= 1000000LL) {
+        _currentFpsX10 = (uint16_t)((_fpsWindowFrames * 10000000ULL + (uint64_t)fpsElapsedUs / 2) / (uint64_t)fpsElapsedUs);
+        _fpsWindowFrames = 0;
+        _fpsWindowStartUs = now;
     }
+
+    int64_t cmdElapsedUs = programUs - (int64_t)cmd.startTime * 1000LL;
+    if (cmdElapsedUs < 0) cmdElapsedUs = 0;
+    uint32_t frameIndex = (uint32_t)((uint64_t)cmdElapsedUs * (uint64_t)cmd.frequency / 1000000ULL);
+    if (effectiveBehavior == PixEndBehavior::PingPong && cmd.height > 1) {
+        uint32_t seqLen = cmd.height * 2u - 2u;
+        uint32_t pos = frameIndex % seqLen;
+        _curCol = (pos < cmd.height) ? (int)pos : (int)(seqLen - pos);
+    } else {
+        _curCol = (int)(frameIndex % cmd.height);
+    }
+
     const uint8_t* col = fetchColumn(_curCmd, _curCol);
     if (col) {
         if (_curCmd == 0 && _curCol == 0 && programUs < 2000000LL / (int64_t)cmd.frequency) {
@@ -335,25 +361,10 @@ bool PixPlayer::update() {
         _leds.showColumnDirect(col, cmd.width);
     }
 
-    _nextFrameUs = now + 1000000LL * 100LL / ((int64_t)cmd.frequency * (int64_t)_tempo);
-
-    if (effectiveBehavior == PixEndBehavior::PingPong) {
-        if (_pingPongReverse) {
-            if (--_curCol < 0) {
-                _curCol = 1;
-                _pingPongReverse = false;
-            }
-        } else {
-            if (++_curCol >= (int)cmd.height) {
-                _curCol = (cmd.height > 1) ? (int)cmd.height - 2 : 0;
-                _pingPongReverse = (cmd.height > 1);
-            }
-        }
-    } else {
-        if (++_curCol >= (int)cmd.height) {
-            _curCol = 0;
-        }
-    }
+    int64_t nextProgramUs = (int64_t)cmd.startTime * 1000LL
+                          + (int64_t)(frameIndex + 1u) * 1000000LL / (int64_t)cmd.frequency;
+    _nextFrameUs = _programStartUs + nextProgramUs * 100LL / (int64_t)_tempo;
+    while (_nextFrameUs <= now) _nextFrameUs += frameIntervalUs;
     return true;
 }
 

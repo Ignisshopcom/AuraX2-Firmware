@@ -36,6 +36,13 @@ private:
     void handleStop();
     void handleEffectStart();
     void handleEffectStop();
+    void handlePrograms();
+    void handleProgramSelect();
+    void handleProgramDelete();
+    void handleProgramReorder();
+    void handleProgramStart();
+    void handlePower();
+    void handleSyncNow();
     void handleStatus();
     void handlePeers();
     void handleConfigGet();
@@ -61,6 +68,7 @@ private:
     void announce();
     void receivePeers();
     void expirePeers();
+    bool saveRuntimeConfig();
 
     struct Peer {
         char      hostname[32];
@@ -68,7 +76,8 @@ private:
         uint32_t  lastSeenMs;
         uint8_t   batPct;
         int8_t    rssi;
-        uint8_t   syncChannel;
+        uint8_t   syncEnabled;
+        uint16_t  syncMask;
     };
 
     PixPlayer&    _player;
@@ -79,6 +88,9 @@ private:
     WebServer    _server{80};
 
     File         _uploadFile;
+    String       _uploadPath;
+    size_t       _uploadWritten = 0;
+    size_t       _uploadMaxBytes = 0;
     bool         _uploadError = false;
     bool         _apMode = false;
     bool         _apActive = false;

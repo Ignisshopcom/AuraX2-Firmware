@@ -13,8 +13,9 @@ public:
         uint32_t now = millis();
         if (_lastMs != 0 && now - _lastMs < _cfg->batIntervalMs) return false;
 
-        float raw = (analogReadMilliVolts(_cfg->batPin) + _cfg->batCalibration * 1000.0f)
-                    * _cfg->batMultiplier;
+        float voltage = (analogReadMilliVolts(_cfg->batPin) / 1000.0f) * _cfg->batMultiplier
+                        + _cfg->batCalibration;
+        float raw = voltage * 1000.0f;
         if (_lastMs == 0)
             _mvf = raw;
         else
@@ -22,10 +23,7 @@ public:
         _lastMs = now;
         _mv = (uint16_t)(_mvf < 0 ? 0 : _mvf > 65535 ? 65535 : _mvf);
 
-        if (_mv >= _cfg->batMaxMv || _cfg->batMaxMv <= _cfg->batMinMv) _pct = 100;
-        else if (_mv <= _cfg->batMinMv) _pct = 0;
-        else _pct = (uint8_t)(((uint32_t)(_mv - _cfg->batMinMv) * 100) /
-                               (_cfg->batMaxMv - _cfg->batMinMv));
+        _pct = lipoPercent(_mv, _cfg->batMinMv, _cfg->batMaxMv);
 
         bool low = _cfg->batAutoOff && _pct <= _cfg->batAutoOffThreshold;
         if (low && !_autoOffActive) {
@@ -43,6 +41,23 @@ public:
     uint8_t  pct() const { return _pct; }
 
 private:
+    static uint8_t lipoPercent(uint16_t mv, uint16_t minMv, uint16_t maxMv) {
+        if (maxMv <= minMv) return 100;
+
+        float level = ((float)mv - (float)minMv) * 100.0f / ((float)maxMv - (float)minMv);
+        if (level < 40.0f) {
+            level = level * 12.0f / 40.0f;
+        } else if (level < 90.0f) {
+            level = 12.0f + (level - 40.0f) * 83.0f / 50.0f;
+        } else {
+            level = 95.0f + (level - 90.0f) * 5.0f / 15.0f;
+        }
+
+        if (level < 0.0f) return 0;
+        if (level > 100.0f) return 100;
+        return (uint8_t)level;
+    }
+
     AppConfig* _cfg          = nullptr;
     uint32_t   _lastMs       = 0;
     float      _mvf          = 0.0f;

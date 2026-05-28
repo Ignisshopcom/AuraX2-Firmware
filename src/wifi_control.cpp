@@ -11,6 +11,199 @@
 #include <mdns.h>
 #include "web_html.h"
 
+static String jsonEscape(const String& s) {
+    String out;
+    out.reserve(s.length() + 4);
+    for (size_t i = 0; i < s.length(); i++) {
+        char c = s.charAt(i);
+        if (c == '"' || c == '\\') out += '\\';
+        out += c;
+    }
+    return out;
+}
+
+static String sanitizePixPath(const String& input) {
+    String name = input;
+    name.replace("\\", "/");
+    int slash = name.lastIndexOf('/');
+    if (slash >= 0) name = name.substring(slash + 1);
+    name.trim();
+    String clean;
+    for (size_t i = 0; i < name.length() && clean.length() < 58; i++) {
+        char c = name.charAt(i);
+        if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+            (c >= '0' && c <= '9') || c == '-' || c == '_' || c == '.') {
+            clean += c;
+        }
+    }
+    if (clean.length() == 0) clean = "show.pix";
+    String lower = clean;
+    lower.toLowerCase();
+    if (!lower.endsWith(".pix")) clean += ".pix";
+    return "/" + clean;
+}
+
+static size_t fileSizeOf(const char* path) {
+    File f = LittleFS.open(path, "r");
+    if (!f) return 0;
+    size_t size = f.size();
+    f.close();
+    return size;
+}
+
+struct ProgramEntry {
+    String path;
+    String displayName;
+    size_t size;
+    uint16_t storedSlot;
+};
+
+static uint16_t storedSlotFromPath(const String& path) {
+    int start = path.startsWith("/") ? 1 : 0;
+    if (path.length() < start + 4) return 0;
+    char a = path.charAt(start);
+    char b = path.charAt(start + 1);
+    char c = path.charAt(start + 2);
+    char sep = path.charAt(start + 3);
+    if (a < '0' || a > '9' || b < '0' || b > '9' || c < '0' || c > '9') return 0;
+    if (sep != '-' && sep != '_') return 0;
+    return (uint16_t)((a - '0') * 100 + (b - '0') * 10 + (c - '0'));
+}
+
+static String programDisplayName(const String& path) {
+    String name = path;
+    int slash = name.lastIndexOf('/');
+    if (slash >= 0) name = name.substring(slash + 1);
+    if (storedSlotFromPath(path) != 0 && name.length() > 4) name = name.substring(4);
+    return name.length() ? name : "program.pix";
+}
+
+static String numberedProgramPath(uint16_t slot, const String& displayName) {
+    String cleanPath = sanitizePixPath(displayName);
+    String clean = cleanPath.startsWith("/") ? cleanPath.substring(1) : cleanPath;
+    if (storedSlotFromPath("/" + clean) != 0 && clean.length() > 4) clean = clean.substring(4);
+    char prefix[8];
+    snprintf(prefix, sizeof(prefix), "%03u-", (unsigned)slot);
+    return "/" + String(prefix) + clean;
+}
+
+static int collectPrograms(ProgramEntry* entries, int maxEntries) {
+    int count = 0;
+    File root = LittleFS.open("/");
+    if (!root) return 0;
+    File file = root.openNextFile();
+    while (file && count < maxEntries) {
+        if (!file.isDirectory()) {
+            String name = file.name();
+            if (!name.startsWith("/")) name = "/" + name;
+            String lower = name;
+            lower.toLowerCase();
+            if (lower.endsWith(".pix")) {
+                entries[count].path = name;
+                entries[count].displayName = programDisplayName(name);
+                entries[count].size = file.size();
+                entries[count].storedSlot = storedSlotFromPath(name);
+                count++;
+            }
+        }
+        file = root.openNextFile();
+    }
+    root.close();
+
+    for (int i = 0; i < count - 1; i++) {
+        for (int j = i + 1; j < count; j++) {
+            bool swap = false;
+            if (entries[i].storedSlot && entries[j].storedSlot) {
+                swap = entries[j].storedSlot < entries[i].storedSlot;
+            } else if (entries[j].storedSlot && !entries[i].storedSlot) {
+                swap = true;
+            } else if (entries[i].storedSlot == entries[j].storedSlot) {
+                swap = entries[j].path.compareTo(entries[i].path) < 0;
+            }
+            if (swap) {
+                ProgramEntry tmp = entries[i];
+                entries[i] = entries[j];
+                entries[j] = tmp;
+            }
+        }
+    }
+    return count;
+}
+
+static bool applyProgramOrder(ProgramEntry* entries, int count, AppConfig* cfg) {
+    String selected = cfg ? String(cfg->pixFile) : "";
+    String tempPaths[32];
+    int selectedIndex = -1;
+
+    for (int i = 0; i < count; i++) {
+        if (entries[i].path == selected) selectedIndex = i;
+        tempPaths[i] = "/__aurax_tmp_" + String(i) + ".pix";
+        if (LittleFS.exists(tempPaths[i])) LittleFS.remove(tempPaths[i]);
+        if (!LittleFS.rename(entries[i].path, tempPaths[i])) return false;
+    }
+
+    for (int i = 0; i < count; i++) {
+        String finalPath = numberedProgramPath((uint16_t)(i + 1), entries[i].displayName);
+        if (LittleFS.exists(finalPath)) LittleFS.remove(finalPath);
+        if (!LittleFS.rename(tempPaths[i], finalPath)) return false;
+        if (cfg && i == selectedIndex) strlcpy(cfg->pixFile, finalPath.c_str(), sizeof(cfg->pixFile));
+    }
+    return true;
+}
+
+static bool renumberPrograms(AppConfig* cfg) {
+    ProgramEntry entries[32];
+    int count = collectPrograms(entries, 32);
+    if (count == 0) return true;
+    return applyProgramOrder(entries, count, cfg);
+}
+
+static bool programPathForSlot(uint16_t slot, String& out) {
+    ProgramEntry entries[32];
+    int count = collectPrograms(entries, 32);
+    if (slot < 1 || slot > count) return false;
+    out = entries[slot - 1].path;
+    return true;
+}
+
+static uint16_t slotForProgramPath(const String& path) {
+    ProgramEntry entries[32];
+    int count = collectPrograms(entries, 32);
+    for (int i = 0; i < count; i++) {
+        if (entries[i].path == path) return (uint16_t)(i + 1);
+    }
+    return 0;
+}
+
+static String nextUploadProgramPath(const String& filename) {
+    ProgramEntry entries[32];
+    int count = collectPrograms(entries, 32);
+    return numberedProgramPath((uint16_t)(count + 1), programDisplayName(sanitizePixPath(filename)));
+}
+
+static uint8_t firstSyncChannel(uint16_t mask) {
+    for (uint8_t ch = 1; ch <= 10; ch++) {
+        if (mask & (1u << (ch - 1))) return ch;
+    }
+    return 0;
+}
+
+static EffectParams effectParamsFromConfig(const AppConfig& cfg) {
+    EffectParams p = {};
+    p.effectId    = cfg.effectId;
+    p.speed       = cfg.effectSpeed;
+    p.intensity   = cfg.effectIntensity;
+    p.dotSize     = cfg.effectDotSize;
+    p.paletteId   = cfg.effectPaletteId;
+    p.paletteSize = cfg.paletteSize;
+    p.reverse     = cfg.effectReverse;
+    if (p.paletteSize == 0 || p.paletteSize > 4) p.paletteSize = 1;
+    for (int i = 0; i < p.paletteSize && i < 4; i++) {
+        p.palette[i] = {cfg.paletteR[i], cfg.paletteG[i], cfg.paletteB[i]};
+    }
+    return p;
+}
+
 // ── WifiControl ───────────────────────────────────────────────────────────────
 
 void WifiControl::mdnsBegin(const char* hostname) {
@@ -35,6 +228,13 @@ void WifiControl::mdnsBegin(const char* hostname) {
 
 WifiControl::WifiControl(PixPlayer& player, EffectPlayer& effectPlayer, ILedDriver& leds, AppConfig& cfg, SyncControl* sync)
     : _player(player), _effectPlayer(effectPlayer), _leds(leds), _cfg(cfg), _sync(sync) {}
+
+bool WifiControl::saveRuntimeConfig() {
+    AppConfig saved = _cfg;
+    if (strlen(_wantedHostname) > 0)
+        strlcpy(saved.hostname, _wantedHostname, sizeof(saved.hostname));
+    return saveConfig(saved);
+}
 
 IPAddress WifiControl::activeIP() const {
     return _apMode ? WiFi.softAPIP() : WiFi.localIP();
@@ -225,9 +425,16 @@ bool WifiControl::begin(uint32_t timeoutMs) {
         _player.blackout();
         _server.send(200, "text/plain", "OK");
     });
+    _server.on("/power", HTTP_POST, [this]() { handlePower(); });
     _server.on("/status", HTTP_GET,  [this]() { handleStatus();    });
     _server.on("/config", HTTP_GET,  [this]() { handleConfigGet(); });
     _server.on("/config", HTTP_POST, [this]() { handleConfigPost(); });
+    _server.on("/programs", HTTP_GET, [this]() { handlePrograms(); });
+    _server.on("/program/select", HTTP_POST, [this]() { handleProgramSelect(); });
+    _server.on("/program/delete", HTTP_POST, [this]() { handleProgramDelete(); });
+    _server.on("/program/reorder", HTTP_POST, [this]() { handleProgramReorder(); });
+    _server.on("/program/start", HTTP_POST, [this]() { handleProgramStart(); });
+    _server.on("/sync", HTTP_POST, [this]() { handleSyncNow(); });
     _server.on("/reboot", HTTP_POST, [this]() {
         _server.send(200, "text/plain", "OK");
         delay(200);
@@ -238,7 +445,7 @@ bool WifiControl::begin(uint32_t timeoutMs) {
         [this]() {
             if (_uploadFile) _uploadFile.close();
             if (_uploadError) {
-                LittleFS.remove(_cfg.pixFile);
+                if (_uploadPath.length()) LittleFS.remove(_uploadPath);
                 _server.send(500, "text/plain", "Chyba: nedostatek místa v LittleFS");
             } else {
                 _server.send(200, "text/plain", "OK — soubor nahrán jako " + String(_cfg.pixFile));
@@ -266,6 +473,61 @@ bool WifiControl::begin(uint32_t timeoutMs) {
         }
     );
 
+    _server.on("/program/upload", HTTP_POST,
+        [this]() {
+            if (_uploadFile) _uploadFile.close();
+            if (_uploadError) {
+                if (_uploadPath.length()) LittleFS.remove(_uploadPath);
+                _server.send(413, "text/plain", "Upload failed: not enough LittleFS space");
+            } else {
+                strlcpy(_cfg.pixFile, _uploadPath.c_str(), sizeof(_cfg.pixFile));
+                _cfg.autoStart = 0;
+                renumberPrograms(&_cfg);
+                saveRuntimeConfig();
+                _server.send(200, "text/plain", "OK: uploaded " + _uploadPath);
+            }
+        },
+        [this]() {
+            HTTPUpload& up = _server.upload();
+            if (up.status == UPLOAD_FILE_START) {
+                _uploadError = false;
+                _uploadPath = nextUploadProgramPath(up.filename);
+                _uploadWritten = 0;
+                size_t existingSize = fileSizeOf(_uploadPath.c_str());
+                size_t total = LittleFS.totalBytes();
+                size_t used = LittleFS.usedBytes();
+                _uploadMaxBytes = (total > used ? total - used : 0) + existingSize;
+                _player.stopTask();
+                _player.unload();
+                if (LittleFS.exists(_uploadPath)) LittleFS.remove(_uploadPath);
+                _uploadFile = LittleFS.open(_uploadPath, "w");
+                if (!_uploadFile) { LOGLN("[program] upload open failed"); _uploadError = true; return; }
+                LOG("[program] upload start: %s as %s free=%u\n", up.filename.c_str(), _uploadPath.c_str(), (unsigned)_uploadMaxBytes);
+            } else if (up.status == UPLOAD_FILE_WRITE) {
+                if (_uploadFile && !_uploadError) {
+                    if (_uploadWritten + up.currentSize > _uploadMaxBytes) {
+                        LOGLN("[program] upload rejected: file too large");
+                        _uploadError = true;
+                        _uploadFile.close();
+                        LittleFS.remove(_uploadPath);
+                        return;
+                    }
+                    if (_uploadFile.write(up.buf, up.currentSize) != up.currentSize) {
+                        LOGLN("[program] upload write failed");
+                        _uploadError = true;
+                    } else {
+                        _uploadWritten += up.currentSize;
+                    }
+                }
+            } else if (up.status == UPLOAD_FILE_END) {
+                if (_uploadFile) {
+                    _uploadFile.close();
+                    LOG("[program] upload done: %u bytes\n", up.totalSize);
+                }
+            }
+        }
+    );
+
     _server.on("/endbehavior", HTTP_GET, [this]() {
         int v = _server.arg("v").toInt();
         if (v < 0 || v > 3) v = 255;  // anything out of range → from file
@@ -283,7 +545,12 @@ bool WifiControl::begin(uint32_t timeoutMs) {
         if (v < 0) v = 0;
         if (v > 100) v = 100;
         _cfg.brightness = (uint8_t)v;
-        _player.setBrightness(_cfg.brightness);
+        if (_sync) {
+            _sync->broadcastBrightness(_cfg.brightness);
+        } else {
+            _leds.setBrightness(_cfg.brightness);
+            _player.setBrightness(_cfg.brightness);
+        }
         _server.send(200, "text/plain", "OK");
     });
     _server.on("/effect",      HTTP_POST, [this]() { handleEffectStart(); });
@@ -397,9 +664,8 @@ void WifiControl::handle() {
     if (_apActive) _dns.processNextRequest();
     maintainWifi();
     if (_batMonitor.update()) {
-        _player.stopTask();
-        _player.unload();
-        _leds.clear();
+        _effectPlayer.stop();
+        _player.blackout();
         LOG("[bat] auto-off: battery %u%% (<= %u%%)\n", _batMonitor.pct(), _cfg.batAutoOffThreshold);
     }
     if (_staServicesStarted) {
@@ -433,14 +699,15 @@ void WifiControl::handleCaptivePortal() {
 void WifiControl::handlePlay() {
     _effectPlayer.stop();
     _cfg.autoStart = 0;
-    saveConfig(_cfg);
+    saveRuntimeConfig();
     if (_sync) {
-        _sync->broadcastPlay(_cfg.pixFile, _cfg.endBehavior);
+        _sync->broadcastPlay(_cfg.pixFile, _cfg.endBehavior, 0, (uint8_t)slotForProgramPath(_cfg.pixFile));
     } else {
+        int64_t startUs = esp_timer_get_time();
         _player.stopTask();
         int err = _player.load(_cfg.pixFile);
         if (err) { _server.send(500, "text/plain", "load failed: " + String(err)); return; }
-        _player.scheduleStart(esp_timer_get_time() + 20000);  // 20 ms — dost na spuštění tasku
+        _player.scheduleStart(startUs);
         _player.startTask(1);
     }
     _server.send(200, "text/plain", "OK");
@@ -457,6 +724,195 @@ void WifiControl::handleStop() {
     _server.send(200, "text/plain", "OK");
 }
 
+void WifiControl::handlePrograms() {
+    size_t total = LittleFS.totalBytes();
+    size_t used = LittleFS.usedBytes();
+    ProgramEntry entries[32];
+    int count = collectPrograms(entries, 32);
+    uint16_t selectedSlot = slotForProgramPath(_cfg.pixFile);
+    String json = "{";
+    json += "\"total\":" + String((unsigned)total) + ",";
+    json += "\"used\":" + String((unsigned)used) + ",";
+    json += "\"free\":" + String((unsigned)(total > used ? total - used : 0)) + ",";
+    json += "\"selected\":\"" + jsonEscape(String(_cfg.pixFile)) + "\",";
+    json += "\"selected_slot\":" + String(selectedSlot) + ",";
+    json += "\"files\":[";
+    for (int i = 0; i < count; i++) {
+        if (i > 0) json += ",";
+        json += "{\"slot\":" + String(i + 1)
+              + ",\"name\":\"" + jsonEscape(entries[i].path)
+              + "\",\"display_name\":\"" + jsonEscape(entries[i].displayName)
+              + "\",\"size\":" + String((unsigned)entries[i].size) + "}";
+    }
+    json += "]}";
+    _server.send(200, "application/json", json);
+}
+
+void WifiControl::handleProgramSelect() {
+    StaticJsonDocument<160> doc;
+    if (deserializeJson(doc, _server.arg("plain")) != DeserializationError::Ok) {
+        _server.send(400, "text/plain", "JSON error");
+        return;
+    }
+    String path;
+    uint16_t slot = doc["slot"] | 0;
+    if (slot > 0) {
+        if (!programPathForSlot(slot, path)) {
+            _server.send(404, "text/plain", "Program slot not found");
+            return;
+        }
+    } else {
+        path = sanitizePixPath(doc["file"] | "");
+    }
+    if (!LittleFS.exists(path)) {
+        _server.send(404, "text/plain", "Program not found");
+        return;
+    }
+    strlcpy(_cfg.pixFile, path.c_str(), sizeof(_cfg.pixFile));
+    _cfg.autoStart = 0;
+    saveRuntimeConfig();
+    _server.send(200, "text/plain", "OK");
+}
+
+void WifiControl::handleProgramDelete() {
+    StaticJsonDocument<160> doc;
+    if (deserializeJson(doc, _server.arg("plain")) != DeserializationError::Ok) {
+        _server.send(400, "text/plain", "JSON error");
+        return;
+    }
+    String path = sanitizePixPath(doc["file"] | "");
+    if (!LittleFS.exists(path)) {
+        _server.send(404, "text/plain", "Program not found");
+        return;
+    }
+    if (path == String(_cfg.pixFile)) {
+        _player.stopTask();
+        _player.unload();
+        strlcpy(_cfg.pixFile, "", sizeof(_cfg.pixFile));
+        saveRuntimeConfig();
+    }
+    LittleFS.remove(path);
+    renumberPrograms(&_cfg);
+    saveRuntimeConfig();
+    _server.send(200, "text/plain", "OK");
+}
+
+void WifiControl::handleProgramReorder() {
+    StaticJsonDocument<128> doc;
+    if (deserializeJson(doc, _server.arg("plain")) != DeserializationError::Ok) {
+        _server.send(400, "text/plain", "JSON error");
+        return;
+    }
+    int slot = doc["slot"] | 0;
+    int direction = doc["direction"] | 0;
+    ProgramEntry entries[32];
+    int count = collectPrograms(entries, 32);
+    int idx = slot - 1;
+    int target = idx + (direction < 0 ? -1 : 1);
+    if (idx < 0 || idx >= count || target < 0 || target >= count || direction == 0) {
+        _server.send(400, "text/plain", "Invalid order");
+        return;
+    }
+    ProgramEntry tmp = entries[idx];
+    entries[idx] = entries[target];
+    entries[target] = tmp;
+    if (!applyProgramOrder(entries, count, &_cfg)) {
+        _server.send(500, "text/plain", "Reorder failed");
+        return;
+    }
+    saveRuntimeConfig();
+    _server.send(200, "text/plain", "OK");
+}
+
+void WifiControl::handleProgramStart() {
+    StaticJsonDocument<128> doc;
+    if (deserializeJson(doc, _server.arg("plain")) != DeserializationError::Ok) {
+        _server.send(400, "text/plain", "JSON error");
+        return;
+    }
+    uint16_t slot = doc["slot"] | 0;
+    String path;
+    if (!programPathForSlot(slot, path)) {
+        _server.send(404, "text/plain", "Program slot not found");
+        return;
+    }
+    strlcpy(_cfg.pixFile, path.c_str(), sizeof(_cfg.pixFile));
+    _cfg.autoStart = 0;
+    saveRuntimeConfig();
+    if (_sync) {
+        _sync->broadcastPlay(_cfg.pixFile, _cfg.endBehavior, 0, (uint8_t)slot);
+    } else {
+        int64_t startUs = esp_timer_get_time();
+        _effectPlayer.stop();
+        _player.stopTask();
+        int err = _player.load(_cfg.pixFile);
+        if (err) { _server.send(500, "text/plain", "load failed: " + String(err)); return; }
+        _player.scheduleStart(startUs);
+        _player.startTask(1);
+    }
+    _server.send(200, "text/plain", "OK");
+}
+
+void WifiControl::handlePower() {
+    StaticJsonDocument<64> doc;
+    if (deserializeJson(doc, _server.arg("plain")) != DeserializationError::Ok) {
+        _server.send(400, "text/plain", "JSON error");
+        return;
+    }
+    bool on = doc["on"] | false;
+    if (!on) {
+        if (_sync) {
+            _sync->broadcastStop();
+        } else {
+            _effectPlayer.stop();
+            _player.blackout();
+        }
+        _server.send(200, "text/plain", "OK");
+        return;
+    }
+
+    if (_cfg.autoStart == 1) {
+        EffectParams p = effectParamsFromConfig(_cfg);
+        if (_sync) _sync->broadcastEffect(p);
+        else _effectPlayer.start(p);
+    } else {
+        uint16_t slot = slotForProgramPath(_cfg.pixFile);
+        if (_sync) {
+            _sync->broadcastPlay(_cfg.pixFile, _cfg.endBehavior, 0, (uint8_t)slot);
+        } else {
+            int64_t startUs = esp_timer_get_time();
+            _effectPlayer.stop();
+            _player.stopTask();
+            int err = _player.load(_cfg.pixFile);
+            if (err) { _server.send(500, "text/plain", "load failed: " + String(err)); return; }
+            _player.scheduleStart(startUs);
+            _player.startTask(1);
+        }
+    }
+    _server.send(200, "text/plain", "OK");
+}
+
+void WifiControl::handleSyncNow() {
+    if (_cfg.autoStart == 1) {
+        EffectParams p = effectParamsFromConfig(_cfg);
+        if (_sync) _sync->broadcastEffect(p);
+        else _effectPlayer.start(p);
+    } else {
+        if (_sync) {
+            _sync->broadcastPlay(_cfg.pixFile, _cfg.endBehavior, 0, (uint8_t)slotForProgramPath(_cfg.pixFile));
+        } else {
+            int64_t startUs = esp_timer_get_time();
+            _effectPlayer.stop();
+            _player.stopTask();
+            int err = _player.load(_cfg.pixFile);
+            if (err) { _server.send(500, "text/plain", "load failed: " + String(err)); return; }
+            _player.scheduleStart(startUs);
+            _player.startTask(1);
+        }
+    }
+    _server.send(200, "text/plain", "OK");
+}
+
 void WifiControl::handleStatus() {
     auto st = _player.stats();
     char apSsid[32] = "";
@@ -468,18 +924,24 @@ void WifiControl::handleStatus() {
     }
     String json = "{";
     json += "\"playing\":"          + String(_player.isLoaded() ? "true" : "false") + ",";
+    json += "\"effect_running\":"   + String(_effectPlayer.isRunning() ? "true" : "false") + ",";
+    json += "\"power_on\":"         + String((_player.isLoaded() || _effectPlayer.isRunning()) ? "true" : "false") + ",";
     json += "\"commands\":"         + String(_player.numCommands()) + ",";
-    json += "\"file\":\""           + String(LittleFS.exists(_cfg.pixFile) ? _cfg.pixFile : "") + "\",";
+    json += "\"file\":\""           + jsonEscape(String(_cfg.pixFile)) + "\",";
     json += "\"frames_rendered\":"  + String(st.framesRendered) + ",";
     json += "\"frames_expected\":"  + String(st.framesExpected) + ",";
+    json += "\"fps_x10\":"          + String(_effectPlayer.isRunning() ? _effectPlayer.fpsX10() : st.fpsX10) + ",";
     json += "\"ip\":\""             + (_apMode ? WiFi.softAPIP() : WiFi.localIP()).toString() + "\",";
     json += "\"hostname\":\""       + String(_cfg.hostname) + "\",";
+    json += "\"device_name\":\""    + String(strlen(_wantedHostname) ? _wantedHostname : _cfg.hostname) + "\",";
     json += "\"wifi_mode\":"        + String(_cfg.wifiMode) + ",";
     json += "\"ap_ssid\":\""        + String(apSsid) + "\",";
     json += "\"ap_mode\":"          + String(_apMode ? "true" : "false") + ",";
     json += "\"battery_mv\":"       + String(_batMonitor.mv()) + ",";
     json += "\"battery_pct\":"      + String(_batMonitor.pct()) + ",";
-    json += "\"sync_channel\":"     + String(_cfg.syncChannel) + ",";
+    json += "\"sync_enabled\":"     + String(_cfg.syncEnabled ? "true" : "false") + ",";
+    json += "\"sync_mask\":"        + String(_cfg.syncMask) + ",";
+    json += "\"sync_channel\":"     + String(firstSyncChannel(_cfg.syncMask)) + ",";
     json += "\"rssi\":"             + String(_apMode ? 0 : WiFi.RSSI());
     json += "}";
     _server.send(200, "application/json", json);
@@ -497,13 +959,20 @@ void WifiControl::handleConfigGet() {
     doc["groupSsid"] = _cfg.groupSsid;
     doc["groupPassword"] = _cfg.groupPassword;
     doc["pixFile"]    = _cfg.pixFile;
+    const char* deviceName = strlen(_wantedHostname) ? _wantedHostname : _cfg.hostname;
+    doc["deviceName"] = deviceName;
+    doc["hostname"]   = deviceName;
     doc["brightness"] = _cfg.brightness;
     doc["tempo"]       = _cfg.tempo;
     doc["endBehavior"] = _cfg.endBehavior;
-    doc["effectId"]      = _cfg.effectId;
-    doc["effectSpeed"]   = _cfg.effectSpeed;
-    doc["effectDotSize"] = _cfg.effectDotSize;
-    doc["paletteSize"]   = _cfg.paletteSize;
+    doc["effectId"]        = _cfg.effectId;
+    doc["effectSpeed"]     = _cfg.effectSpeed;
+    doc["effectIntensity"] = _cfg.effectIntensity;
+    doc["effectDotSize"]   = _cfg.effectDotSize;
+    doc["effectPaletteId"] = _cfg.effectPaletteId;
+    doc["effectReverse"]   = _cfg.effectReverse;
+    doc["renderMirror"]    = _cfg.renderMirror;
+    doc["paletteSize"]     = _cfg.paletteSize;
     doc["mALimit"]  = _cfg.mALimit;
     doc["batPin"]              = _cfg.batPin;
     doc["batMultiplier"]       = _cfg.batMultiplier;
@@ -513,7 +982,9 @@ void WifiControl::handleConfigGet() {
     doc["batIntervalMs"]       = _cfg.batIntervalMs;
     doc["batAutoOff"]          = (bool)_cfg.batAutoOff;
     doc["batAutoOffThreshold"] = _cfg.batAutoOffThreshold;
-    doc["syncChannel"]         = _cfg.syncChannel;
+    doc["syncEnabled"]         = (bool)_cfg.syncEnabled;
+    doc["syncMask"]            = _cfg.syncMask;
+    doc["syncChannel"]         = firstSyncChannel(_cfg.syncMask);
     doc["autoStart"]           = _cfg.autoStart;
     JsonArray pR = doc.createNestedArray("paletteR");
     JsonArray pG = doc.createNestedArray("paletteG");
@@ -531,14 +1002,30 @@ void WifiControl::handleEffectStart() {
         return;
     }
     EffectParams p = {};
-    p.effectId = doc["id"]      | 1;
-    p.speed    = doc["speed"]   | 100;
-    p.dotSize  = doc["dotSize"] | 3;
-    if (p.speed < 10)   p.speed = 10;
-    if (p.speed > 1000) p.speed = 1000;
+    int effectId = doc["id"] | 1;
+    if (effectId != 1 && effectId != 2 && (effectId < 10 || effectId > 25)) effectId = 1;
+    p.effectId = (uint8_t)effectId;
+    int speed = doc["speed"] | 100;
+    if (speed < 10) speed = 10;
+    if (speed > 1000) speed = 1000;
+    p.speed = (uint16_t)speed;
+    int intensity = doc["intensity"] | 128;
+    if (intensity < 0) intensity = 0;
+    if (intensity > 255) intensity = 255;
+    p.intensity = (uint8_t)intensity;
+    int dotSize = doc["dotSize"] | 3;
+    if (dotSize < 1) dotSize = 1;
+    if (dotSize > 255) dotSize = 255;
+    p.dotSize = (uint8_t)dotSize;
     if (p.dotSize < 1)                  p.dotSize = 1;
     if (p.dotSize > _cfg.numLeds)       p.dotSize = _cfg.numLeds;
-    JsonArray palette = doc["palette"];
+    int paletteId = doc["paletteId"] | 0;
+    if (paletteId < 0) paletteId = 0;
+    if (paletteId > 32) paletteId = 32;
+    p.paletteId = (uint8_t)paletteId;
+    p.reverse = (doc["reverse"] | (int)_cfg.effectReverse) ? 1 : 0;
+    JsonArray palette = doc["colors"].as<JsonArray>();
+    if (palette.isNull()) palette = doc["palette"].as<JsonArray>();
     p.paletteSize = 0;
     for (JsonObject c : palette) {
         if (p.paletteSize >= 4) break;
@@ -548,28 +1035,34 @@ void WifiControl::handleEffectStart() {
         p.paletteSize++;
     }
     if (p.paletteSize == 0) { p.palette[0] = {255, 0, 0}; p.paletteSize = 1; }
+    bool persist = doc["persist"] | true;
 
     // Zastavit přehrávač před zápisem do LittleFS — vyhnout se souběžnému přístupu
-    _player.stopTask();
-    _player.unload();
+    if (_player.isLoaded()) {
+        _player.stopTask();
+        _player.unload();
+    }
 
     // Uložit do konfigurace
     _cfg.autoStart     = 1;
-    _cfg.effectId      = p.effectId;
-    _cfg.effectSpeed   = p.speed;
-    _cfg.effectDotSize = p.dotSize;
-    _cfg.paletteSize   = p.paletteSize;
+    _cfg.effectId        = p.effectId;
+    _cfg.effectSpeed     = p.speed;
+    _cfg.effectIntensity = p.intensity;
+    _cfg.effectDotSize   = p.dotSize;
+    _cfg.effectPaletteId = p.paletteId;
+    _cfg.effectReverse   = p.reverse;
+    _cfg.paletteSize     = p.paletteSize;
     for (int i = 0; i < p.paletteSize; i++) {
         _cfg.paletteR[i] = p.palette[i].r;
         _cfg.paletteG[i] = p.palette[i].g;
         _cfg.paletteB[i] = p.palette[i].b;
     }
-    saveConfig(_cfg);
+    if (persist) saveRuntimeConfig();
 
     if (_sync) {
         _sync->broadcastEffect(p);
     } else {
-        _effectPlayer.start(p);
+        _effectPlayer.apply(p);
     }
     _server.send(200, "text/plain", "OK");
 }
@@ -585,16 +1078,22 @@ void WifiControl::handleConfigPost() {
         _server.send(400, "text/plain", "JSON error");
         return;
     }
-    bool hasSyncChannel = doc.containsKey("syncChannel");
     bool wifiChanged = false;
+    bool hostnameProvided = doc.containsKey("deviceName") || doc.containsKey("hostname");
+    char postedHostname[32] = "";
+    if (hostnameProvided) {
+        const char* rawHost = doc["deviceName"] | "";
+        if (!strlen(rawHost)) rawHost = doc["hostname"] | "";
+        strlcpy(postedHostname, rawHost, sizeof(postedHostname));
+        normalizeHostname(postedHostname, sizeof(postedHostname));
+        const char* configuredHost = strlen(_wantedHostname) ? _wantedHostname : _cfg.hostname;
+        if (strcmp(postedHostname, configuredHost) != 0) wifiChanged = true;
+    }
     if (doc.containsKey("ssid") &&
         strcmp(doc["ssid"] | "", _cfg.ssid) != 0)
         wifiChanged = true;
     if (doc.containsKey("password") &&
         strcmp(doc["password"] | "", _cfg.password) != 0)
-        wifiChanged = true;
-    if (doc.containsKey("hostname") &&
-        strcmp(doc["hostname"] | "", _cfg.hostname) != 0)
         wifiChanged = true;
     if (doc.containsKey("wifiMode") &&
         (uint8_t)(doc["wifiMode"] | _cfg.wifiMode) != _cfg.wifiMode)
@@ -613,9 +1112,10 @@ void WifiControl::handleConfigPost() {
     }
     _cfg.dataPin = doc["dataPin"] | _cfg.dataPin;
     _cfg.clkPin  = doc["clkPin"]  | _cfg.clkPin;
-    {
-        uint8_t mode = doc["wifiMode"] | _cfg.wifiMode;
-        if (mode <= WIFI_MODE_GROUP_CLIENT) _cfg.wifiMode = mode;
+    if (doc.containsKey("wifiMode")) {
+        int mode = doc["wifiMode"] | _cfg.wifiMode;
+        if (mode < WIFI_MODE_NORMAL || mode > WIFI_MODE_GROUP_CLIENT) mode = WIFI_MODE_NORMAL;
+        _cfg.wifiMode = (uint8_t)mode;
     }
     strlcpy(_cfg.ssid,     doc["ssid"]     | _cfg.ssid,     sizeof(_cfg.ssid));
     strlcpy(_cfg.password, doc["password"] | _cfg.password, sizeof(_cfg.password));
@@ -626,17 +1126,57 @@ void WifiControl::handleConfigPost() {
     if (strlen(_cfg.groupPassword) > 0 && strlen(_cfg.groupPassword) < 8)
         strlcpy(_cfg.groupPassword, GROUP_WIFI_PASSWORD, sizeof(_cfg.groupPassword));
     strlcpy(_cfg.pixFile,  doc["pixFile"]  | _cfg.pixFile,  sizeof(_cfg.pixFile));
-    strlcpy(_cfg.hostname, doc["hostname"] | _cfg.hostname, sizeof(_cfg.hostname));
+    if (hostnameProvided) {
+        strlcpy(_cfg.hostname, postedHostname, sizeof(_cfg.hostname));
+        strlcpy(_wantedHostname, postedHostname, sizeof(_wantedHostname));
+    }
     _cfg.brightness = doc["brightness"] | _cfg.brightness;
     _player.setBrightness(_cfg.brightness);
     _cfg.tempo        = doc["tempo"]        | _cfg.tempo;
     _cfg.endBehavior  = doc["endBehavior"]  | _cfg.endBehavior;
     _player.setTempo(_cfg.tempo);
     _player.setEndBehavior(_cfg.endBehavior);
-    _cfg.effectId      = doc["effectId"]      | _cfg.effectId;
-    _cfg.effectSpeed   = doc["effectSpeed"]   | _cfg.effectSpeed;
-    _cfg.effectDotSize = doc["effectDotSize"] | _cfg.effectDotSize;
-    _cfg.paletteSize   = doc["paletteSize"]   | _cfg.paletteSize;
+    {
+        int effectId = doc["effectId"] | _cfg.effectId;
+        if (effectId == 1 || effectId == 2 || (effectId >= 10 && effectId <= 25)) {
+            _cfg.effectId = (uint8_t)effectId;
+        }
+    }
+    {
+        int speed = doc["effectSpeed"] | _cfg.effectSpeed;
+        if (speed < 10) speed = 10;
+        if (speed > 1000) speed = 1000;
+        _cfg.effectSpeed = (uint16_t)speed;
+    }
+    {
+        int intensity = doc["effectIntensity"] | _cfg.effectIntensity;
+        if (intensity < 0) intensity = 0;
+        if (intensity > 255) intensity = 255;
+        _cfg.effectIntensity = (uint8_t)intensity;
+    }
+    {
+        int dotSize = doc["effectDotSize"] | _cfg.effectDotSize;
+        if (dotSize < 1) dotSize = 1;
+        int maxSize = _cfg.numLeds > 255 ? 255 : _cfg.numLeds;
+        if (dotSize > maxSize) dotSize = maxSize;
+        _cfg.effectDotSize = (uint8_t)dotSize;
+    }
+    {
+        int paletteId = doc["effectPaletteId"] | _cfg.effectPaletteId;
+        if (paletteId < 0) paletteId = 0;
+        if (paletteId > 32) paletteId = 32;
+        _cfg.effectPaletteId = (uint8_t)paletteId;
+    }
+    if (doc.containsKey("effectReverse")) _cfg.effectReverse = doc["effectReverse"] ? 1 : 0;
+    if (doc.containsKey("renderMirror")) _cfg.renderMirror = doc["renderMirror"] ? 1 : 0;
+    _leds.setReverse(_cfg.effectReverse != 0);
+    _leds.setMirror(_cfg.renderMirror != 0);
+    {
+        int paletteSize = doc["paletteSize"] | _cfg.paletteSize;
+        if (paletteSize < 1) paletteSize = 1;
+        if (paletteSize > 4) paletteSize = 4;
+        _cfg.paletteSize = (uint8_t)paletteSize;
+    }
     _cfg.mALimit  = doc["mALimit"]  | _cfg.mALimit;
     _leds.setCurrentLimit(_cfg.mALimit, 60);
     _cfg.batPin              = doc["batPin"]              | _cfg.batPin;
@@ -653,9 +1193,18 @@ void WifiControl::handleConfigPost() {
     }
     if (doc.containsKey("batAutoOff")) _cfg.batAutoOff = doc["batAutoOff"] ? 1 : 0;
     _cfg.batAutoOffThreshold = doc["batAutoOffThreshold"] | _cfg.batAutoOffThreshold;
-    _cfg.syncChannel         = doc["syncChannel"]         | _cfg.syncChannel;
-    if (!hasSyncChannel && _cfg.wifiMode != WIFI_MODE_NORMAL && _cfg.syncChannel == 0)
-        _cfg.syncChannel = 1;
+    if (doc.containsKey("syncEnabled")) _cfg.syncEnabled = doc["syncEnabled"] ? 1 : 0;
+    if (doc.containsKey("syncMask")) {
+        uint16_t mask = doc["syncMask"] | _cfg.syncMask;
+        _cfg.syncMask = mask & 0x03FF;
+    } else if (doc.containsKey("syncChannel")) {
+        uint8_t ch = doc["syncChannel"] | 0;
+        _cfg.syncMask = (ch >= 1 && ch <= 10) ? (uint16_t)(1u << (ch - 1)) : 0;
+    }
+    if (_sync) {
+        _sync->setSyncMask(_cfg.syncMask);
+        _sync->setSyncEnabled(_cfg.syncEnabled != 0);
+    }
     _batMonitor.resetInterval();  // re-measure with new settings
     JsonArray pR = doc["paletteR"], pG = doc["paletteG"], pB = doc["paletteB"];
     for (int i = 0; i < 4; i++) {
@@ -664,7 +1213,7 @@ void WifiControl::handleConfigPost() {
         if (i < (int)pB.size()) _cfg.paletteB[i] = pB[i];
     }
 
-    if (saveConfig(_cfg)) {
+    if (saveRuntimeConfig()) {
         if (wifiChanged) {
             _server.send(200, "text/plain", "Uloženo — restartuji WiFi");
             delay(750);
@@ -680,10 +1229,10 @@ void WifiControl::handleConfigPost() {
 // ── UDP discovery ──────────────────────────────────────────────────────────────
 
 void WifiControl::announce() {
-    char buf[96];
-    snprintf(buf, sizeof(buf), "AURAX %s %s %04x %u %d %u",
+    char buf[112];
+    snprintf(buf, sizeof(buf), "AURAX %s %s %04x %u %d %u %u",
         _cfg.hostname, activeIP().toString().c_str(), (uint16_t)ESP.getEfuseMac(),
-        _batMonitor.pct(), _apMode ? 0 : (int)WiFi.RSSI(), (unsigned)_cfg.syncChannel);
+        _batMonitor.pct(), _apMode ? 0 : (int)WiFi.RSSI(), (unsigned)_cfg.syncEnabled, (unsigned)_cfg.syncMask);
     _udp.beginPacket(IPAddress(255, 255, 255, 255), DISCOVERY_PORT);
     _udp.write((uint8_t*)buf, strlen(buf));
     _udp.endPacket();
@@ -706,7 +1255,8 @@ void WifiControl::receivePeers() {
     char* chipHex  = strtok(nullptr, " ");
     char* batPctStr     = strtok(nullptr, " ");
     char* rssiStr       = strtok(nullptr, " ");
-    char* syncChStr     = strtok(nullptr, " ");
+    char* syncEnabledStr = strtok(nullptr, " ");
+    char* syncMaskStr   = strtok(nullptr, " ");
     if (!cmd || strcmp(cmd, "AURAX") != 0 || !host || !ip) return;
 
     // Ignorovat vlastní broadcast — kontrola vždy podle IP, nezávisle na hostname
@@ -717,7 +1267,12 @@ void WifiControl::receivePeers() {
     uint16_t senderChipId   = chipHex   ? (uint16_t)strtoul(chipHex, nullptr, 16) : 0;
     uint8_t  senderBatPct   = batPctStr ? (uint8_t)atoi(batPctStr) : 0;
     int8_t   senderRssi     = rssiStr   ? (int8_t)atoi(rssiStr)    : 0;
-    uint8_t  senderSyncCh   = syncChStr ? (uint8_t)atoi(syncChStr) : 0;
+    uint8_t  senderSyncEnabled = syncEnabledStr ? (uint8_t)atoi(syncEnabledStr) : 0;
+    uint16_t senderSyncMask = syncMaskStr ? (uint16_t)strtoul(syncMaskStr, nullptr, 10) : 0;
+    if (syncEnabledStr && !syncMaskStr) {
+        senderSyncMask = (uint16_t)strtoul(syncEnabledStr, nullptr, 10);
+        senderSyncEnabled = senderSyncMask ? 1 : 0;
+    }
     uint16_t myChipId     = (uint16_t)ESP.getEfuseMac();
 
     if (strcmp(host, _cfg.hostname) == 0) {
@@ -744,7 +1299,8 @@ void WifiControl::receivePeers() {
             _peers[i].lastSeenMs  = millis();
             _peers[i].batPct      = senderBatPct;
             _peers[i].rssi        = senderRssi;
-            _peers[i].syncChannel = senderSyncCh;
+            _peers[i].syncEnabled = senderSyncEnabled;
+            _peers[i].syncMask    = senderSyncMask;
             return;
         }
     }
@@ -754,7 +1310,8 @@ void WifiControl::receivePeers() {
         _peers[_peerCount].lastSeenMs  = millis();
         _peers[_peerCount].batPct      = senderBatPct;
         _peers[_peerCount].rssi        = senderRssi;
-        _peers[_peerCount].syncChannel = senderSyncCh;
+        _peers[_peerCount].syncEnabled = senderSyncEnabled;
+        _peers[_peerCount].syncMask    = senderSyncMask;
         _peerCount++;
         LOG("[discovery] peer: %s (%s)\n", host, ip);
     }
@@ -790,7 +1347,9 @@ void WifiControl::handlePeers() {
               + "\"ip\":\""         + _peers[i].ip.toString()       + "\","
               + "\"bat_pct\":"      + String(_peers[i].batPct)      + ","
               + "\"rssi\":"         + String(_peers[i].rssi)        + ","
-              + "\"sync_channel\":" + String(_peers[i].syncChannel) + "}";
+              + "\"sync_enabled\":" + String(_peers[i].syncEnabled ? "true" : "false") + ","
+              + "\"sync_mask\":"    + String(_peers[i].syncMask)    + ","
+              + "\"sync_channel\":" + String(firstSyncChannel(_peers[i].syncMask)) + "}";
     }
     json += "]";
     _server.send(200, "application/json", json);

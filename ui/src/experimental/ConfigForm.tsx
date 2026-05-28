@@ -5,7 +5,6 @@ import type { EffectValues } from '../lib/EffectPanel'
 type FormState = {
   ledType: number; numLeds: number; dataPin: number; clkPin: number
   pixFile: string; ssid: string; password: string; hostname: string
-  wifiMode: number; groupSsid: string; groupPassword: string
   syncChannel: number; mALimit: number; batPin: number; batMultiplier: number
   batCalibration: number; batMinMv: number; batMaxMv: number
   batIntervalMs: number; batAutoOff: boolean; batAutoOffThreshold: number
@@ -19,9 +18,7 @@ export function ConfigForm({ config, effect }: Props) {
     ledType: config.ledType ?? 1, numLeds: config.numLeds ?? 144,
     dataPin: config.dataPin ?? 6, clkPin: config.clkPin ?? 5,
     pixFile: config.pixFile ?? '/show.pix', ssid: config.ssid ?? '',
-    password: config.password ?? '', hostname: config.hostname ?? 'aurax',
-    wifiMode: config.wifiMode ?? 0, groupSsid: config.groupSsid ?? 'AuraX-GROUP',
-    groupPassword: config.groupPassword ?? 'aurax1234',
+    password: config.password ?? '', hostname: config.deviceName ?? config.hostname ?? 'aurax',
     syncChannel: config.syncChannel ?? 0, mALimit: config.mALimit ?? 0,
     batPin: config.batPin ?? 2, batMultiplier: config.batMultiplier ?? 2.0,
     batCalibration: config.batCalibration ?? 0.0, batMinMv: config.batMinMv ?? 3200,
@@ -36,7 +33,10 @@ export function ConfigForm({ config, effect }: Props) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         ...form,
-        effectId: effect.effectId, effectSpeed: effect.effectSpeed, effectDotSize: effect.effectDotSize,
+        effectId: effect.effectId,
+        effectSpeed: effect.effectSpeed,
+        effectIntensity: effect.effectIntensity,
+        effectDotSize: effect.effectDotSize,
         paletteSize: effect.palette.length,
         paletteR: effect.palette.map((c) => c.r),
         paletteG: effect.palette.map((c) => c.g),
@@ -55,7 +55,7 @@ export function ConfigForm({ config, effect }: Props) {
 
   return (
     <details class="card">
-      <summary>⚙ Nastavení</summary>
+      <summary>Nastaveni</summary>
       <div class="cfg-grid">
         <label>LED typ
           <select value={form.ledType} onChange={(e) => set({ ledType: num(e) })}>
@@ -63,7 +63,7 @@ export function ConfigForm({ config, effect }: Props) {
             <option value={0}>WS281x</option>
           </select>
         </label>
-        <label>Počet LED
+        <label>Pocet LED
           <input type="number" value={form.numLeds} min={1} max={2048} onInput={(e) => set({ numLeds: num(e) })} />
         </label>
         <label>Data pin
@@ -77,40 +77,17 @@ export function ConfigForm({ config, effect }: Props) {
         <label style="grid-column:1/-1">PIX soubor
           <input type="text" value={form.pixFile} onInput={(e) => set({ pixFile: str(e) })} style="width:100%" />
         </label>
-        <label style="grid-column:1/-1">Režim sítě
-          <select value={form.wifiMode} onChange={(e) => {
-            const wifiMode = num(e)
-            set({ wifiMode, syncChannel: wifiMode === 0 ? form.syncChannel : (form.syncChannel || 1) })
-          }}>
-            <option value={0}>WiFi / hotspot klient</option>
-            <option value={1}>Group master</option>
-            <option value={2}>Group client</option>
-          </select>
+        <label>WiFi SSID
+          <input type="text" value={form.ssid} onInput={(e) => set({ ssid: str(e) })} />
         </label>
-        {form.wifiMode === 0 ? (
-          <>
-            <label>WiFi SSID
-              <input type="text" value={form.ssid} onInput={(e) => set({ ssid: str(e) })} />
-            </label>
-            <label>WiFi heslo
-              <input type="password" value={form.password} onInput={(e) => set({ password: str(e) })} />
-            </label>
-          </>
-        ) : (
-          <>
-            <label>Group SSID
-              <input type="text" value={form.groupSsid} onInput={(e) => set({ groupSsid: str(e) })} />
-            </label>
-            <label>Group heslo
-              <input type="password" value={form.groupPassword} minLength={8} onInput={(e) => set({ groupPassword: str(e) })} />
-            </label>
-          </>
-        )}
-        <label style="grid-column:1/-1">Hostname (.local)
+        <label>WiFi heslo
+          <input type="password" value={form.password} onInput={(e) => set({ password: str(e) })} />
+        </label>
+        <label style="grid-column:1/-1">Device name
           <input type="text" value={form.hostname} pattern="[a-z0-9-]+" placeholder="aurax-xxxx"
             onInput={(e) => set({ hostname: str(e) })} style="width:100%" />
         </label>
-        <label>Sync kanál
+        <label>Sync kanal
           <select value={form.syncChannel} onChange={(e) => set({ syncChannel: num(e) })}>
             <option value={0}>Vypnuto</option>
             {Array.from({ length: 10 }, (_, i) => i + 1).map((n) => (
@@ -124,14 +101,14 @@ export function ConfigForm({ config, effect }: Props) {
       </div>
 
       <details class="bat-details">
-        <summary>🔋 Baterie</summary>
+        <summary>Baterie</summary>
         <div class="cfg-grid" style="margin-top:10px">
           <label>ADC pin <input type="number" value={form.batPin} min={0} max={48} onInput={(e) => set({ batPin: num(e) })} /></label>
           <label>Multiplier <input type="number" value={form.batMultiplier} min={0.1} max={20} step={0.001} onInput={(e) => set({ batMultiplier: num(e) })} /></label>
           <label>Kalibrace (V) <input type="number" value={form.batCalibration} step={0.001} onInput={(e) => set({ batCalibration: num(e) })} /></label>
           <label>Min mV <input type="number" value={form.batMinMv} min={0} max={5000} onInput={(e) => set({ batMinMv: num(e) })} /></label>
           <label>Max mV <input type="number" value={form.batMaxMv} min={0} max={5000} onInput={(e) => set({ batMaxMv: num(e) })} /></label>
-          <label style="grid-column:1/-1">Interval měření (ms)
+          <label style="grid-column:1/-1">Interval mereni (ms)
             <input type="number" value={form.batIntervalMs} min={100} max={3600000} step={1000} style="width:130px"
               onInput={(e) => set({ batIntervalMs: num(e) })} />
           </label>
@@ -145,7 +122,7 @@ export function ConfigForm({ config, effect }: Props) {
       </details>
 
       <div style="margin-top:4px">
-        <button type="button" class="save" onClick={save}>Uložit</button>
+        <button type="button" class="save" onClick={save}>Ulozit</button>
         <button type="button" class="reboot" onClick={reboot}>Reboot</button>
       </div>
       {msg && <p class="cfg-msg">{msg}</p>}

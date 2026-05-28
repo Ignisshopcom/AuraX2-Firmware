@@ -69,9 +69,28 @@ void WS281x::setBrightness(uint8_t pct) {
     _globalBrightness = pct > 100 ? 100 : pct;
 }
 
+void WS281x::setReverse(bool reverse) {
+    _reverse = reverse;
+}
+
+void WS281x::setMirror(bool mirror) {
+    _mirror = mirror;
+}
+
 void WS281x::setCurrentLimit(uint16_t mALimit, uint16_t mAPerLed) {
     _mALimit  = mALimit;
     _mAPerLed = mAPerLed > 0 ? mAPerLed : 1;
+}
+
+static uint16_t mappedLedIndex(uint16_t outIndex, uint16_t count, bool reverse, bool mirror) {
+    if (count < 2) return 0;
+    if (!mirror) return reverse ? (uint16_t)(count - 1 - outIndex) : outIndex;
+    if (count & 1) {
+        uint16_t center = count / 2;
+        return (outIndex <= center) ? (uint16_t)(center - outIndex) : (uint16_t)(outIndex - center);
+    }
+    uint16_t right = count / 2;
+    return (outIndex < right) ? (uint16_t)(right - 1 - outIndex) : (uint16_t)(outIndex - right);
 }
 
 // Encode .pix column data [0xE0|bri, B, G, R] × count into RMT items.
@@ -79,7 +98,8 @@ void WS281x::setCurrentLimit(uint16_t mALimit, uint16_t mAPerLed) {
 // scale256: Q8 current-limit scale factor (256 = no limiting).
 void WS281x::encodePixels(rmt_item32_t* dst, const uint8_t* pixData, uint16_t count, uint16_t scale256) {
     for (uint16_t i = 0; i < count; i++) {
-        const uint8_t* p = pixData + i * 4;
+        const uint16_t srcIndex = mappedLedIndex(i, count, _reverse, _mirror);
+        const uint8_t* p = pixData + (size_t)srcIndex * 4;
         uint8_t bri = p[0] & 0x1F;
         uint8_t b   = p[1];
         uint8_t g   = p[2];
@@ -124,7 +144,8 @@ void WS281x::showColumnDirect(const uint8_t* pixData, uint16_t count) {
     if (_mALimit > 0) {
         uint32_t totalRGB = 0;
         for (uint16_t i = 0; i < n; i++) {
-            const uint8_t* p = pixData + i * 4;
+            const uint16_t srcIndex = mappedLedIndex(i, n, _reverse, _mirror);
+            const uint8_t* p = pixData + (size_t)srcIndex * 4;
             uint8_t bri = p[0] & 0x1F;
             uint32_t r = p[3], g = p[2], b = p[1];
             if (_globalBrightness > 0) {

@@ -46,13 +46,15 @@ void setup() {
     }
 
     leds->setBrightness(cfg.brightness);
+    leds->setReverse(cfg.effectReverse != 0);
+    leds->setMirror(cfg.renderMirror != 0);
     leds->setCurrentLimit(cfg.mALimit, 60);
 
     player       = new PixPlayer(*leds);
     player->setTempo(cfg.tempo);
     player->setEndBehavior(cfg.endBehavior);
     effectPlayer = new EffectPlayer(*leds);
-    syncCtrl     = new SyncControl(*player, *effectPlayer);
+    syncCtrl     = new SyncControl(*player, *effectPlayer, *leds);
     wifi         = new WifiControl(*player, *effectPlayer, *leds, cfg, syncCtrl);
 
     // wifi_ctrl musí být vytvořen PŘED player->startTask() — pix_player běží
@@ -62,7 +64,7 @@ void setup() {
         [](void*) {
             wifi->begin();
             LOGLN("[wifi] server ready");
-            syncCtrl->begin(cfg.syncChannel);
+            syncCtrl->begin(cfg.syncMask, cfg.syncEnabled);
             while (true) { syncCtrl->process(); wifi->handle(); vTaskDelay(1); }
         },
         "wifi_ctrl", 8192, nullptr, 2, nullptr, 0  // core 0, priorita 2
@@ -79,8 +81,11 @@ void setup() {
         EffectParams p = {};
         p.effectId    = cfg.effectId;
         p.speed       = cfg.effectSpeed;
+        p.intensity   = cfg.effectIntensity;
         p.dotSize     = cfg.effectDotSize;
+        p.paletteId   = cfg.effectPaletteId;
         p.paletteSize = cfg.paletteSize;
+        p.reverse     = cfg.effectReverse;
         for (int i = 0; i < cfg.paletteSize && i < 4; i++)
             p.palette[i] = { cfg.paletteR[i], cfg.paletteG[i], cfg.paletteB[i] };
         if (p.paletteSize == 0) { p.palette[0] = {255, 0, 0}; p.paletteSize = 1; }

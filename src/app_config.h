@@ -1,5 +1,6 @@
 #pragma once
 #include <stdint.h>
+#include <stddef.h>
 
 #define CFG_FILE "/config.json"
 
@@ -18,15 +19,19 @@ struct AppConfig {
     char     groupSsid[32];
     char     groupPassword[64];
     char     pixFile[64];
-    char     hostname[32];  // mDNS hostname bez .local; "" → auto z chip ID
-    uint8_t  brightness;    // 0 = use per-pixel brightness from .pix file, 1–100 = global override %
+    char     hostname[32];  // device name / mDNS hostname without .local
+    uint8_t  brightness;    // 0 = use per-pixel brightness, 1-100 = global override %
     uint16_t tempo;         // playback speed %; 100 = normal, 50 = half, 200 = double
     uint8_t  endBehavior;   // 255 = from .pix file, 0 = off, 1 = loop, 2 = keep
     // Effect settings
-    uint8_t  effectId;      // 1=solid, 2=android
-    uint16_t effectSpeed;   // 10–1000, 100=normální
-    uint8_t  effectDotSize; // velikost tečky (android)
-    uint8_t  paletteSize;   // 1–4
+    uint8_t  effectId;        // 1=solid, 2=android, 10+ = AuraX/WLED-like effects
+    uint16_t effectSpeed;     // 10-1000, 100=normal
+    uint8_t  effectIntensity; // 0-255, effect-specific strength
+    uint8_t  effectDotSize;   // effect-specific size/width
+    uint8_t  effectPaletteId; // 0=custom color slots, 1+ = built-in palette
+    uint8_t  effectReverse;   // 1 = render from the opposite LED end
+    uint8_t  renderMirror;    // 1 = mirror rendering from the strip center
+    uint8_t  paletteSize;     // 1-4
     uint8_t  paletteR[4];
     uint8_t  paletteG[4];
     uint8_t  paletteB[4];
@@ -41,14 +46,18 @@ struct AppConfig {
     uint32_t batIntervalMs;       // measurement period in ms
     uint8_t  batAutoOff;          // 1 = enable auto-off when low
     uint8_t  batAutoOffThreshold; // auto-off threshold in %
-    // Sync channel
-    uint8_t  syncChannel;  // 1–10 = ESP-NOW sync group; 0 = sync disabled
+    // Sync classes. Bit 0 = class 1, bit 9 = class 10.
+    uint8_t  syncEnabled; // 1 = ESP-NOW sync broadcasts/receives are active
+    uint16_t syncMask;
     // Boot state: 0 = autoplay program, 1 = restore last effect
     uint8_t  autoStart;
 };
 
-// Load from /config.json — falls back to compile-time defaults if missing
+// Load from /config.json; falls back to compile-time defaults if missing.
 AppConfig loadConfig();
 
-// Save to /config.json — requires LittleFS to be mounted
+// Save to /config.json; requires LittleFS to be mounted.
 bool saveConfig(const AppConfig& cfg);
+
+// Make user-entered device names safe for WiFi/mDNS hostnames.
+void normalizeHostname(char* hostname, size_t len);

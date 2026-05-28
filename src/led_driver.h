@@ -15,6 +15,8 @@ public:
     // Global brightness override: 0 = use per-pixel brightness from .pix file (default),
     // 1–100 = override all pixels to this percentage.
     virtual void setBrightness(uint8_t pct) { (void)pct; }
+    virtual void setReverse(bool reverse) { (void)reverse; }
+    virtual void setMirror(bool mirror) { (void)mirror; }
 
     // Current limit: mALimit = max total draw in mA (0 = disabled).
     // mAPerLed = estimated mA per LED at full white (R=G=B=255); typical 60 mA.
