@@ -1,0 +1,7 @@
+name = "aurax-locator"
+main = "worker.js"
+compatibility_date = "2026-05-28"
+
+[[kv_namespaces]]
+binding = "AURAX_LOCATOR"
+id = "replace-with-cloudflare-kv-namespace-id"

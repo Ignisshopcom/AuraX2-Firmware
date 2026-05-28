@@ -106,6 +106,7 @@ hr { border: none; border-top: 1px solid var(--border); margin: 14px 0; }
 .status { font-size: .85rem; color: var(--muted); }
 .status b { color: var(--text); }
 .status a { color: var(--accent); }
+.locator-row { margin-top: 6px; color: var(--muted); word-break: break-all; }
 
 /* PeerList */
 .peers-heading { font-size: .75rem; color: var(--muted); margin-bottom: 4px; }

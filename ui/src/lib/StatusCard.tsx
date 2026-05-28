@@ -22,6 +22,12 @@ export function StatusCard({ status }: { status: StatusResponse }) {
       )}
       &nbsp;|&nbsp;🔋 {status.battery_pct}% ({status.battery_mv} mV)
       {!status.ap_mode && <RssiBar dbm={status.rssi} separator />}
+      {status.locator_url && (
+        <div class="locator-row">
+          Web: <a href={status.locator_url}>{status.locator_url.replace(/^https?:\/\//, '')}</a>
+          {status.device_id && <>&nbsp;|&nbsp;ID: {status.device_id}</>}
+        </div>
+      )}
     </div>
   )
 }

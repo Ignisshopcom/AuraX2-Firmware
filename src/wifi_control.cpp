@@ -6,7 +6,9 @@
 #include <ESPmDNS.h>
 #include <NetBIOS.h>
 #include <ArduinoOTA.h>
+#include <HTTPClient.h>
 #include <Update.h>
+#include <WiFiClientSecure.h>
 #include <esp_wifi.h>
 #include <mdns.h>
 #include "web_html.h"
@@ -74,12 +76,26 @@ uint8_t WifiControl::apClientCount() const {
     return stationList.num;
 }
 
+String WifiControl::deviceId() const {
+    uint64_t mac = ESP.getEfuseMac();
+    char id[13];
+    snprintf(id, sizeof(id), "%04X%08X", (uint16_t)(mac >> 32), (uint32_t)mac);
+    return String(id);
+}
+
+String WifiControl::locatorUrl() const {
+    if (strlen(AURAX_LOCATOR_BASE_URL) == 0) return "";
+    return String(AURAX_LOCATOR_BASE_URL) + "/" + deviceId();
+}
+
 bool WifiControl::connectSta(uint32_t timeoutMs) {
     _dns.stop();
     _apActive = false;
     _apMode = false;
     _apHadClient = false;
     _staServicesStarted = false;
+    _lastLocatorMs = 0;
+    _locatorRegistered = false;
 
     WiFi.disconnect(true);
     WiFi.setHostname(_cfg.hostname);
@@ -162,6 +178,47 @@ void WifiControl::startStaServices() {
     ArduinoOTA.begin();
     _staServicesStarted = true;
     LOG("[ota] ArduinoOTA ready\n");
+    registerLocator(true);
+}
+
+void WifiControl::registerLocator(bool force) {
+    if (strlen(AURAX_LOCATOR_ENDPOINT) == 0) return;
+    if (_apMode || WiFi.status() != WL_CONNECTED) return;
+
+    uint32_t now = millis();
+    uint32_t interval = _locatorRegistered ? LOCATOR_REGISTER_INTERVAL_MS : LOCATOR_RETRY_INTERVAL_MS;
+    if (!force && now - _lastLocatorMs < interval) return;
+    _lastLocatorMs = now;
+
+    StaticJsonDocument<256> doc;
+    doc["id"]       = deviceId();
+    doc["hostname"] = _cfg.hostname;
+    doc["localIp"]  = WiFi.localIP().toString();
+    doc["fw"]       = "aurax2";
+    String body;
+    serializeJson(doc, body);
+
+    HTTPClient http;
+    WiFiClient plainClient;
+    WiFiClientSecure secureClient;
+    String endpoint = AURAX_LOCATOR_ENDPOINT;
+    bool ok = false;
+    if (endpoint.startsWith("https://")) {
+        secureClient.setInsecure();
+        ok = http.begin(secureClient, endpoint);
+    } else {
+        ok = http.begin(plainClient, endpoint);
+    }
+    if (!ok) {
+        LOGLN("[locator] begin failed");
+        return;
+    }
+    http.setTimeout(2500);
+    http.addHeader("Content-Type", "application/json");
+    int code = http.POST(body);
+    http.end();
+    _locatorRegistered = (code >= 200 && code < 300);
+    LOG("[locator] register %s -> HTTP %d\n", locatorUrl().c_str(), code);
 }
 
 bool WifiControl::begin(uint32_t timeoutMs) {
@@ -360,6 +417,7 @@ void WifiControl::handle() {
         receivePeers();
         expirePeers();
         if (millis() - _lastAnnounceMs > ANNOUNCE_INTERVAL_MS) announce();
+        registerLocator();
     }
 }
 
@@ -420,6 +478,8 @@ void WifiControl::handleStatus() {
     json += "\"frames_expected\":"  + String(st.framesExpected) + ",";
     json += "\"ip\":\""             + (_apMode ? WiFi.softAPIP() : WiFi.localIP()).toString() + "\",";
     json += "\"hostname\":\""       + String(_cfg.hostname) + "\",";
+    json += "\"device_id\":\""      + deviceId() + "\",";
+    json += "\"locator_url\":\""    + locatorUrl() + "\",";
     json += "\"ap_mode\":"          + String(_apMode ? "true" : "false") + ",";
     json += "\"battery_mv\":"       + String(_batMonitor.mv()) + ",";
     json += "\"battery_pct\":"      + String(_batMonitor.pct()) + ",";

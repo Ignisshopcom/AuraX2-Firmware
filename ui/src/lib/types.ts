@@ -6,6 +6,8 @@ export interface StatusResponse {
   frames_expected?: number
   ip: string
   hostname?: string
+  device_id?: string
+  locator_url?: string
   ap_mode?: boolean
   battery_pct: number
   battery_mv: number

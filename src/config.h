@@ -19,6 +19,11 @@
 
 #define PIX_FILE      "/show.pix"
 
+// Public locator: after STA connect AuraX registers its hotspot/local IP here.
+// Deploy tools/locator-worker to this domain before enabling this for users.
+#define AURAX_LOCATOR_BASE_URL "https://go.aurax.cz"
+#define AURAX_LOCATOR_ENDPOINT "https://go.aurax.cz/api/register"
+
 // Odkomentuj pro debug výpisy na sériový port
 #define PIX_DEBUG
 
