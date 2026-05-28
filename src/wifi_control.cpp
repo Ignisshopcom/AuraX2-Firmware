@@ -14,17 +14,22 @@
 // ── WifiControl ───────────────────────────────────────────────────────────────
 
 void WifiControl::mdnsBegin(const char* hostname) {
-    if (MDNS.begin(hostname)) {
+    const char* mdnsHost = strlen(hostname) ? hostname : "aurax";
+    if (MDNS.begin(mdnsHost)) {
+        MDNS.setInstanceName("AuraX");
         MDNS.addService("http", "tcp", 80);
-        LOG("[mdns] http://%s.local\n", hostname);
+        MDNS.addService("aurax", "tcp", 80);
+        MDNS.addServiceTxt("aurax", "tcp", "hostname", mdnsHost);
+        MDNS.addServiceTxt("aurax", "tcp", "ip", activeIP().toString().c_str());
+        LOG("[mdns] http://%s.local\n", mdnsHost);
     }
-    if (strcmp(hostname, "aurax") != 0) {
+    if (strcmp(mdnsHost, "aurax") != 0) {
         mdns_ip_addr_t addr = {};
         addr.addr.type = ESP_IPADDR_TYPE_V4;
         addr.addr.u_addr.ip4.addr = (_apMode ? WiFi.softAPIP() : WiFi.localIP());
         addr.next = nullptr;
         if (mdns_delegate_hostname_add("aurax", &addr) == ESP_OK)
-            LOGLN("[mdns] alias: aurax.local → " + String(hostname) + ".local");
+            LOGLN("[mdns] alias: aurax.local → " + String(mdnsHost) + ".local");
     }
 }
 
@@ -77,10 +82,10 @@ bool WifiControl::connectSta(uint32_t timeoutMs) {
     _staServicesStarted = false;
 
     WiFi.disconnect(true);
+    WiFi.setHostname(_cfg.hostname);
     WiFi.config(IPAddress((uint32_t)0), IPAddress((uint32_t)0), IPAddress((uint32_t)0));
     WiFi.softAPdisconnect(true);
     WiFi.mode(WIFI_STA);
-    WiFi.setHostname(_cfg.hostname);
     esp_wifi_set_ps(WIFI_PS_NONE);
     delay(100);
     WiFi.begin(_cfg.ssid, _cfg.password);
@@ -111,6 +116,7 @@ void WifiControl::startFallbackAp() {
 
     _apMode = true;
     _apHadClient = false;
+    WiFi.setHostname(_cfg.hostname);
     WiFi.mode(strlen(_cfg.ssid) ? WIFI_AP_STA : WIFI_AP);
     WiFi.setSleep(false);
 
@@ -138,6 +144,7 @@ void WifiControl::stopFallbackAp() {
     WiFi.softAPdisconnect(true);
     _apActive = false;
     _apMode = false;
+    WiFi.setHostname(_cfg.hostname);
     WiFi.mode(WIFI_STA);
     WiFi.setSleep(false);
     esp_wifi_set_ps(WIFI_PS_NONE);
