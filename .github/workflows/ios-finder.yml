@@ -1,0 +1,39 @@
+name: iOS Finder
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "ios/AuraXFinder/**"
+      - ".github/workflows/ios-finder.yml"
+
+jobs:
+  build-simulator:
+    runs-on: macos-latest
+    defaults:
+      run:
+        working-directory: ios/AuraXFinder
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode.app
+
+      - name: Build simulator app
+        run: |
+          xcodebuild \
+            -project AuraXFinder.xcodeproj \
+            -scheme AuraXFinder \
+            -configuration Debug \
+            -sdk iphonesimulator \
+            -destination "generic/platform=iOS Simulator" \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO \
+            build
+
+      - name: Upload simulator app
+        uses: actions/upload-artifact@v4
+        with:
+          name: AuraXFinder-iOS-simulator-app
+          path: ios/AuraXFinder/build/Build/Products/Debug-iphonesimulator/AuraXFinder.app

@@ -6,12 +6,14 @@ import android.graphics.Color;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
 import android.net.wifi.WifiManager;
+import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.text.TextUtils;
 import android.view.Gravity;
 import android.view.View;
+import android.view.Window;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
@@ -48,13 +50,13 @@ import java.util.concurrent.TimeUnit;
 
 public class MainActivity extends Activity {
     private static final int DISCOVERY_PORT = 4210;
-    private static final int BG = Color.rgb(19, 19, 19);
-    private static final int SURFACE = Color.rgb(31, 31, 31);
-    private static final int SURFACE_ALT = Color.rgb(42, 42, 42);
-    private static final int BORDER = Color.rgb(55, 55, 55);
-    private static final int TEXT = Color.rgb(242, 237, 231);
-    private static final int MUTED = Color.rgb(154, 148, 140);
-    private static final int ACCENT = Color.rgb(234, 104, 32);
+    private static final int BG = Color.rgb(14, 15, 18);
+    private static final int PANEL = Color.rgb(25, 27, 32);
+    private static final int PANEL_2 = Color.rgb(34, 37, 43);
+    private static final int BORDER = Color.rgb(48, 52, 60);
+    private static final int TEXT = Color.rgb(242, 244, 247);
+    private static final int MUTED = Color.rgb(154, 163, 173);
+    private static final int ACCENT = Color.rgb(242, 140, 56);
 
     private final Handler main = new Handler(Looper.getMainLooper());
     private final Map<String, Device> devices = new LinkedHashMap<>();
@@ -64,10 +66,12 @@ public class MainActivity extends Activity {
     private DatagramSocket udpSocket;
     private WifiManager.MulticastLock multicastLock;
     private boolean showingWebView = false;
+    private boolean scanActive = false;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        setupSystemBars();
         showFinder();
         startScan();
     }
@@ -83,42 +87,41 @@ public class MainActivity extends Activity {
 
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
-        root.setPadding(dp(18), dp(18), dp(18), dp(10));
         root.setBackgroundColor(BG);
+        applySystemBarPadding(root, 14, 12, 14, 14);
 
         LinearLayout header = new LinearLayout(this);
         header.setOrientation(LinearLayout.HORIZONTAL);
         header.setGravity(Gravity.CENTER_VERTICAL);
-        header.setPadding(0, 0, 0, dp(14));
+        header.setPadding(0, 0, 0, dp(16));
 
         ImageView icon = new ImageView(this);
-        icon.setImageResource(R.drawable.ignis_icon);
+        icon.setImageResource(R.drawable.ignis_mark);
         icon.setAdjustViewBounds(true);
-        header.addView(icon, new LinearLayout.LayoutParams(dp(44), dp(44)));
+        header.addView(icon, new LinearLayout.LayoutParams(dp(40), dp(40)));
 
         LinearLayout titleBlock = new LinearLayout(this);
         titleBlock.setOrientation(LinearLayout.VERTICAL);
-        titleBlock.setPadding(dp(12), 0, dp(12), 0);
-        TextView title = text("AuraX Finder", 24, TEXT);
+        titleBlock.setPadding(dp(11), 0, dp(10), 0);
+        TextView title = text("AuraX", 23, TEXT);
         title.setTypeface(Typeface.DEFAULT_BOLD);
+        title.setSingleLine(true);
+        title.setEllipsize(TextUtils.TruncateAt.END);
         titleBlock.addView(title);
-        TextView subtitle = text("Local devices", 13, MUTED);
-        titleBlock.addView(subtitle);
+        status = text("Local devices", 13, MUTED);
+        titleBlock.addView(status);
         header.addView(titleBlock, new LinearLayout.LayoutParams(0, -2, 1));
 
-        header.addView(button("Scan", v -> startScan()), new LinearLayout.LayoutParams(dp(92), dp(44)));
+        header.addView(button("Scan", v -> startScan()), new LinearLayout.LayoutParams(dp(82), dp(42)));
         root.addView(header);
 
-        status = text("Scanning...", 14, MUTED);
-        status.setPadding(0, 0, 0, dp(10));
-        root.addView(status);
-
         ScrollView scroll = new ScrollView(this);
-        scroll.setFillViewport(false);
+        scroll.setFillViewport(true);
+        scroll.setClipToPadding(false);
         list = new LinearLayout(this);
         list.setOrientation(LinearLayout.VERTICAL);
-        list.setPadding(0, dp(2), 0, dp(16));
-        scroll.addView(list);
+        list.setPadding(0, dp(4), 0, dp(18));
+        scroll.addView(list, new ScrollView.LayoutParams(-1, -1));
         root.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1));
 
         setContentView(root);
@@ -129,6 +132,7 @@ public class MainActivity extends Activity {
         if (workers != null) workers.shutdownNow();
         stopUdp();
         devices.clear();
+        scanActive = true;
         renderDevices();
         if (status != null) status.setText("Scanning...");
 
@@ -217,11 +221,13 @@ public class MainActivity extends Activity {
 
             sleep(6500);
             main.post(() -> {
+                scanActive = false;
                 if (devices.isEmpty()) {
-                    status.setText("No devices found");
+                    status.setText("Local devices");
                 } else {
                     status.setText(deviceCountText());
                 }
+                renderDevices();
             });
         });
     }
@@ -301,12 +307,13 @@ public class MainActivity extends Activity {
         if (list == null) return;
         list.removeAllViews();
         if (devices.isEmpty()) {
-            TextView empty = text("No devices found", 16, MUTED);
+            list.setGravity(Gravity.CENTER);
+            TextView empty = text(scanActive ? "Scanning..." : "No devices found", 16, MUTED);
             empty.setGravity(Gravity.CENTER);
-            empty.setPadding(0, dp(72), 0, 0);
             list.addView(empty, new LinearLayout.LayoutParams(-1, -2));
             return;
         }
+        list.setGravity(Gravity.NO_GRAVITY);
         for (Device d : devices.values()) {
             list.addView(deviceCard(d));
         }
@@ -315,36 +322,36 @@ public class MainActivity extends Activity {
     private View deviceCard(Device d) {
         LinearLayout card = new LinearLayout(this);
         card.setOrientation(LinearLayout.VERTICAL);
-        card.setPadding(dp(15), dp(14), dp(15), dp(14));
-        card.setBackground(rounded(SURFACE, 8, BORDER));
+        card.setPadding(dp(14), dp(13), dp(14), dp(13));
+        card.setBackground(rounded(PANEL, 8, BORDER));
         card.setClickable(true);
         card.setOnClickListener(v -> openDevice(d));
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, -2);
-        lp.setMargins(0, 0, 0, dp(10));
+        lp.setMargins(0, 0, 0, dp(9));
         card.setLayoutParams(lp);
 
         LinearLayout top = new LinearLayout(this);
         top.setOrientation(LinearLayout.HORIZONTAL);
         top.setGravity(Gravity.CENTER_VERTICAL);
 
-        TextView name = text(displayName(d.hostname), 19, TEXT);
+        TextView name = text(displayName(d.hostname), 18, TEXT);
         name.setTypeface(Typeface.DEFAULT_BOLD);
         name.setSingleLine(true);
         name.setEllipsize(TextUtils.TruncateAt.END);
         top.addView(name, new LinearLayout.LayoutParams(0, -2, 1));
 
-        TextView chevron = text(">", 22, ACCENT);
+        TextView chevron = text(">", 20, ACCENT);
         chevron.setGravity(Gravity.CENTER);
         top.addView(chevron, new LinearLayout.LayoutParams(dp(24), -2));
         card.addView(top);
 
         LinearLayout meta = new LinearLayout(this);
         meta.setOrientation(LinearLayout.HORIZONTAL);
-        meta.setGravity(Gravity.LEFT);
-        meta.setPadding(0, dp(12), 0, 0);
-        meta.addView(chip("Battery " + valueOrDash(d.battery, "%")));
-        meta.addView(chip(syncText(d.sync)));
-        meta.addView(chip(wifiText(d.rssi)));
+        meta.setGravity(Gravity.CENTER_VERTICAL);
+        meta.setPadding(0, dp(11), 0, 0);
+        meta.addView(chip("Battery " + valueOrDash(d.battery, "%")), chipParams(true));
+        meta.addView(chip(syncText(d.sync)), chipParams(true));
+        meta.addView(chip(wifiText(d.rssi)), chipParams(false));
         card.addView(meta);
 
         return card;
@@ -353,12 +360,17 @@ public class MainActivity extends Activity {
     private TextView chip(String value) {
         TextView tv = text(value, 12, MUTED);
         tv.setSingleLine(true);
-        tv.setBackground(rounded(SURFACE_ALT, 999, BORDER));
-        tv.setPadding(dp(9), dp(6), dp(9), dp(6));
-        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-2, -2);
-        lp.setMargins(0, 0, dp(7), 0);
-        tv.setLayoutParams(lp);
+        tv.setGravity(Gravity.CENTER);
+        tv.setEllipsize(TextUtils.TruncateAt.END);
+        tv.setBackground(rounded(PANEL_2, 8, BORDER));
+        tv.setPadding(dp(8), dp(7), dp(8), dp(7));
         return tv;
+    }
+
+    private LinearLayout.LayoutParams chipParams(boolean rightMargin) {
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, -2, 1);
+        lp.setMargins(0, 0, rightMargin ? dp(7) : 0, 0);
+        return lp;
     }
 
     private String displayName(String host) {
@@ -380,7 +392,13 @@ public class MainActivity extends Activity {
 
     private String wifiText(String value) {
         if (TextUtils.isEmpty(value) || "0".equals(value)) return "Wi-Fi --";
-        return "Wi-Fi " + value + " dBm";
+        try {
+            int rssi = Integer.parseInt(value);
+            if (rssi < 0) return "Wi-Fi " + rssiToPercent(rssi) + "%";
+            if (rssi <= 100) return "Wi-Fi " + rssi + "%";
+        } catch (NumberFormatException ignored) {
+        }
+        return "Wi-Fi --";
     }
 
     private void openDevice(Device d) {
@@ -391,13 +409,14 @@ public class MainActivity extends Activity {
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
         root.setBackgroundColor(BG);
+        applySystemBarPadding(root, 0, 0, 0, 0);
 
         LinearLayout bar = new LinearLayout(this);
         bar.setOrientation(LinearLayout.HORIZONTAL);
         bar.setGravity(Gravity.CENTER_VERTICAL);
-        bar.setPadding(dp(8), dp(8), dp(8), dp(8));
+        bar.setPadding(dp(10), dp(10), dp(10), dp(10));
         bar.setBackgroundColor(BG);
-        bar.addView(button("Back", v -> showFinder()), new LinearLayout.LayoutParams(dp(82), dp(44)));
+        bar.addView(button("Back", v -> showFinder()), new LinearLayout.LayoutParams(dp(78), dp(42)));
 
         TextView title = text(displayName(d.hostname), 16, TEXT);
         title.setGravity(Gravity.CENTER_VERTICAL);
@@ -407,7 +426,7 @@ public class MainActivity extends Activity {
         bar.addView(title, new LinearLayout.LayoutParams(0, dp(44), 1));
 
         WebView web = new WebView(this);
-        bar.addView(button("Reload", v -> web.reload()), new LinearLayout.LayoutParams(dp(92), dp(44)));
+        bar.addView(button("Reload", v -> web.reload()), new LinearLayout.LayoutParams(dp(84), dp(42)));
         root.addView(bar);
 
         WebSettings settings = web.getSettings();
@@ -430,14 +449,50 @@ public class MainActivity extends Activity {
         }
     }
 
+    private void setupSystemBars() {
+        Window window = getWindow();
+        window.setStatusBarColor(BG);
+        window.setNavigationBarColor(BG);
+        if (Build.VERSION.SDK_INT >= 28) {
+            window.setNavigationBarDividerColor(BG);
+        }
+        if (Build.VERSION.SDK_INT >= 23) {
+            window.getDecorView().setSystemUiVisibility(0);
+        }
+    }
+
+    private void applySystemBarPadding(View root, int leftDp, int topDp, int rightDp, int bottomDp) {
+        root.setPadding(dp(leftDp), dp(topDp), dp(rightDp), dp(bottomDp));
+        if (Build.VERSION.SDK_INT >= 20) {
+            root.setOnApplyWindowInsetsListener((view, insets) -> {
+                view.setPadding(
+                    dp(leftDp) + insets.getSystemWindowInsetLeft(),
+                    dp(topDp) + insets.getSystemWindowInsetTop(),
+                    dp(rightDp) + insets.getSystemWindowInsetRight(),
+                    dp(bottomDp) + insets.getSystemWindowInsetBottom());
+                return insets;
+            });
+            root.requestApplyInsets();
+        }
+    }
+
+    private int rssiToPercent(int rssi) {
+        if (rssi >= -50) return 100;
+        if (rssi <= -100) return 0;
+        return (rssi + 100) * 2;
+    }
+
     private Button button(String label, View.OnClickListener click) {
         Button b = new Button(this);
         b.setText(label);
-        b.setTextColor(Color.WHITE);
+        b.setTextColor(BG);
         b.setTextSize(14);
         b.setAllCaps(false);
         b.setTypeface(Typeface.DEFAULT_BOLD);
         b.setBackground(rounded(ACCENT, 8, 0));
+        b.setMinHeight(0);
+        b.setMinWidth(0);
+        b.setPadding(dp(8), 0, dp(8), 0);
         b.setOnClickListener(click);
         return b;
     }
