@@ -1,0 +1,456 @@
+#library-panel {
+    #library-menu {
+        ul {
+            li {
+                float: left;
+                width: 33.3%;
+                height: 29px;
+                line-height: 29px;
+                text-align: center;
+                cursor: default;
+                i {
+                    margin-right: 6px;
+                }
+
+                &:hover {
+                    background-color: #444444;
+                }
+                &.active {
+                    background-color: #222222;
+                }
+            }
+        }
+    }
+    #library-content {
+        position: absolute;
+        left: 0;
+        top: 29px;
+        right: 0;
+        bottom: 0;
+        background-color: #222222;
+        font-size: 0;
+        overflow-y: scroll;
+        overflow-x: hidden;
+
+        .library-img {
+            position: relative;
+            width: 100px;
+            height: 100px;
+            background-color: #000;
+            display: inline-block;
+            background-size: contain;
+            background-position: center center;
+            background-repeat: repeat;
+            opacity: 0.75;
+            transition: opacity .2s linear;
+            margin: 1px;
+            overflow: hidden;
+
+            .library-rotate-button {
+                position: absolute;
+                right: 5px;
+                top: 5px;
+                width: 26px;
+                height: 26px;
+                line-height: 26px;
+                text-align: center;
+                background-color: rgba(0, 0, 0, 0.75);
+                color: #fff;
+                font-size: 13px;
+                opacity: 0;
+                transform: translateY(-6px);
+                transition: opacity .18s linear .45s, transform .18s ease .45s, background-color .1s linear;
+                z-index: 1000;
+
+                &:hover {
+                    background-color: rgba(0, 0, 0, 0.75);
+                    color: #fff;
+                    transition-delay: 0s;
+                }
+            }
+
+            &:hover, &.selected {
+                opacity: 1;
+            }
+            &.selected {
+                box-shadow: inset 0 0 0 3px @accent, 0 0 0 1px #000;
+            }
+            &:hover {
+                .library-rotate-button {
+                    opacity: 1;
+                    transform: translateY(0);
+                }
+            }
+            &.selected::before {
+                content: "\A";
+                position: absolute;
+                left: -2px;
+                top: -2px;
+                width: 100%;
+                height: 100%;
+                border: 2px solid @accent;
+                z-index: 1001;
+                pointer-events: none;
+            }
+
+            &.loading {
+                &::after {
+                    content: "\A";
+                    position: absolute;
+                    width: 32px;
+                    height: 32px;
+                    background-image: url(../img/img_loading.png);
+                    background-repeat: no-repeat;
+                    background-size: contain;
+                }
+            }
+        }
+
+        .file-table {
+            table-layout: fixed;
+            width: 100%;
+            font-size: 12px;
+            border-collapse: collapse;
+            thead {
+                tr {
+                    th {
+                        text-align: left;
+                        line-height: 24px;
+                        padding: 0 8px 0 8px;
+                        &[align=right] {
+                            text-align: right;
+                        }
+                    }
+                }
+            }
+            tbody {
+                tr {
+                    &:nth-child(odd) {
+                        background-color: #333333;
+                    }
+                    &.selected {
+                        background-color: @accent - 40%;
+                        &:nth-child(odd) {
+                            background-color: @accent - 20%;
+                        }
+                    }
+                    &:hover {
+                        background-color: @accent;
+                        &:nth-child(odd) {
+                            background-color: @accent;
+                        }
+                    }
+                    td {
+                        padding: 0 8px 0 8px;
+                        line-height: 24px;
+                        overflow: hidden;
+                        white-space: nowrap;
+                        text-overflow: ellipsis;
+                    }
+                }
+            }
+        }
+
+        .library-sfx {
+
+        }
+
+        #library-effects {
+            display: block;
+            padding: 1px 0 0 0;
+            font-size: 12px;
+        }
+
+        .library-effect {
+            display: inline-block;
+            width: 100px;
+            height: 100px;
+            min-height: 100px;
+            margin: 1px;
+            padding: 0;
+            background: #000;
+            border: 1px solid #262626;
+            color: #eee;
+            cursor: grab;
+            overflow: hidden;
+            position: relative;
+            opacity: 0.94;
+            transition: opacity .12s linear, border-color .12s linear, box-shadow .12s linear;
+
+            strong {
+                position: absolute;
+                left: 0;
+                right: 0;
+                bottom: 0;
+                z-index: 2;
+                padding: 5px 4px;
+                background: rgba(0, 0, 0, 0.72);
+                font-size: 11px;
+                line-height: 13px;
+                white-space: nowrap;
+                overflow: hidden;
+                text-overflow: ellipsis;
+            }
+
+            span {
+                display: none;
+            }
+
+            &:hover, &.selected {
+                opacity: 1;
+                border-color: @accent;
+                box-shadow: inset 0 0 0 2px @accent, 0 0 0 1px #000;
+            }
+        }
+
+        .effect-editor {
+            display: grid;
+            gap: 10px;
+            color: #eee;
+            font-size: 12px;
+
+            select,
+            button {
+                width: 100%;
+                min-height: 30px;
+                border: 1px solid #444;
+                background: #151515;
+                color: #eee;
+                outline: none;
+            }
+
+            button {
+                cursor: pointer;
+                &:hover, &.active {
+                    border-color: @accent;
+                    background: #242424;
+                }
+            }
+
+            input[type=range] {
+                width: 100%;
+                min-width: 0;
+                margin: 0;
+                padding: 0;
+                accent-color: @accent;
+            }
+        }
+
+        .effect-field {
+            display: grid;
+            gap: 5px;
+
+            label {
+                color: #aaa;
+                font-size: 11px;
+                text-transform: uppercase;
+            }
+        }
+
+        .effect-preview-card {
+            cursor: grab;
+
+            .effect-preview-strip {
+                position: absolute;
+                inset: 0;
+                background-color: #000;
+                background-size: 118% 118%;
+                background-position: center;
+                border: 0;
+            }
+        }
+
+        .effect-actions {
+            display: grid;
+            grid-template-columns: 1fr;
+            gap: 6px;
+        }
+
+        .effect-params {
+            display: grid;
+            gap: 8px;
+        }
+
+        .effect-range {
+            display: grid;
+            grid-template-columns: 72px 1fr 38px;
+            gap: 8px;
+            align-items: center;
+
+            span {
+                color: #bbb;
+            }
+
+            b {
+                color: #fff;
+                text-align: right;
+                font-weight: normal;
+            }
+        }
+
+        .effect-colors {
+            display: grid;
+            gap: 8px;
+        }
+
+        .effect-color-slots {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 6px;
+        }
+
+        .effect-color-slot {
+            display: grid;
+            grid-template-columns: 1fr 20px;
+            gap: 6px;
+            align-items: center;
+            padding: 6px;
+            text-align: left;
+
+            span {
+                color: #ddd;
+                overflow: hidden;
+                white-space: nowrap;
+                text-overflow: ellipsis;
+            }
+
+            i {
+                display: block;
+                width: 18px;
+                height: 18px;
+                border: 1px solid rgba(255,255,255,0.35);
+            }
+        }
+
+        .effect-color-picker {
+            display: grid;
+            gap: 8px;
+            justify-items: center;
+            padding: 8px 0 2px 0;
+        }
+
+        .effect-color-wheel-wrap {
+            position: relative;
+            width: 210px;
+            height: 210px;
+            max-width: 100%;
+        }
+
+        canvas.effect-color-wheel {
+            display: block;
+            width: 210px;
+            height: 210px;
+            max-width: 100%;
+            border-radius: 50%;
+            border: 1px solid #303030;
+            cursor: crosshair;
+            touch-action: none;
+            box-shadow: inset 0 0 0 1px rgba(255,255,255,0.05);
+        }
+
+        .effect-color-wheel-cursor {
+            position: absolute;
+            width: 14px;
+            height: 14px;
+            border: 2px solid #fff;
+            border-radius: 50%;
+            box-shadow: 0 1px 6px rgba(0,0,0,0.75);
+            transform: translate(-50%, -50%);
+            pointer-events: none;
+        }
+
+        .effect-value-range {
+            width: 100%;
+        }
+
+        .effect-note {
+            padding: 8px;
+            border: 1px solid #333;
+            background: #171717;
+            color: #aaa;
+        }
+
+        .effect-palette-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 7px;
+
+            button {
+                display: grid;
+                gap: 5px;
+                padding: 7px;
+                text-align: left;
+
+                span {
+                    overflow: hidden;
+                    white-space: nowrap;
+                    text-overflow: ellipsis;
+                }
+
+                i {
+                    display: block;
+                    height: 8px;
+                    border-radius: 8px;
+                }
+            }
+        }
+    }
+}
+
+.timeline-effect {
+    display: flex !important;
+    align-items: center;
+    justify-content: center;
+    color: #fff;
+    font-size: 12px;
+    font-weight: bold;
+    text-shadow: 0 1px 2px #000;
+    background-size: cover !important;
+    background-repeat: no-repeat !important;
+}
+
+.delete-popup {
+    position: absolute;
+    height: 30px;
+    line-height: 24px;
+    background-color: #d61d1d;
+    z-index: 9999;
+    white-space: nowrap;
+    border: 3px #d61d1d solid;
+    color: #ffffff;
+    border-radius: 0 12px 12px 12px;
+    &.right {
+        border-radius: 12px 0 12px 12px;
+    }
+    box-shadow: 0 0 20px rgba(0,0,0,0.75);
+    .question {
+        display: inline-block;
+        height: 24px;
+        line-height: 25px;
+        padding: 0 8px 0 8px;
+    }
+    .yes, .no {
+        display: inline-block;
+        height: 24px;
+        line-height: 25px;
+        width: 60px;
+        text-align: center;
+        cursor: pointer;
+        text-transform: uppercase;
+        background-color: #9b1414;
+        &:hover {
+            background-color: #d61d1d;
+        }
+        border-radius: 0 12px 12px 0;
+        color: #ffffff;
+        font-weight: bold;
+        &.yes {
+            color: #000000;
+            background-color: #eeeeee;
+            border-radius: 12px 0 0 12px;
+            &:hover {
+                background-color: #ffffff;
+            }
+        }
+    }
+}

@@ -1,0 +1,98 @@
+varying vec2 vUv;
+uniform sampler2D texture;
+
+uniform float time;
+uniform float time_scale;
+uniform float stick_speed;
+uniform float stick_ratio;
+uniform float led_speed;
+uniform float led_count;
+uniform float led_lines;
+uniform float dim;
+uniform float gap;
+uniform float line_mode;
+uniform float time_shift;
+
+const float PI = 3.1415926535897932384626433832795;
+const float PI2 = 6.283185307179586476925286766559;
+const float PI4 = 12.5663706144;
+
+void main() {
+    if (line_mode == 4.0) {
+        vec4 c = vec4(0.0,0.0,0.0,0.0);
+        
+        float td = sqrt(pow(vUv.x - 0.5, 2.0) + pow(vUv.y - 0.5, 2.0)) * 2.0;
+        float d = td;
+
+        if (d > 1.0 || d < 0.8) {  // Change this line to skip rendering the inner 80% of the circle
+            gl_FragColor = c;
+            return;
+        }
+
+        float a = (atan(vUv.y - 0.5, vUv.x - 0.5) + PI) / PI2;
+
+        float x = 1.0 - a;
+        float y = 0.0;
+
+        if (a > 1.0) {
+            a = a - 1.0;
+            y = (d / 2.0) + 0.5;
+        } else {
+            y = (1.0 - d) / 2.0;
+        }
+
+        float s = a + (time - time_shift) * stick_speed;
+        
+        x = (- a * (led_speed / time_scale) + floor(s) * (led_speed / time_scale));
+        x = (x - floor(x)) * gap;
+
+        vec2 t = vec2(x, y);
+
+        s = s - floor(s);
+        s = clamp(s * (stick_speed), 0.0, 1.0);
+
+        gl_FragColor = texture2D(texture, t) * (1.0 - s) * (x > 1.0 ? 0.0 : 1.0) * dim;
+    } else if (line_mode == 1.0) {
+        if (vUv.y > 0.49 && vUv.y < 0.51) {
+            float r = (time - time_shift) * led_speed;
+            r = r - floor(r);
+
+            float tt = r * gap;
+            vec2 t = vec2(tt, 1.0 - vUv.x);
+
+            gl_FragColor = texture2D(texture, t) * dim * (tt > 1.0 ? 0.0 : 1.0);
+        }
+    } else if (line_mode == 2.0) {
+        float r = (time - time_shift + vUv.y) * led_speed;
+        r = r - floor(r);
+
+        float tt = r * gap;
+        vec2 t = vec2(tt, 1.0 - vUv.x);
+
+        gl_FragColor = texture2D(texture, t) * dim * (tt > 1.0 ? 0.0 : 1.0) * vUv.y;
+    } else {
+        float td = sqrt(pow(vUv.x - 0.5, 2.0) + pow(vUv.y - 0.5, 2.0)) * 2.0;
+        float a = (atan(vUv.y - 0.5, vUv.x - 0.5) + PI) / PI2;
+        float d = td;
+
+        d = (d - stick_ratio) * (1.0 / (1.0 - stick_ratio));
+
+        if (led_lines > 0.0) {
+            td = abs(sin(d * led_count * PI));
+        } else {
+            td = 1.0;
+        }
+
+        float s = a + (time - time_shift) * stick_speed;
+
+        vec2 t = vec2((- a * (led_speed / time_scale) + floor(s) * (led_speed / time_scale)), d);
+        t.x = (t.x - floor(t.x)) * gap;
+
+        s = s - floor(s);
+        s = clamp(s * (stick_speed), 0.0, 1.0);
+
+        if (t.x > 1.0 || t.x < -1.0) s = 1.0;
+
+        gl_FragColor = texture2D(texture, t) * (1.0 - s) * (d > 1.0 || d < 0.0 ? 0.0 : 1.0) * td * dim;
+    }
+}

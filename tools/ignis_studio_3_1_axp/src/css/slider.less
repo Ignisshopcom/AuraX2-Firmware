@@ -1,0 +1,56 @@
+.ignis-slider {
+    position: relative;
+    background-color: #000;
+    height: 24px;
+    cursor: default;
+    -webkit-touch-callout: none;
+    -webkit-user-select: none;
+     -khtml-user-select: none;
+       -moz-user-select: none;
+        -ms-user-select: none;
+            user-select: none;
+
+    .slider-thumb {
+        position: absolute;
+        width: 24px;
+        height: 24px;
+        line-height: 24px;
+        text-align: center;
+        font-weight: bold;
+        background-color: #111;
+        color: #fff;
+        font-weight: bold;
+        cursor: pointer;
+        z-index: 100;
+
+        &.minus {
+            left: 0;
+        }
+        &.plus {
+            right: 0;
+        }
+    }
+
+    .slider-bar {
+        position: absolute;
+        height: 24px;
+        left: 24px;
+        right: 24px;
+        background-color: #111;
+        .slider-handle {
+            position: absolute;
+            z-index: 110;
+            width: 32px;
+            height: 24px;
+            background-color: #f26722;
+            cursor: pointer;
+        }
+    
+        .slider-progress {
+            position: absolute;
+            height: 24px;
+            left: 0px;
+            background-color: #f26722 - 50%;
+        }
+    }
+}

@@ -1,0 +1,236 @@
+varying vec2 vUv;
+uniform sampler2D texture;
+
+uniform float time;
+uniform float time_scale;
+uniform float stick_speed;
+uniform float stick_ratio;
+uniform float led_speed;
+uniform float led_count;
+uniform float led_lines;
+uniform float dim;
+uniform float gap;
+uniform float line_mode;
+uniform float time_shift;
+
+const float PI = 3.1415926535897932384626433832795;
+const float PI2 = 6.283185307179586476925286766559;
+const float PI4 = 12.5663706144;
+
+float angleForwardDistance(float from_angle, float to_angle) {
+    return mod(to_angle - from_angle + PI2, PI2);
+}
+
+float angleShortestDistance(float a, float b) {
+    return abs(atan(sin(a - b), cos(a - b)));
+}
+
+vec4 cyrWheelBranchSample(vec2 sphere_pos, float z, float branch_spin, float led_coord, float source_time, float trail_time, float back_side) {
+    const float radius = 0.84;
+    float phi = atan(z, sphere_pos.x);
+
+    float age = angleForwardDistance(branch_spin, phi) / PI;
+    float trail = clamp(1.0 - age, 0.0, 1.0);
+    if (trail <= 0.001) {
+        return vec4(0.0, 0.0, 0.0, 0.0);
+    }
+
+    float branch_radius = sqrt(max(0.0, radius * radius - sphere_pos.y * sphere_pos.y));
+    float projected_line_x = branch_radius * cos(branch_spin);
+    float line_distance = abs(sphere_pos.x - projected_line_x);
+    float current_line = 1.0 - smoothstep(0.0, 0.0045, line_distance);
+    float current_glow = 1.0 - smoothstep(0.0, 0.024, line_distance);
+
+    float image_x = fract((source_time - time_shift - age * trail_time) * led_speed) * gap;
+    if (image_x > 1.0) {
+        return vec4(0.0, 0.0, 0.0, 0.0);
+    }
+
+    vec4 image = texture2D(texture, vec2(image_x, led_coord)) * dim;
+    float luma = dot(image.rgb, vec3(0.299, 0.587, 0.114));
+
+    float z_depth = clamp(z / radius * 0.5 + 0.5, 0.0, 1.0);
+    float depth_light = mix(0.28, 1.38, z_depth);
+    float side_light = mix(0.66, 1.0, abs(z) / radius);
+    float rear_fade = mix(1.0, 0.32, back_side);
+    float trail_fade = trail;
+
+    vec3 color = mix(vec3(luma * 0.52), image.rgb, mix(1.0, 0.30, back_side));
+    float intensity = trail_fade * depth_light * side_light * rear_fade;
+    intensity *= 0.82 + current_glow * 0.46 + current_line * 2.20;
+    color *= intensity;
+
+    float alpha = trail_fade * rear_fade * (0.68 + current_glow * 0.48 + current_line * 0.62);
+    return vec4(color, alpha);
+}
+
+vec4 cyrWheelSurfaceSample(vec2 sphere_pos, float z, float spin, float source_time, float trail_time, float back_side) {
+    const float radius = 0.84;
+    float normalized_y = clamp(sphere_pos.y / radius, -1.0, 1.0);
+    float theta = acos(normalized_y);
+
+    vec4 first_half = cyrWheelBranchSample(sphere_pos, z, spin, theta / PI2, source_time, trail_time, back_side);
+    vec4 second_half = cyrWheelBranchSample(sphere_pos, z, spin + PI, (PI2 - theta) / PI2, source_time, trail_time, back_side);
+
+    return vec4(max(first_half.rgb, second_half.rgb), max(first_half.a, second_half.a));
+}
+
+vec3 screenBlend(vec3 base, vec3 light) {
+    return 1.0 - (1.0 - clamp(base, 0.0, 1.0)) * (1.0 - clamp(light, 0.0, 1.0));
+}
+
+void main() {
+
+
+ vec4 c = vec4(0.0, 0.0, 0.0, 0.0);
+
+    if (line_mode == 5.0) {
+        vec2 p0 = vUv - vec2(0.5, 0.5);
+        vec2 p = vec2(p0.y, -p0.x) * 2.0;
+        float sphere_distance = length(p);
+        if (sphere_distance > 0.845) {
+            gl_FragColor = vec4(0.0, 0.0, 0.0, 1.0);
+            return;
+        }
+
+        float sphere = 1.0 - smoothstep(0.835, 0.845, sphere_distance);
+        float z_front = sqrt(max(0.0, 0.84 * 0.84 - dot(p, p)));
+        vec3 combined = vec3(0.006, 0.011, 0.018) * sphere;
+        combined += vec3(0.010, 0.030, 0.055) * pow(max(z_front / 0.84, 0.0), 1.6);
+
+        float wheel_speed = clamp(led_speed * 0.0312, 0.3067, 1.6667);
+        float spin = PI * 0.5 - (time - time_shift) * wheel_speed * PI2;
+        float half_turn_time = 0.5 / max(wheel_speed, 0.0001);
+        float trail_time = half_turn_time;
+
+        vec4 front_color = cyrWheelSurfaceSample(p, z_front, spin, time, trail_time, 0.0);
+        vec4 back_color = cyrWheelSurfaceSample(p, -z_front, spin, time, trail_time, 1.0);
+
+        combined = screenBlend(combined, back_color.rgb * sphere);
+        combined = screenBlend(combined, front_color.rgb * 1.45 * sphere);
+
+        gl_FragColor = vec4(min(combined, vec3(1.0)), 1.0);
+
+    } else if (line_mode == 4.0) {
+    
+    // Calculate the distance from the center of the circle
+    float td = sqrt(pow(vUv.x - 0.5, 2.0) + pow(vUv.y - 0.5, 2.0)) * 2.0;
+    float d = td;
+
+    // If the distance is greater than 1.0, discard the fragment
+    if (d > 1.0) {
+        gl_FragColor = c;
+        return;
+    }
+
+    // If the distance is less than 0.95, make it black
+    if (d < 0.95) {
+        gl_FragColor = vec4(0.0, 0.0, 0.0, 1.0);
+        return;
+    }
+
+    // Calculate the angle and radius for the circular animation
+    float a = (atan(vUv.y - 0.5, vUv.x - 0.5) + PI) / PI2;
+    float r = (time - time_shift) * led_speed;
+    r = r - floor(r);
+
+    float tt = r * gap;
+    vec2 t = vec2(tt, a);
+
+    // Apply the texture and dimming
+    gl_FragColor = texture2D(texture, t) * dim * (tt > 1.0 ? 0.0 : 1.0);
+
+
+
+
+
+    } else if (line_mode == 3.0) {
+        vec4 c = vec4(0.0, 0.0, 0.0, 0.0);
+        
+        float td = sqrt(pow(vUv.x - 0.5, 2.0) + pow(vUv.y - 0.5, 2.0)) * 2.0;
+        float d = td;
+
+        if (d > 1.0) {
+            gl_FragColor = c;
+            return;
+        }
+
+        float a = (atan(vUv.y - 0.5, vUv.x - 0.5) + PI) / PI;
+
+        float x = 1.0 - a;
+        float y = 0.0;
+
+        if (a > 1.0) {
+            a = a - 1.0;
+            y = (d / 2.0) + 0.5;
+        } else {
+            y = (1.0 - d) / 2.0;
+        }
+
+        float s = a + (time - time_shift) * stick_speed;
+        
+        x = (- a * (led_speed / time_scale) + floor(s) * (led_speed / time_scale));//x;// + time;
+        x = (x - floor(x)) * gap;
+
+        vec2 t = vec2(x, y);
+
+        s = s - floor(s);
+        s = clamp(s * (stick_speed), 0.0, 1.0);
+
+        gl_FragColor = texture2D(texture, t) * (1.0 - s) * (x > 1.0 ? 0.0 : 1.0) * dim;
+    } else if (line_mode == 1.0) {
+        if (vUv.y > 0.49 && vUv.y < 0.51) {
+            float r = (time - time_shift) * led_speed;
+            r = r - floor(r);
+
+            float tt = r * gap;// + vUv.y;
+            //if (tt > 1.0) { tt = tt - 1.0; }
+
+            vec2 t = vec2(tt, 1.0 - vUv.x);
+
+            gl_FragColor = texture2D(texture, t) * dim * (tt > 1.0 ? 0.0 : 1.0);// * vUv.y;
+        }
+    } else if (line_mode == 2.0) { // levistick
+        float r = (time - time_shift + vUv.y) * led_speed;
+        r = r - floor(r);
+
+        float tt = r * gap;
+        vec2 t = vec2(tt, 1.0 - vUv.x);
+
+        gl_FragColor = texture2D(texture, t) * dim * (tt > 1.0 ? 0.0 : 1.0) * vUv.y;
+        
+        /*float r = (time - time_shift) * led_speed;
+        r = r - floor(r);
+
+        float tt = r * gap - led_speed * (1.0 - vUv.y);// + vUv.y;
+        if (tt > 1.0) { tt = tt - 1.0; }
+
+        vec2 t = vec2(tt, 1.0 - vUv.x);
+
+        gl_FragColor = texture2D(texture, t) * vUv.y * dim;*/
+    } else {
+        float td = sqrt(pow(vUv.x - 0.5, 2.0) + pow(vUv.y - 0.5, 2.0)) * 2.0;
+        float a = (atan(vUv.y - 0.5, vUv.x - 0.5) + PI) / PI2;
+        float d = td;
+
+        d = (d - stick_ratio) * (1.0 / (1.0 - stick_ratio));
+
+        if (led_lines > 0.0) {
+            td = abs(sin(d * led_count * PI));
+        } else {
+            td = 1.0;
+        }
+
+        float s = a + (time - time_shift) * stick_speed;
+
+        vec2 t = vec2((- a * (led_speed / time_scale) + floor(s) * (led_speed / time_scale)), d);
+        t.x = (t.x - floor(t.x)) * gap;
+
+        s = s - floor(s);
+        s = clamp(s * (stick_speed), 0.0, 1.0);
+
+        if (t.x > 1.0 || t.x < -1.0) s = 1.0;
+
+        gl_FragColor = texture2D(texture, t) * (1.0 - s) * (d > 1.0 || d < 0.0 ? 0.0 : 1.0) * td * dim;
+    }
+}

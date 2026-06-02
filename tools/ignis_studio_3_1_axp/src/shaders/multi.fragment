@@ -1,0 +1,24 @@
+varying vec2 vUv;
+uniform sampler2D texture;
+
+uniform float time;
+uniform float time_scale;
+uniform float stick_speed;
+uniform float stick_ratio;
+uniform float led_speed;
+uniform float led_count;
+uniform float led_lines;
+uniform float dim;
+uniform float gap;
+uniform float line_mode;
+uniform float time_shift;
+
+void main() {
+    float r = (time - time_shift) * led_speed;
+    r = r - floor(r);
+
+    float tt = r * gap;
+    vec2 t = vec2(tt, 1.0 - vUv.x);
+
+    gl_FragColor = texture2D(texture, t) * dim * (tt > 1.0 ? 0.0 : 1.0) * vUv.y;
+}

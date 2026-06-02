@@ -1,0 +1,98 @@
+{
+  "name": "ignis",
+  "productName": "Ignis Studio",
+  "version": "3.0.0",
+  "description": "Ignis Studio",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "electron-forge start",
+    "package": "electron-forge package",
+    "make": "electron-forge make",
+    "make:win": "electron-forge make --platform=win32 --arch=x64",
+    "make:mac": "electron-forge make --platform=darwin --arch=universal",
+    "installer:win": "electron-builder --win nsis --x64",
+    "installer:mac": "electron-builder --mac dmg --universal",
+    "publish": "electron-forge publish",
+    "check:main": "node --check src/index.js",
+    "lint": "echo \"No linting configured\""
+  },
+  "keywords": [],
+  "author": {
+    "name": "Dark York s.r.o.",
+    "email": "info@darkyork.com"
+  },
+  "license": "private",
+  "dependencies": {
+    "electron-squirrel-startup": "^1.0.0",
+    "gm": "^1.23.1",
+    "jimp": "^0.16.1",
+    "md5": "^2.3.0",
+    "node-zip": "^1.1.1"
+  },
+  "devDependencies": {
+    "@electron-forge/cli": "7.11.2",
+    "@electron-forge/maker-deb": "7.11.2",
+    "@electron-forge/maker-dmg": "7.11.2",
+    "@electron-forge/maker-rpm": "7.11.2",
+    "@electron-forge/maker-squirrel": "7.11.2",
+    "@electron-forge/maker-zip": "7.11.2",
+    "electron": "34.5.8",
+    "electron-builder": "latest"
+  },
+  "build": {
+    "appId": "com.darkyork.ignisstudio",
+    "productName": "Ignis Studio",
+    "asar": false,
+    "afterPack": "scripts/after-pack-win-icon.js",
+    "directories": {
+      "output": "out/installer"
+    },
+    "files": [
+      "src/**/*",
+      "package.json",
+      "forge.config.js"
+    ],
+    "win": {
+      "icon": "src/img/icon.ico",
+      "signAndEditExecutable": false,
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": "always",
+      "createStartMenuShortcut": true,
+      "shortcutName": "Ignis Studio",
+      "artifactName": "Ignis Studio Setup ${version}.${ext}",
+      "deleteAppDataOnUninstall": false
+    },
+    "mac": {
+      "icon": "src/img/icon.icns",
+      "identity": null,
+      "target": [
+        "dmg"
+      ],
+      "category": "public.app-category.graphics-design"
+    },
+    "dmg": {
+      "artifactName": "Ignis Studio ${version}.${ext}"
+    },
+    "fileAssociations": [
+      {
+        "ext": "ipr",
+        "name": "Ignis Project",
+        "description": "Ignis Studio Project",
+        "icon": "src/img/icon.ico",
+        "role": "Editor"
+      }
+    ]
+  }
+}

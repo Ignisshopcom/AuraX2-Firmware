@@ -3,6 +3,10 @@ function IgnisProperties(ignis)
     this.ignis = ignis;
     this.lastDrivesCount = 0;
     this.editor_hue_index = null;
+    this.exportMode = 'photon';
+    this.auraxDevices = [];
+    this.selectedAuraXHost = null;
+    this.effectPropertyColorIndex = 0;
     ignis.properties = this;
 }
 
@@ -48,10 +52,7 @@ IgnisProperties.prototype.rememberDeviceDefaults = function ()
         this.ignis.userconf.set('last_selected_device', selected);
     }
 
-    var acc = !!project.enable_accelerometer;
-    if (this.ignis.userconf.get('last_enable_accelerometer') !== acc) {
-        this.ignis.userconf.set('last_enable_accelerometer', acc);
-    }
+    project.enable_accelerometer = false;
 }
 
 IgnisProperties.prototype.rememberLineFrequency = function (value)
@@ -64,6 +65,8 @@ IgnisProperties.prototype.rememberLineFrequency = function (value)
 
 IgnisProperties.prototype.updateDevices = function ()
 {
+    if ($('#leds-count').length == 0) return;
+
     var devices = this.ignis.userconf.get('led_definitions');
     var selected = (this.ignis.project && this.ignis.project.selected_device) ? this.ignis.project.selected_device : $('#leds-count').val();
 
@@ -104,43 +107,14 @@ IgnisProperties.prototype.init = function ()
 {
     const project = this.ignis.project;
 
-    this.updateDevices();
     this.updateDevicesData();
 
     this.updateDrives();
 
     $('#project-name').val(project.name);
-    $('#leds-count').val(project.selected_device);
+    $('#timeline-name-input').val(project.timelines[project.currentTimeline] ? (project.timelines[project.currentTimeline].name || project.getTimelineDefaultName(project.currentTimeline)) : '');
     $('#leds-count-input').val(project.leds);
-    $('#leds-count-input').prop('readonly', true);
     $('#project-post').val(project.post);
-    $('#leds-count').on('change keyup', $.proxy(function (e) {
-        var acc = false;
-        var tmp = $(e.target).val().split('_');
-        var val = parseInt(tmp[0]);
-        if (tmp.length == 2) acc = (tmp[1] != 'N');
-
-        if (isNaN(val)) val = config.project.default_leds;
-
-        this.ignis.project.enable_accelerometer = acc;
-        this.ignis.project.selected_device = $(e.target).val();
-        this.ignis.project.setLeds(val);
-        if (e.originalEvent) {
-            this.rememberDeviceDefaults();
-        }
-        this.calcMaxFreq();
-    }, this));
-    $('#leds-count-custom').on('click', $.proxy(function (e) {
-        ignis_prompt('Please specify number of leds on custom stick:', this.ignis.userconf.get('custom_leds'), $.proxy(function (val) {
-            val = parseInt(val);
-            if (isNaN(val) || val <= 0) return;
-            this.ignis.userconf.set('custom_leds', val);
-            this.updateDevices();
-            $('#leds-count').val(val+'_C');
-            $('#leds-count').trigger('change');
-            this.rememberDeviceDefaults();
-        }, this));
-    }, this));
     $('#leds-count-input').on('change keyup', $.proxy(function (e) {
 
         var leds = parseInt($(e.target).val());
@@ -148,6 +122,8 @@ IgnisProperties.prototype.init = function ()
         if (isNaN(leds)) leds = config.project.default_leds;
         if (leds < 1) leds = 1;
         if (leds > 9999) leds = 9999;
+        this.ignis.project.enable_accelerometer = false;
+        this.ignis.project.selected_device = leds + '_C';
         this.ignis.project.setLeds(leds);
         if (e.originalEvent) {
             this.rememberDeviceDefaults();
@@ -155,10 +131,14 @@ IgnisProperties.prototype.init = function ()
         if (leds != oleds) {
             $('#leds-count-input').val(leds);
         }
+        this.calcMaxFreq();
 
     }, this));
     $('#project-name').on('change keyup keydown', $.proxy(function (e) {
         this.ignis.project.name = $('#project-name').val();
+    }, this));
+    $('#timeline-name-input').on('change', $.proxy(function (e) {
+        this.ignis.project.renameTimeline(this.ignis.project.currentTimeline, $('#timeline-name-input').val());
     }, this));
     $('#project-post').on('change', $.proxy(function (e) {
         this.ignis.project.post = $(e.target).val();
@@ -198,6 +178,14 @@ IgnisProperties.prototype.init = function ()
     app_register_action('file_move_dn', $.proxy(this.fileMoveDn, this));
     app_register_action('file_delete', $.proxy(this.fileDelete, this));
     app_register_action('stretch_image', $.proxy(this.stretchImage, this));
+    app_register_action('export_mode_photon', $.proxy(function () { this.setExportMode('photon'); }, this));
+    app_register_action('export_mode_aurax', $.proxy(function () { this.setExportMode('aurax'); }, this));
+    app_register_action('aurax_scan', $.proxy(this.scanAuraXDevices, this));
+    app_register_action('aurax_upload', $.proxy(this.uploadSelectedAuraX, this));
+    $('#aurax-device-list').on('click', '.aurax-identify-btn', $.proxy(this.identifyAuraXDevice, this));
+    $('#aurax-device-list').on('click', '.aurax-program-up', $.proxy(this.moveAuraXProgramUp, this));
+    $('#aurax-device-list').on('click', '.aurax-program-down', $.proxy(this.moveAuraXProgramDown, this));
+    $('#aurax-device-list').on('click', '.aurax-program-delete', $.proxy(this.deleteAuraXProgram, this));
     app_register_action('image_rotate_cw', $.proxy(function () { this.applyImageTransform({ rotate: 90 }); }, this));
     app_register_action('image_flip_h', $.proxy(function () { this.applyImageTransform({ flipH: true }); }, this));
     app_register_action('image_flip_v', $.proxy(function () { this.applyImageTransform({ flipV: true }); }, this));
@@ -230,9 +218,7 @@ IgnisProperties.prototype.init = function ()
     app_register_action('properties_properties', $.proxy(this.switchProperties, this));
     app_register_action('properties_export', $.proxy(this.switchExport, this));
 
-    $('[editor=accelerometer]').on('change', $.proxy(this.accelerometerChanged, this));
-
-    if (!config.project.pixel_count_custom) $('#leds-count-input').hide();
+    $('#leds-count-input').show();
 
     setInterval($.proxy(this.autoEnumerate, this), 1000);
 
@@ -242,10 +228,21 @@ IgnisProperties.prototype.init = function ()
 
     $('#export-timeline-select').on('change', $.proxy(this.timelineSelectChanged, this));
     $('#export-technology').on('change', $.proxy(this.exportTechnologyChanged, this));
+    $('#aurax-device-list').on('click', '.aurax-device-record', $.proxy(this.selectAuraXDevice, this));
 
     $('#filename-editable-btn').on('click', $.proxy(this.filenameEditableToggle, this));
+    $('#effect-properties-field').on('input', '[data-effect-range]', $.proxy(this.onEffectPropertyRangeInput, this));
+    $('#effect-properties-field').on('change mouseup touchend', '[data-effect-range]', $.proxy(this.onEffectPropertyRangeCommit, this));
+    $('#effect-properties-field').on('input keyup change', '[data-effect-color]', $.proxy(this.onEffectPropertyColor, this));
+    $('#effect-properties-field').on('click', '[data-effect-palette]', $.proxy(this.onEffectPropertyPalette, this));
+    $('#effect-properties-field').on('click', '[data-effect-toggle]', $.proxy(this.onEffectPropertyToggle, this));
+    if (!this.effectPropertiesCaptureBound) {
+        this.effectPropertiesCaptureBound = $.proxy(this.onEffectPropertiesPointerDown, this);
+        document.addEventListener('mousedown', this.effectPropertiesCaptureBound, true);
+    }
 
     this.projectUpdated();
+    this.setExportMode('photon');
 }
 
 IgnisProperties.prototype.filenameEditableToggle = function ()
@@ -280,8 +277,14 @@ IgnisProperties.prototype.updateFilenameInput = function ()
         $('#export-timeline-select').append(el);
     }
 
+    var ext = this.exportMode == 'aurax' ? 'axp' : this.ignis.project.getExportExtension();
+
     if ($('#export-filename').prop('readonly')) {
-        $('#export-filename').val(this.ignis.project.getProjectFilename(false, this.ignis.project.getExportExtension()));
+        if (this.exportMode == 'aurax') {
+            $('#export-filename').val(this.ignis.project.getAuraXUploadFilename());
+        } else {
+            $('#export-filename').val(this.ignis.project.getProjectFilename(false, ext));
+        }
     } else {
         var fn = $('#export-filename').val();
         //fn = fn.replace(/_[0-9]+(\.pix)?/i, '');
@@ -306,17 +309,342 @@ IgnisProperties.prototype.switchExport = function ()
     $('[action=properties_export]').addClass('active');
     $('#properties-properties-box').hide();
     $('#properties-export-box').show();
+    this.setExportMode(this.exportMode || 'photon');
 }
 
-IgnisProperties.prototype.accelerometerChanged = function (e)
+IgnisProperties.prototype.setExportMode = function (mode)
 {
-    if ($(e.delegateTarget).is(':checked')) {
-        $('#picture-freq-field').show();
-        $('#freq-field').hide();
-    } else {
-        $('#picture-freq-field').hide();
-        $('#freq-field').show();
+    this.exportMode = mode == 'aurax' ? 'aurax' : 'photon';
+    $('#export-mode-photon').toggleClass('active', this.exportMode == 'photon');
+    $('#export-mode-aurax').toggleClass('active', this.exportMode == 'aurax');
+    $('#export-photon-panel').toggle(this.exportMode == 'photon');
+    $('#export-aurax-panel').toggle(this.exportMode == 'aurax');
+    $('#export-technology').val(this.exportMode == 'aurax' ? 'aurax' : 'photon');
+    this.updateFilenameInput();
+}
+
+IgnisProperties.prototype.setAuraXStatus = function (message, state)
+{
+    $('#aurax-export-status')
+        .removeClass('success error busy')
+        .addClass(state || '')
+        .text(message || '');
+}
+
+IgnisProperties.prototype.formatAuraXBytes = function (bytes)
+{
+    bytes = Number(bytes) || 0;
+    if (bytes >= 1024 * 1024) return (bytes / (1024 * 1024)).toFixed(2) + ' MB';
+    if (bytes >= 1024) return Math.round(bytes / 1024) + ' KB';
+    return bytes + ' B';
+}
+
+IgnisProperties.prototype.selectAuraXDevice = function (e)
+{
+    this.selectedAuraXHost = $(e.currentTarget).attr('data-host');
+    this.renderAuraXDevices();
+}
+
+IgnisProperties.prototype.getSelectedAuraXDevice = function ()
+{
+    for (var i = 0; i < this.auraxDevices.length; i++) {
+        var device = this.auraxDevices[i];
+        if ((device.host || device.ip) == this.selectedAuraXHost) return device;
     }
+    return null;
+}
+
+IgnisProperties.prototype.renderAuraXDevices = function ()
+{
+    var list = $('#aurax-device-list');
+    list.empty();
+
+    if (!this.auraxDevices || this.auraxDevices.length == 0) {
+        list.append($('<div>').addClass('aurax-empty').text('No AuraX devices found.'));
+        return;
+    }
+
+    if (!this.selectedAuraXHost) {
+        this.selectedAuraXHost = this.auraxDevices[0].host || this.auraxDevices[0].ip;
+    }
+
+    for (var i = 0; i < this.auraxDevices.length; i++) {
+        var device = this.auraxDevices[i];
+        var host = device.host || device.ip;
+        var selected = host == this.selectedAuraXHost;
+        var record = $('<div>')
+            .addClass('aurax-device-record')
+            .toggleClass('selected', selected)
+            .attr('data-host', host);
+
+        var main = $('<div>');
+        main.append($('<strong>').text(device.deviceName || device.hostname || 'AuraX'));
+        main.append($('<span>').text(device.ip || host));
+
+        record.append(main);
+        var actions = $('<div>').addClass('aurax-device-actions');
+        actions.append($('<span>').addClass('aurax-device-leds').text((device.numLeds || '?') + ' LEDs'));
+        actions.append($('<button>')
+            .attr('type', 'button')
+            .attr('title', 'Blink this device')
+            .attr('data-host', host)
+            .addClass('aurax-identify-btn')
+            .html('<i class="fas fa-bolt"></i>'));
+        record.append(actions);
+
+        var details = $('<div>').addClass('aurax-device-details');
+        details.append($('<span>').html('<i class="fas fa-wifi"></i>' + (device.wifiPct !== null && device.wifiPct !== undefined ? device.wifiPct + '%' : '-')));
+        details.append($('<span>').html('<i class="fas fa-battery-half"></i>' + (device.batteryPct !== null && device.batteryPct !== undefined ? device.batteryPct + '%' : '-')));
+        details.append($('<span>').html('<i class="fas fa-hdd"></i>' + this.formatAuraXBytes(device.fsFree || 0) + ' free'));
+        record.append(details);
+
+        if (selected) {
+            var programs = $('<div>').addClass('aurax-programs');
+            var files = device.programs || [];
+            if (files.length == 0) {
+                programs.append($('<div>').addClass('aurax-program-empty').text('No programs on this device.'));
+            }
+            for (var p = 0; p < files.length; p++) {
+                var file = files[p];
+                var row = $('<div>').addClass('aurax-program-row');
+                row.append($('<span>').addClass('aurax-program-slot').text(file.slot || (p + 1)));
+                var name = $('<div>').addClass('aurax-program-name');
+                name.append($('<strong>').text(file.display_name || file.name || 'program'));
+                name.append($('<span>').text(this.formatAuraXBytes(file.size || 0)));
+                row.append(name);
+                var buttons = $('<div>').addClass('aurax-program-actions');
+                buttons.append($('<button>')
+                    .attr('type', 'button')
+                    .attr('title', 'Move up')
+                    .attr('data-host', host)
+                    .attr('data-slot', file.slot || (p + 1))
+                    .prop('disabled', p == 0)
+                    .addClass('aurax-program-up')
+                    .html('<i class="fas fa-angle-up"></i>'));
+                buttons.append($('<button>')
+                    .attr('type', 'button')
+                    .attr('title', 'Move down')
+                    .attr('data-host', host)
+                    .attr('data-slot', file.slot || (p + 1))
+                    .prop('disabled', p == files.length - 1)
+                    .addClass('aurax-program-down')
+                    .html('<i class="fas fa-angle-down"></i>'));
+                buttons.append($('<button>')
+                    .attr('type', 'button')
+                    .attr('title', 'Delete program')
+                    .attr('data-host', host)
+                    .attr('data-file', file.name || '')
+                    .addClass('aurax-program-delete')
+                    .html('<i class="fas fa-trash-alt"></i>'));
+                row.append(buttons);
+                programs.append(row);
+            }
+            record.append(programs);
+        }
+        list.append(record);
+    }
+}
+
+IgnisProperties.prototype.updateAuraXDevice = function (host, device)
+{
+    if (!device) return;
+    var normalized = device.host || device.ip || host;
+    for (var i = 0; i < this.auraxDevices.length; i++) {
+        var currentHost = this.auraxDevices[i].host || this.auraxDevices[i].ip;
+        if (currentHost == host || currentHost == normalized) {
+            this.auraxDevices[i] = device;
+            this.selectedAuraXHost = device.host || device.ip || host;
+            this.renderAuraXDevices();
+            return;
+        }
+    }
+    this.auraxDevices.push(device);
+    this.selectedAuraXHost = device.host || device.ip || host;
+    this.renderAuraXDevices();
+}
+
+IgnisProperties.prototype.refreshAuraXDevice = function (host)
+{
+    var api = window.ignisElectron || window.electronApi || {};
+    if (!api.refreshAuraXDevice) return Promise.resolve(null);
+    return api.refreshAuraXDevice(host, 1200).then($.proxy(function (device) {
+        this.updateAuraXDevice(host, device);
+        return device;
+    }, this));
+}
+
+IgnisProperties.prototype.identifyAuraXDevice = function (e)
+{
+    e.preventDefault();
+    e.stopPropagation();
+    var api = window.ignisElectron || window.electronApi || {};
+    var host = $(e.currentTarget).attr('data-host');
+    if (!api.identifyAuraXDevice) {
+        this.setAuraXStatus('Device blink is not available in this Ignis Studio build.', 'error');
+        return;
+    }
+    this.setAuraXStatus('Blinking selected AuraX device...', 'busy');
+    api.identifyAuraXDevice(host).then($.proxy(function (res) {
+        this.setAuraXStatus(res && res.ok ? 'Device blink sent.' : ((res && res.body) || 'Device blink failed.'), res && res.ok ? 'success' : 'error');
+    }, this)).catch($.proxy(function (err) {
+        this.setAuraXStatus(err && err.message ? err.message : 'Device blink failed.', 'error');
+    }, this));
+}
+
+IgnisProperties.prototype.moveAuraXProgram = function (e, direction)
+{
+    e.preventDefault();
+    e.stopPropagation();
+    var api = window.ignisElectron || window.electronApi || {};
+    var host = $(e.currentTarget).attr('data-host');
+    var slot = parseInt($(e.currentTarget).attr('data-slot'));
+    if (!api.reorderAuraXProgram) {
+        this.setAuraXStatus('AuraX program reorder is not available in this Ignis Studio build.', 'error');
+        return;
+    }
+    this.setAuraXStatus('Reordering AuraX programs...', 'busy');
+    api.reorderAuraXProgram(host, slot, direction).then($.proxy(function (res) {
+        if (!res || !res.ok) {
+            this.setAuraXStatus((res && res.body) || 'AuraX reorder failed.', 'error');
+            return;
+        }
+        this.setAuraXStatus('AuraX program order updated.', 'success');
+        this.refreshAuraXDevice(host);
+    }, this)).catch($.proxy(function (err) {
+        this.setAuraXStatus(err && err.message ? err.message : 'AuraX reorder failed.', 'error');
+    }, this));
+}
+
+IgnisProperties.prototype.moveAuraXProgramUp = function (e)
+{
+    this.moveAuraXProgram(e, -1);
+}
+
+IgnisProperties.prototype.moveAuraXProgramDown = function (e)
+{
+    this.moveAuraXProgram(e, 1);
+}
+
+IgnisProperties.prototype.deleteAuraXProgram = function (e)
+{
+    e.preventDefault();
+    e.stopPropagation();
+    var api = window.ignisElectron || window.electronApi || {};
+    var host = $(e.currentTarget).attr('data-host');
+    var file = $(e.currentTarget).attr('data-file');
+    if (!api.deleteAuraXProgram) {
+        this.setAuraXStatus('AuraX program delete is not available in this Ignis Studio build.', 'error');
+        return;
+    }
+    if (!confirm('Delete this program from the AuraX device?')) return;
+    this.setAuraXStatus('Deleting AuraX program...', 'busy');
+    api.deleteAuraXProgram(host, file).then($.proxy(function (res) {
+        if (!res || !res.ok) {
+            this.setAuraXStatus((res && res.body) || 'AuraX delete failed.', 'error');
+            return;
+        }
+        this.setAuraXStatus('AuraX program deleted.', 'success');
+        this.refreshAuraXDevice(host);
+    }, this)).catch($.proxy(function (err) {
+        this.setAuraXStatus(err && err.message ? err.message : 'AuraX delete failed.', 'error');
+    }, this));
+}
+
+IgnisProperties.prototype.scanAuraXDevices = function ()
+{
+    var api = window.ignisElectron || window.electronApi || {};
+    if (!api.scanAuraXDevices) {
+        this.setAuraXStatus('AuraX scan is not available in this Ignis Studio build.', 'error');
+        return;
+    }
+
+    this.setAuraXStatus('Scanning local network...', 'busy');
+    $('[action=aurax_scan]').prop('disabled', true);
+
+    api.scanAuraXDevices(2600).then($.proxy(function (devices) {
+        this.auraxDevices = devices || [];
+        if (this.auraxDevices.length > 0) {
+            var stillSelected = false;
+            for (var i = 0; i < this.auraxDevices.length; i++) {
+                if ((this.auraxDevices[i].host || this.auraxDevices[i].ip) == this.selectedAuraXHost) stillSelected = true;
+            }
+            if (!stillSelected) this.selectedAuraXHost = this.auraxDevices[0].host || this.auraxDevices[0].ip;
+            this.setAuraXStatus('Found ' + this.auraxDevices.length + ' AuraX device' + (this.auraxDevices.length == 1 ? '.' : 's.'), 'success');
+        } else {
+            this.selectedAuraXHost = null;
+            this.setAuraXStatus('No AuraX devices found. Make sure the PC and device are on the same network.', 'error');
+        }
+        this.renderAuraXDevices();
+    }, this)).catch($.proxy(function (e) {
+        this.auraxDevices = [];
+        this.selectedAuraXHost = null;
+        this.renderAuraXDevices();
+        this.setAuraXStatus(e && e.message ? e.message : 'AuraX scan failed.', 'error');
+    }, this)).finally(function () {
+        $('[action=aurax_scan]').prop('disabled', false);
+    });
+}
+
+IgnisProperties.prototype.uploadSelectedAuraX = function ()
+{
+    var api = window.ignisElectron || window.electronApi || {};
+    if (!api.uploadAuraXProgram) {
+        this.setAuraXStatus('AuraX upload is not available in this Ignis Studio build.', 'error');
+        return;
+    }
+
+    var device = this.getSelectedAuraXDevice();
+    if (!device) {
+        this.setAuraXStatus('Select an AuraX device first.', 'error');
+        return;
+    }
+
+    var projectLeds = parseInt(this.ignis.project.leds);
+    var deviceLeds = parseInt(device.numLeds);
+    if (deviceLeds > 0 && projectLeds != deviceLeds) {
+        this.setAuraXStatus('Program has ' + projectLeds + ' LEDs, but this device is set to ' + deviceLeds + '.', 'error');
+        return;
+    }
+
+    app_loading(true);
+    $('[action=aurax_upload]').prop('disabled', true);
+    this.setAuraXStatus('Building AuraX program...', 'busy');
+
+    this.ignis.project.buildAuraXExport($.proxy(function (err, result) {
+        if (err) {
+            app_loading(false);
+            $('[action=aurax_upload]').prop('disabled', false);
+            this.setAuraXStatus(err.message || 'AuraX export failed.', 'error');
+            return;
+        }
+
+        var bytes = result.length || result.byteLength || 0;
+        if (device.fsFree && bytes > device.fsFree) {
+            app_loading(false);
+            $('[action=aurax_upload]').prop('disabled', false);
+            this.setAuraXStatus('Program is ' + this.formatAuraXBytes(bytes) + ', but device has only ' + this.formatAuraXBytes(device.fsFree) + ' free.', 'error');
+            return;
+        }
+
+        var filename = this.ignis.project.getAuraXUploadFilename();
+        this.setAuraXStatus('Uploading ' + filename + ' (' + this.formatAuraXBytes(bytes) + ')...', 'busy');
+
+        api.uploadAuraXProgram(device.host || device.ip, filename, result).then($.proxy(function (res) {
+            if (res && res.ok) {
+                this.setAuraXStatus(res.body || 'OK: uploaded ' + filename, 'success');
+                device.fsFree = Math.max(0, (device.fsFree || 0) - bytes);
+                this.renderAuraXDevices();
+                this.refreshAuraXDevice(device.host || device.ip);
+            } else {
+                this.setAuraXStatus((res && res.body) || 'AuraX upload failed.', 'error');
+            }
+        }, this)).catch($.proxy(function (e) {
+            this.setAuraXStatus(e && e.message ? e.message : 'AuraX upload failed.', 'error');
+        }, this)).finally(function () {
+            app_loading(false);
+            $('[action=aurax_upload]').prop('disabled', false);
+        });
+    }, this));
 }
 
 IgnisProperties.prototype.fileMoveUp = function (force_fn)
@@ -591,14 +919,8 @@ IgnisProperties.prototype.projectUpdated = function ()
 {
     var project = this.ignis.project;
     $('#project-name').val(project.name);
-    if (project.selected_device.length == 0 || $('#leds-count option[value=' + project.selected_device + ']').length == 0) {
-        // project is using unknown device
-        this.ignis.userconf.set('custom_leds', project.leds);
-        project.enable_accelerometer = true;
-        project.selected_device = project.leds + '_C';
-        this.updateDevices();
-    }
-    $('#leds-count').val(project.selected_device);
+    $('#timeline-name-input').val(project.timelines[project.currentTimeline] ? (project.timelines[project.currentTimeline].name || project.getTimelineDefaultName(project.currentTimeline)) : '');
+    $('#leds-count-input').val(project.leds);
     $('#project-post').val(project.post);
     this.calcMaxFreq();
 
@@ -796,6 +1118,8 @@ IgnisProperties.prototype.editorSet = function (i)
     const project = this.ignis.project;
 
     if (!project.timeline[i]) return;
+    var isEffect = project.timeline[i].type == 'effect';
+    project.timeline[i].accelerometer = false;
 
     $('[editor=start]').val(project.timeline[i].start);
     $('[editor=duration]').val(project.timeline[i].duration);
@@ -806,11 +1130,22 @@ IgnisProperties.prototype.editorSet = function (i)
     project.timeline[i].frequency = this.clampLineFrequency(project.timeline[i].frequency);
     $('[editor=frequency]').val(project.timeline[i].frequency);
     $('[editor=picture_frequency]').val(project.timeline[i].picture_frequency);
-    $('[editor=accelerometer]').prop('checked', project.timeline[i].accelerometer);
     $('[editor=mirror]').prop('checked', project.timeline[i].mirror);
     $('[editor=rotate]').prop('checked', project.timeline[i].rotate);
     $('[editor=reverse]').prop('checked', project.timeline[i].reverse);
     $('[editor=mgap]').val(project.timeline[i].mgap);
+    $('#properties-image-box .properties-title').text(isEffect ? 'Effect' : 'Image');
+    $('.image-edit-field').toggle(!isEffect);
+    $('#effect-properties-field').toggle(isEffect);
+    $('#fit-image-count').closest('.field').toggle(!isEffect);
+    $('[editor=gap]').closest('.field').toggle(!isEffect);
+    $('#freq-field').toggle(!isEffect);
+    $('#mirror-checkbox').closest('.field').show();
+    if (isEffect) {
+        this.renderEffectProperties(project.timeline[i]);
+    } else {
+        $('#effect-properties-field').empty();
+    }
     if (this.editor_hue_index !== i) {
         this.resetHuePreview();
         this.editor_hue_index = i;
@@ -819,23 +1154,474 @@ IgnisProperties.prototype.editorSet = function (i)
     this.updateEditor('duration');
     this.updateEditor('end');
 
-    if (project.timeline[i].accelerometer) {
-        $('#picture-freq-field').show();
-        $('#freq-field').hide();
-    } else {
-        $('#picture-freq-field').hide();
-        $('#freq-field').show();
-    }
+    $('#picture-freq-field').hide();
+    $('#freq-field').toggle(!isEffect);
 
     if (project.timeline[i].mirror) {
         $('#mgap-slider').show();
         $('#mgap-rotate').show();
-        $('#mgap-reverse').show();
     } else {
         $('#mgap-slider').hide();
         $('#mgap-rotate').hide();
-        $('#mgap-reverse').hide();
     }
+    $('#mgap-reverse').toggle(isEffect || project.timeline[i].mirror);
+}
+
+IgnisProperties.prototype.renderEffectProperties = function (node)
+{
+    var box = $('#effect-properties-field');
+    box.empty();
+    if (!node || node.type != 'effect') return;
+    box.attr('data-effect-uid', node.uid);
+    box.show();
+
+    var self = this;
+    var uid = node.uid;
+    var library = this.ignis.library;
+    var effect = library.getEffectById(node.effectId);
+    var slots = library.getEffectColorSlots(effect.id);
+    node.effectSpeed = library.clampEffectNumber(node.effectSpeed, 10, 1000);
+    node.effectIntensity = library.clampEffectNumber(node.effectIntensity, 0, 255);
+    node.effectSize = library.clampEffectNumber(node.effectSize, 1, effect.sizeMax || 40);
+    node.effectColors = (node.effectColors && node.effectColors.length ? node.effectColors : effect.colors || ['#ff6000', '#00b4ff', '#ffffff']).slice(0);
+
+    box.append($('<label class="effect-property-name"></label>').html('<i class="fas fa-magic"></i> ' + effect.name));
+
+    if (effect.speed) box.append(this.createEffectPropertyRange(effect.speed, 'effectSpeed', node.effectSpeed, 10, 1000, uid));
+    if (effect.intensity) box.append(this.createEffectPropertyRange(effect.intensity, 'effectIntensity', node.effectIntensity, 0, 255, uid));
+    if (effect.size) box.append(this.createEffectPropertyRange(effect.size, 'effectSize', node.effectSize, 1, effect.sizeMax || 40, uid));
+
+    if (slots > 0) {
+        var colors = $('<div class="effect-property-colors"></div>');
+        if (this.effectPropertyColorIndex >= slots) this.effectPropertyColorIndex = 0;
+        for (var c = 0; c < slots; c++) {
+            var color = library.normalizeEffectColor(node.effectColors[c] || '#000000');
+            var row = $('<label></label>');
+            row.append($('<span></span>').text('Color ' + (c + 1)));
+            row.append($('<button type="button" class="effect-color-current"></button>')
+                .attr('data-effect-color-current', c)
+                .attr('data-effect-uid', uid)
+                .toggleClass('active', c == this.effectPropertyColorIndex)
+                .css('background-color', color)
+                .attr('title', color));
+            row.append($('<b></b>').text(color));
+            colors.append(row);
+        }
+        var wheel = $('<div class="effect-property-wheel-wrap"></div>');
+        wheel.append($('<canvas class="effect-property-color-wheel" width="180" height="180"></canvas>').attr('data-effect-uid', uid));
+        wheel.append($('<div class="effect-property-wheel-cursor"></div>'));
+        colors.append(wheel);
+        colors.append(this.createEffectPropertyValueRange(uid, node));
+        box.append(colors);
+        this.drawEffectPropertyColorWheel();
+        this.refreshEffectPropertyColorCursor(node);
+    }
+
+    var palettes = $('<div class="effect-property-palettes"></div>');
+    for (var p in library.effectPalettes) {
+        var pal = library.effectPalettes[p];
+        var btn = $('<button type="button"></button>');
+        btn.attr('data-effect-palette', pal.id);
+        btn.toggleClass('active', parseInt(node.effectPaletteId || 0) == pal.id);
+        btn.append($('<span></span>').text(pal.name));
+        btn.append($('<i></i>').css('background', 'linear-gradient(90deg,' + pal.colors.join(',') + ')'));
+        btn.on('click', (function (paletteId) {
+            return function (e) {
+                e.preventDefault();
+                e.stopPropagation();
+                self.setEffectNodePalette(uid, paletteId);
+            };
+        })(pal.id));
+        palettes.append(btn);
+    }
+    box.append(palettes);
+
+    var transforms = $('<div class="effect-transform-actions"></div>');
+    transforms.append(this.createEffectToggleButton('effectRotate180', 'fa-redo', 'Rotate'));
+    transforms.append(this.createEffectToggleButton('effectFlipH', 'fa-arrows-alt-h', 'Flip H'));
+    transforms.append(this.createEffectToggleButton('effectFlipV', 'fa-arrows-alt-v', 'Flip V'));
+    transforms.find('[data-effect-toggle]').each(function () {
+        var key = $(this).attr('data-effect-toggle');
+        $(this).toggleClass('active', !!node[key]);
+        $(this).on('click', function (e) {
+            e.preventDefault();
+            e.stopPropagation();
+            self.toggleEffectNodeProperty(uid, key);
+        });
+    });
+    box.append(transforms);
+}
+
+IgnisProperties.prototype.createEffectPropertyRange = function (label, key, value, min, max, uid)
+{
+    var row = $('<label class="effect-property-row"></label>');
+    row.append($('<span></span>').text(label));
+    var input = $('<input type="range">').attr({ min: min, max: max, step: 1, value: value, 'data-effect-range': key, 'data-effect-uid': uid });
+    row.append(input);
+    row.append($('<b></b>').text(value));
+    input.on('input', $.proxy(this.onEffectPropertyRangeInput, this));
+    input.on('change mouseup touchend', $.proxy(this.onEffectPropertyRangeCommit, this));
+    return row;
+}
+
+IgnisProperties.prototype.createEffectPropertyValueRange = function (uid, node)
+{
+    var color = (node.effectColors || [])[this.effectPropertyColorIndex] || '#ffffff';
+    var hsv = this.ignis.library.effectRgbToHsv(this.ignis.library.effectHexToRgb(color));
+    var value = Math.round(hsv.v * 100);
+    var row = $('<label class="effect-property-row effect-property-value-row"></label>');
+    row.append($('<span></span>').text('Density'));
+    var input = $('<input type="range">').attr({ min: 0, max: 100, step: 1, value: value, 'data-effect-value': 'density', 'data-effect-uid': uid });
+    row.append(input);
+    row.append($('<b></b>').text(value + '%'));
+    input.on('input', $.proxy(this.onEffectPropertyValueInput, this));
+    input.on('change mouseup touchend', $.proxy(this.onEffectPropertyValueCommit, this));
+    return row;
+}
+
+IgnisProperties.prototype.createEffectToggleButton = function (key, icon, label)
+{
+    return $('<button type="button"></button>')
+        .attr('data-effect-toggle', key)
+        .html('<i class="fas ' + icon + '"></i><span>' + label + '</span>');
+}
+
+IgnisProperties.prototype.onEffectPropertiesPointerDown = function (e)
+{
+    var target = e.target;
+    var current = $(target).closest('[data-effect-color-current]');
+    if (current.length) {
+        e.preventDefault();
+        e.stopPropagation();
+        if (e.stopImmediatePropagation) e.stopImmediatePropagation();
+        this.effectPropertyColorIndex = parseInt(current.attr('data-effect-color-current')) || 0;
+        var node = this.getEffectNodeByUid(current.attr('data-effect-uid'));
+        if (node) {
+            $('#effect-properties-field [data-effect-color-current]').removeClass('active');
+            current.addClass('active');
+            this.refreshEffectPropertyColorCursor(node);
+        }
+        return false;
+    }
+
+    var range = $(target).closest('#effect-properties-field [data-effect-range], #effect-properties-field [data-effect-value]');
+    if (range.length) {
+        return true;
+    }
+
+    var wheel = $(target).closest('#effect-properties-field canvas.effect-property-color-wheel');
+    if (wheel.length) {
+        e.preventDefault();
+        e.stopPropagation();
+        if (e.stopImmediatePropagation) e.stopImmediatePropagation();
+        this.beginEffectPropertyColorWheel(e, wheel.attr('data-effect-uid'));
+        return false;
+    }
+
+    var palette = $(target).closest('#effect-properties-field [data-effect-palette]');
+    if (palette.length) {
+        e.preventDefault();
+        e.stopPropagation();
+        if (e.stopImmediatePropagation) e.stopImmediatePropagation();
+        this.setEffectNodePalette($('#effect-properties-field').attr('data-effect-uid'), palette.attr('data-effect-palette'));
+        return false;
+    }
+
+    var toggle = $(target).closest('#effect-properties-field [data-effect-toggle]');
+    if (toggle.length) {
+        e.preventDefault();
+        e.stopPropagation();
+        if (e.stopImmediatePropagation) e.stopImmediatePropagation();
+        this.toggleEffectNodeProperty($('#effect-properties-field').attr('data-effect-uid'), toggle.attr('data-effect-toggle'));
+        return false;
+    }
+}
+
+IgnisProperties.prototype.drawEffectPropertyColorWheel = function ()
+{
+    var canvas = $('#effect-properties-field canvas.effect-property-color-wheel')[0];
+    if (!canvas || canvas._ignisColorWheelDrawn) return;
+    var ctx = canvas.getContext('2d');
+    var width = canvas.width;
+    var height = canvas.height;
+    var cx = width / 2;
+    var cy = height / 2;
+    var radius = Math.min(cx, cy) - 1;
+    var image = ctx.createImageData(width, height);
+
+    for (var y = 0; y < height; y++) {
+        for (var x = 0; x < width; x++) {
+            var dx = x - cx;
+            var dy = y - cy;
+            var dist = Math.sqrt(dx * dx + dy * dy);
+            var idx = (y * width + x) * 4;
+            if (dist > radius) {
+                image.data[idx + 3] = 0;
+                continue;
+            }
+            var hue = (Math.atan2(dy, dx) * 180 / Math.PI + 360) % 360;
+            var sat = Math.min(1, dist / radius);
+            var rgb = this.ignis.library.effectHexToRgb(this.ignis.library.effectHsvToHex({ h: hue, s: sat, v: 1 }));
+            image.data[idx] = rgb.r;
+            image.data[idx + 1] = rgb.g;
+            image.data[idx + 2] = rgb.b;
+            image.data[idx + 3] = 255;
+        }
+    }
+    ctx.putImageData(image, 0, 0);
+    canvas._ignisColorWheelDrawn = true;
+}
+
+IgnisProperties.prototype.getEffectPropertyWheelPoint = function (e, rect)
+{
+    return {
+        x: e.clientX - rect.left,
+        y: e.clientY - rect.top
+    };
+}
+
+IgnisProperties.prototype.beginEffectPropertyColorWheel = function (e, uid)
+{
+    var move = $.proxy(function (ev) {
+        this.moveEffectPropertyColorWheel(ev, uid);
+    }, this);
+    var up = $.proxy(function (ev) {
+        document.removeEventListener('mousemove', move, true);
+        document.removeEventListener('mouseup', up, true);
+        this.moveEffectPropertyColorWheel(ev, uid, true);
+    }, this);
+    document.addEventListener('mousemove', move, true);
+    document.addEventListener('mouseup', up, true);
+    this.moveEffectPropertyColorWheel(e, uid);
+}
+
+IgnisProperties.prototype.moveEffectPropertyColorWheel = function (e, uid, final)
+{
+    if (e && e.preventDefault) e.preventDefault();
+    if (e && e.stopPropagation) e.stopPropagation();
+    if (e && e.stopImmediatePropagation) e.stopImmediatePropagation();
+    var canvas = $('#effect-properties-field canvas.effect-property-color-wheel')[0];
+    var node = this.getEffectNodeByUid(uid);
+    if (!canvas || !node) return;
+    var rect = canvas.getBoundingClientRect();
+    var point = this.getEffectPropertyWheelPoint(e, rect);
+    var cx = rect.width / 2;
+    var cy = rect.height / 2;
+    var dx = point.x - cx;
+    var dy = point.y - cy;
+    var radius = Math.max(1, Math.min(cx, cy));
+    var sat = Math.min(1, Math.sqrt(dx * dx + dy * dy) / radius);
+    var hue = (Math.atan2(dy, dx) * 180 / Math.PI + 360) % 360;
+    var colors = (node.effectColors || []).slice(0);
+    var current = colors[this.effectPropertyColorIndex] || '#ffffff';
+    var hsv = this.ignis.library.effectRgbToHsv(this.ignis.library.effectHexToRgb(current));
+    hsv.h = hue;
+    hsv.s = sat;
+    var color = this.ignis.library.effectHsvToHex(hsv);
+    this.setEffectNodeColor(uid, this.effectPropertyColorIndex, color, final ? 'rerender' : 'light');
+    this.refreshEffectPropertyColorCursor(this.getEffectNodeByUid(uid));
+}
+
+IgnisProperties.prototype.refreshEffectPropertyColorCursor = function (node)
+{
+    if (!node) return;
+    var color = (node.effectColors || [])[this.effectPropertyColorIndex] || '#ffffff';
+    var hsv = this.ignis.library.effectRgbToHsv(this.ignis.library.effectHexToRgb(color));
+    var wheel = $('#effect-properties-field canvas.effect-property-color-wheel');
+    var cursor = $('#effect-properties-field .effect-property-wheel-cursor');
+    if (!wheel.length || !cursor.length) return;
+    var rect = wheel[0].getBoundingClientRect();
+    var radius = Math.min(rect.width, rect.height) / 2;
+    var x = rect.width / 2 + Math.cos(hsv.h * Math.PI / 180) * hsv.s * radius;
+    var y = rect.height / 2 + Math.sin(hsv.h * Math.PI / 180) * hsv.s * radius;
+    cursor.css({ left: x + 'px', top: y + 'px', background: color });
+    $('#effect-properties-field [data-effect-value]').val(Math.round(hsv.v * 100));
+    $('#effect-properties-field [data-effect-value]').siblings('b').text(Math.round(hsv.v * 100) + '%');
+}
+
+IgnisProperties.prototype.getSelectedEffectNode = function ()
+{
+    var uid = parseInt($('#effect-properties-field').attr('data-effect-uid'));
+    if (!isNaN(uid)) {
+        for (var i = 0; i < this.ignis.project.timeline.length; i++) {
+            var n = this.ignis.project.timeline[i];
+            if (n && n.uid == uid && n.type == 'effect') return n;
+        }
+    }
+
+    var idx = this.getActiveTimelineIndex();
+    if (idx === null || idx === undefined) return null;
+    var node = this.ignis.project.timeline[idx];
+    return (node && node.type == 'effect') ? node : null;
+}
+
+IgnisProperties.prototype.getEffectNodeByUid = function (uid)
+{
+    uid = parseInt(uid);
+    if (isNaN(uid)) return null;
+    for (var i = 0; i < this.ignis.project.timeline.length; i++) {
+        var node = this.ignis.project.timeline[i];
+        if (node && node.uid == uid && node.type == 'effect') return node;
+    }
+    return null;
+}
+
+IgnisProperties.prototype.updateSelectedEffectNode = function (patch, mode)
+{
+    var node = this.getSelectedEffectNode();
+    if (!node) return;
+    this.updateEffectNode(node, patch, mode);
+}
+
+IgnisProperties.prototype.updateEffectNodeByUid = function (uid, patch, mode)
+{
+    var node = this.getEffectNodeByUid(uid);
+    if (!node) return;
+    this.updateEffectNode(node, patch, mode);
+}
+
+IgnisProperties.prototype.updateEffectNode = function (node, patch, mode)
+{
+    $.extend(node, patch || {});
+    if (mode == 'light') {
+        this.refreshSelectedEffectPreview(node, false);
+        return;
+    }
+    this.refreshSelectedEffectPreview(node, true);
+    if (mode == 'rerender') this.renderEffectProperties(node);
+}
+
+IgnisProperties.prototype.setEffectNodeColor = function (uid, index, raw, mode)
+{
+    var node = this.getEffectNodeByUid(uid);
+    if (!node) return;
+    var colors = (node.effectColors || []).slice(0);
+    raw = String(raw || '').trim();
+    if (raw.charAt(0) != '#') raw = '#' + raw;
+    if (!raw.match(/^#[0-9a-fA-F]{6}$/)) raw = colors[index] || '#ffffff';
+    colors[index] = this.ignis.library.normalizeEffectColor(raw);
+    this.updateEffectNode(node, { effectColors: colors, effectPaletteId: 0 }, mode || 'full');
+    $('#effect-properties-field [data-effect-palette]').removeClass('active');
+    $('#effect-properties-field [data-effect-palette="0"]').addClass('active');
+    $('#effect-properties-field [data-effect-color-current="' + index + '"]').css('background-color', colors[index]).attr('title', colors[index]);
+    $('#effect-properties-field [data-effect-color-current="' + index + '"]').siblings('b').text(colors[index]);
+}
+
+IgnisProperties.prototype.setEffectNodeColorValue = function (uid, value, mode)
+{
+    var node = this.getEffectNodeByUid(uid);
+    if (!node) return;
+    value = parseInt(value);
+    if (isNaN(value)) value = 100;
+    if (value < 0) value = 0;
+    if (value > 100) value = 100;
+    var colors = (node.effectColors || []).slice(0);
+    var current = colors[this.effectPropertyColorIndex] || '#ffffff';
+    var hsv = this.ignis.library.effectRgbToHsv(this.ignis.library.effectHexToRgb(current));
+    hsv.v = value / 100;
+    this.setEffectNodeColor(uid, this.effectPropertyColorIndex, this.ignis.library.effectHsvToHex(hsv), mode || 'light');
+    this.refreshEffectPropertyColorCursor(this.getEffectNodeByUid(uid));
+}
+
+IgnisProperties.prototype.setEffectNodePalette = function (uid, paletteId)
+{
+    var palette = this.ignis.library.getEffectPalette(paletteId);
+    this.updateEffectNodeByUid(uid, { effectPaletteId: palette.id, effectColors: palette.colors.slice(0) }, 'rerender');
+}
+
+IgnisProperties.prototype.toggleEffectNodeProperty = function (uid, key)
+{
+    var node = this.getEffectNodeByUid(uid);
+    if (!node) return;
+    var patch = {};
+    patch[key] = !node[key];
+    this.updateEffectNode(node, patch, 'rerender');
+}
+
+IgnisProperties.prototype.refreshSelectedEffectPreview = function (node, full)
+{
+    var timeline = this.ignis.timeline;
+    if (!timeline || !node) return;
+    var el = $('#tlimg-' + node.uid);
+    if (el.length && timeline.updateNodeElementImage) {
+        el.attr('display-image', '');
+        timeline.updateNodeElementImage(el, node, this.ignis.project.leds);
+    }
+    if (full && this.ignis.library) {
+        this.ignis.library.refreshEffectTimeline();
+    } else if (this.ignis.preview) {
+        this.ignis.preview.nodeChanged();
+    }
+}
+
+IgnisProperties.prototype.onEffectPropertyRangeInput = function (e)
+{
+    if (e && e.stopPropagation) e.stopPropagation();
+    var key = $(e.currentTarget).attr('data-effect-range');
+    var uid = $(e.currentTarget).attr('data-effect-uid') || $('#effect-properties-field').attr('data-effect-uid');
+    var val = parseInt($(e.currentTarget).val());
+    if (isNaN(val)) val = 0;
+    $(e.currentTarget).siblings('b').text(val);
+    var patch = {};
+    patch[key] = val;
+    this.updateEffectNodeByUid(uid, patch, 'light');
+}
+
+IgnisProperties.prototype.onEffectPropertyRangeCommit = function (e)
+{
+    this.onEffectPropertyRangeInput(e);
+    var uid = $(e.currentTarget).attr('data-effect-uid') || $('#effect-properties-field').attr('data-effect-uid');
+    var node = this.getEffectNodeByUid(uid);
+    if (node) this.refreshSelectedEffectPreview(node, true);
+}
+
+IgnisProperties.prototype.onEffectPropertyValueInput = function (e)
+{
+    if (e && e.stopPropagation) e.stopPropagation();
+    var value = parseInt($(e.currentTarget).val());
+    if (isNaN(value)) value = 100;
+    $(e.currentTarget).siblings('b').text(value + '%');
+    this.setEffectNodeColorValue($(e.currentTarget).attr('data-effect-uid'), value, 'light');
+}
+
+IgnisProperties.prototype.onEffectPropertyValueCommit = function (e)
+{
+    this.onEffectPropertyValueInput(e);
+    var node = this.getEffectNodeByUid($(e.currentTarget).attr('data-effect-uid'));
+    if (node) this.refreshSelectedEffectPreview(node, true);
+}
+
+IgnisProperties.prototype.onEffectPropertyColor = function (e)
+{
+    var node = this.getSelectedEffectNode();
+    if (!node) return;
+    var idx = parseInt($(e.currentTarget).attr('data-effect-color'));
+    var colors = (node.effectColors || []).slice(0);
+    var raw = String($(e.currentTarget).val() || '').trim();
+    if (raw.charAt(0) != '#') raw = '#' + raw;
+    if (!raw.match(/^#[0-9a-fA-F]{6}$/)) raw = colors[idx] || '#ffffff';
+    colors[idx] = this.ignis.library.normalizeEffectColor(raw);
+    $(e.currentTarget).val(colors[idx]);
+    $(e.currentTarget).siblings('i').css('background-color', colors[idx]);
+    this.updateSelectedEffectNode({ effectColors: colors, effectPaletteId: 0 }, e.type == 'input' ? 'light' : 'full');
+    $('#effect-properties-field [data-effect-palette]').removeClass('active');
+    $('#effect-properties-field [data-effect-palette="0"]').addClass('active');
+}
+
+IgnisProperties.prototype.onEffectPropertyPalette = function (e)
+{
+    var palette = this.ignis.library.getEffectPalette($(e.currentTarget).attr('data-effect-palette'));
+    this.updateSelectedEffectNode({ effectPaletteId: palette.id, effectColors: palette.colors.slice(0) }, 'rerender');
+}
+
+IgnisProperties.prototype.onEffectPropertyToggle = function (e)
+{
+    var node = this.getSelectedEffectNode();
+    if (!node) return;
+    var key = $(e.currentTarget).attr('data-effect-toggle');
+    var patch = {};
+    patch[key] = !node[key];
+    this.updateSelectedEffectNode(patch, 'rerender');
 }
 
 IgnisProperties.prototype.exportTechnologyChanged = function ()
@@ -915,8 +1701,8 @@ IgnisProperties.prototype.editorUpdateTimeline = function ()
     project.timeline[i].frequency = this.clampLineFrequency($('[editor=frequency]').val());
     this.rememberLineFrequency(project.timeline[i].frequency);
     project.timeline[i].dim = parseInt($('[editor=dim]').val());
-    project.timeline[i].picture_frequency = parseInt($('[editor=picture_frequency]').val());
-    project.timeline[i].accelerometer = $('[editor=accelerometer]').is(':checked');
+    project.timeline[i].picture_frequency = 1;
+    project.timeline[i].accelerometer = false;
     project.timeline[i].mirror = $('[editor=mirror]').is(':checked');
     project.timeline[i].rotate = $('[editor=rotate]').is(':checked');
     project.timeline[i].reverse = $('[editor=reverse]').is(':checked');

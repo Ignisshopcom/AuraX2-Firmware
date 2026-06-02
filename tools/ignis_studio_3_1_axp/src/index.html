@@ -2,7 +2,7 @@
     <head>
         <title>Ignis Studio</title>
         <meta charset="utf-8">
-        <meta http-equiv="Content-Security-Policy" content="default-src 'self' file: data: blob:; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' file: data: blob:; media-src 'self' file: data: blob:; connect-src 'self' file: http://petr.holly.darkyork.com https://ignisshop.com;">
+        <meta http-equiv="Content-Security-Policy" content="default-src 'self' file: data: blob:; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' file: data: blob:; media-src 'self' file: data: blob:; connect-src 'self' file: http://* https://ignisshop.com;">
         <!--<link rel="stylesheet" href="css/fa/regular.min.css">
         <link rel="stylesheet" href="css/fa/fontawesome.min.css">-->
         <link rel="stylesheet/less" href="css/app.less">
@@ -61,9 +61,6 @@
                         <a action="library_import"><i class="fas fa-file-import"></i> Import</a>
                     </li>
                     <li>
-                        <a action="library_delete_all_images"><i class="fas fa-trash-alt"></i> Delete pictures</a>
-                    </li>
-                    <li>
                         <a action="export_as"><i class="fas fa-file-export"></i> Export As</a>
                     </li>
                     <li>
@@ -75,6 +72,9 @@
                     <li>
                         <a action="project_redo"><i class="fas fa-redo-alt"></i> Redo</a>
                     </li>
+                    <li>
+                        <a action="library_delete_all_images"><i class="fas fa-trash-alt"></i> Delete pictures</a>
+                    </li>
                     <li id="debug-menu" style="display: none;">
                         <a><i class="fas fa-bug"></i> Debug Menu</a>
                         <ul class="submenu">
@@ -83,7 +83,7 @@
                             <li><a action="gen_thumbs">Rebuild Thumbnails</a></li>
                             <li><a action="chrome_gpu">GPU</a></li>
                             <li><a action="library_clean">Clean library</a></li>
-                        </ui>
+                        </ul>
                     </li>
                 </ul>
             </div>
@@ -106,11 +106,13 @@
                 <div id="library-menu">
                     <ul>
                         <li action="library_images" class="active"><i class="fas fa-image"></i> Pictures</li>
+                        <li action="library_effects"><i class="fas fa-magic"></i> Effects</li>
                         <li action="library_audio"><i class="fas fa-music"></i> Audio</li>
                     </ul>
                 </div>
                 <div id="library-content">
                     <div id="library-images"></div>
+                    <div id="library-effects" style="display: none;"></div>
                     <div id="library-audio" style="display: none;">
                         <table class="file-table">
                             <thead>
@@ -135,7 +137,7 @@
 <div mode="1" class="preview-mode-button" id="preview-mode-line"><i class="fas fa-long-arrow-alt-up"></i></div>
 <div mode="2" class="preview-mode-button" id="preview-mode-linex"><i class="fas fa-long-arrow-alt-right"></i></div>
 <div mode="3" class="preview-mode-button" id="preview-mode-center"><i class="fas fa-sync-alt"></i></div>
-<div mode="4" class="preview-mode-button" id="preview-mode-circle-line"><i class="far fa-circle"></i></div> <!-- Nový náhled -->
+<div mode="4" class="preview-mode-button" id="preview-mode-circle-line"><i class="far fa-circle"></i></div> <!-- New preview -->
 <div mode="5" class="preview-mode-button" id="preview-mode-cyr-wheel"><i class="fas fa-compact-disc"></i></div>
 </div>
                 <div id="preview-layout-buttons">
@@ -164,17 +166,13 @@
                         <div class="properties-title">Timeline</div>
 
                         <div class="field">
-                            <label>Number of led pixels</label>
-                            <button id="leds-count-custom">Custom</button>
-                            <select id="leds-count"></select>
+                            <label>Timeline name</label>
+                            <input type="text" id="timeline-name-input" style="text-align: left;">
                         </div>
-                        <div class="field">
-                            <label>Post-behavior</label>
-                            <select id="project-post">
-                                <option value="0">Exit to standby</option>
-                                <option value="1">Repeat program</option>
-                                <option value="2">Keep last frame</option>
-                            </select>
+
+                        <div class="field timeline-led-field">
+                            <label>Number of led pixels</label>
+                            <input type="number" id="leds-count-input" min="1" max="9999" step="1" value="170" />
                         </div>
                     </div>
                     <div class="properties-box" id="properties-image-box">
@@ -217,17 +215,9 @@
                                     <label><i class="fas fa-arrows-alt-h"></i> Space between pictures</label>
                                     <input type="slider" min="0" max="1000" step="1" editor="gap" value="0">
                                 </div>
-                                <div class="field checkbox">
-                                    <input id="accelerometer-checkbox" type="checkbox" editor="accelerometer" value="0">
-                                    <label for="accelerometer-checkbox"><i class="fas fa-microchip"></i> Accelerometer</label>
-                                </div>
                                 <div class="field" id="freq-field">
                                     <label><i class="fas fa-tachometer-alt"></i> Line frequency</label>
                                     <input id="freq_input" type="slider" min="0" max="2500" step="1" editor="frequency" value="0">
-                                </div>
-                                <div class="field" id="picture-freq-field" style="display: none;">
-                                    <label><i class="fas fa-tachometer-alt"></i> Picture frequency</label>
-                                    <input type="slider" min="1" max="100" step="1" editor="picture_frequency" value="0">
                                 </div>
                                 <div class="field">
                                     <label><i class="fas fa-lightbulb"></i> Brightness</label>
@@ -257,17 +247,18 @@
                                         </div>
                                     </div>
                                 </div>
+                                <div class="field effect-edit-field" id="effect-properties-field" style="display: none;"></div>
                                 <div class="field checkbox">
                                     <input id="mirror-checkbox" type="checkbox" editor="mirror" value="0">
-                                    <label for="mirror-checkbox"><i class="fas fa-layer-group"></i> Mirror</label>
+                                    <label for="mirror-checkbox"><i class="fas fa-layer-group"></i> Center mirror</label>
                                 </div>
                                 <div class="field checkbox" id="mgap-rotate">
                                     <input id="rotate-checkbox" type="checkbox" editor="rotate" value="0">
-                                    <label for="rotate-checkbox"><i class="fas fa-sync-alt"></i> Rotate</label>
+                                    <label for="rotate-checkbox"><i class="fas fa-sync-alt"></i> Rotate mirrored half</label>
                                 </div>
                                 <div class="field checkbox" id="mgap-reverse">
                                     <input id="reverse-checkbox" type="checkbox" editor="reverse" value="0">
-                                    <label for="reverse-checkbox"><i class="fas fa-exchange-alt"></i> Reverse</label>
+                                    <label for="reverse-checkbox"><i class="fas fa-exchange-alt"></i> Reverse rendering</label>
                                 </div>
                                 <div class="field" id="mgap-slider">
                                     <label><i class="fas fa-arrows-alt-h"></i> Center gap</label>
@@ -281,6 +272,11 @@
                     <div class="properties-box full-height">
                         <div class="properties-title">Export</div>
 
+                        <div class="field" id="export-mode-field">
+                            <button id="export-mode-photon" action="export_mode_photon" class="active"><i class="fas fa-sd-card"></i> Export Photon</button>
+                            <button id="export-mode-aurax" action="export_mode_aurax"><i class="fas fa-wifi"></i> Export AuraX</button>
+                        </div>
+
                         <div class="field" id="export-filename-field">
                             <label id="ets-label">Timeline</label>
                             <label>Filename <div id="filename-editable-btn"><i class="fas fa-edit"></i><i class="fas fa-times"></i></div></label>
@@ -288,26 +284,53 @@
                             <input type="text" id="export-filename" value="" readonly style="width: 80%;" />
                         </div>
 
-                        <div class="field" id="export-target-field">
-                            <label>Target</label>
-                            <select id="drives"></select>
-                        </div>
-                        <div class="field" id="export-technology-field">
-                            <label>Technology</label>
-                            <select id="export-technology">
-                                <option value="photon">Photon / legacy .pix</option>
-                                <option value="aurax">AuraX compressed .axp</option>
+                        <div class="field" id="export-post-field">
+                            <label>Post-behavior</label>
+                            <select id="project-post">
+                                <option value="0">Exit to standby</option>
+                                <option value="1">Repeat program</option>
+                                <option value="2">Keep last frame</option>
                             </select>
                         </div>
-                        <div class="field" id="export-list-field">
-                            <label>Files on device</label>
-                            <div class="file-explorer" id="file-explorer"></div>
+
+                        <div id="export-photon-panel">
+                            <div class="field" id="export-target-field">
+                                <label>Target</label>
+                                <select id="drives"></select>
+                            </div>
+                            <div class="field" id="export-technology-field" style="display: none;">
+                                <label>Technology</label>
+                                <select id="export-technology">
+                                    <option value="photon">Photon / legacy .pix</option>
+                                    <option value="aurax">AuraX compressed .axp</option>
+                                </select>
+                            </div>
+                            <div class="field" id="export-list-field">
+                                <label>Files on device</label>
+                                <div class="file-explorer" id="file-explorer"></div>
+                            </div>
+                            <div class="field" id="export-buttons-field">
+                                <button action="export"><i class="fas fa-download"></i> Export to device</button>
+                                <button action="file_move_up"><i class="fas fa-angle-up"></i></button>
+                                <button action="file_move_dn"><i class="fas fa-angle-down"></i></button>
+                                <button action="file_delete"><i class="fas fa-trash-alt"></i></button>
+                            </div>
                         </div>
-                        <div class="field" id="export-buttons-field">
-                            <button action="export"><i class="fas fa-download"></i> Export to device</button>
-                            <button action="file_move_up"><i class="fas fa-angle-up"></i></button>
-                            <button action="file_move_dn"><i class="fas fa-angle-down"></i></button>
-                            <button action="file_delete"><i class="fas fa-trash-alt"></i></button>
+
+                        <div id="export-aurax-panel" style="display: none;">
+                            <div class="field" id="aurax-devices-field">
+                                <label>AuraX devices on this network</label>
+                                <div id="aurax-device-list">
+                                    <div class="aurax-empty">Press Scan to find AuraX devices.</div>
+                                </div>
+                            </div>
+                            <div class="field" id="aurax-status-field">
+                                <div id="aurax-export-status">Ready.</div>
+                            </div>
+                            <div class="field" id="aurax-buttons-field">
+                                <button action="aurax_scan"><i class="fas fa-search"></i> Scan</button>
+                                <button action="aurax_upload"><i class="fas fa-upload"></i> Upload selected timeline</button>
+                            </div>
                         </div>
                     </div>
                 </div>

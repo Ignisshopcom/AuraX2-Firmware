@@ -1,0 +1,200 @@
+#top {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 29px;
+    background-color: #3C3C3C;
+    /*overflow: hidden;*/
+
+    #top-icon {
+        position: absolute;
+        left: 0px;
+        top: 0;
+        width: 29px;
+        height: 29px;
+        background-image: url(../img/icon.png);
+        background-repeat: no-repeat;
+        background-position: center center;
+        background-size: 80%;
+    }
+    #mac-btns {
+        display: none;
+    }
+    #top-menu {
+        position: absolute;
+        left: 32px;
+        top: 0;
+        ul.menu {
+            list-style: none;
+            margin: 0;
+            padding: 0;
+            li {
+                position: relative;
+                float: left;
+                height: 29px;
+                line-height: 29px;
+                a {
+                    display: block;
+                    padding: 0 10px 0 10px;
+                    cursor: default;
+                    i {
+                        margin-right: 5px;
+                    }
+                    &:hover {
+                        background-color: #505050;
+                    }
+                }
+                ul.submenu {
+                    display: none;
+                    position: absolute;
+                    z-index: 999;
+                    background-color: #3C3C3C;
+                    white-space: nowrap;
+                    li {
+                        display: block;
+                        width: 100%;
+                        a {
+                            display: block;
+                            width: 100%;
+                        }
+                        &[hr] {
+                            height: 1px;
+                            background-color: #222;
+                        }
+                    }
+                }
+                &:hover {
+                    ul.submenu {
+                        display: block;
+                    }
+                }
+            }
+        }
+    }
+
+    #window-title {
+        position: absolute;
+        top: 0;
+        right: 138px;
+        height: 29px;
+        line-height: 29px;
+        text-align: center;
+        font-weight: bold;
+        span {
+            color: #f26722;
+        }
+    }
+
+    #clipbard-status {
+        position: absolute;
+        top: 0;
+        right: 72px;
+        height: 29px;
+        min-width: 100px;
+        i {
+            font-size: 20px;
+            height: 29px;
+            line-height: 29px;
+            width: 29px;
+            text-align: center;
+            display: inline-block;
+            background: #f26722;
+            color: #fff;
+        }
+        .count {
+            position: absolute;
+            width: 29px;
+            text-align: center;
+            color: #000;
+            top: 12px;
+            font-size: 10px;
+            font-weight: bold;
+        }
+    }
+
+    #window-btns {
+        position: absolute;
+        right: 0;
+        top: 0;
+        height: 29px;
+        font-size: 0;
+        .btn {
+            font-size: 13px;
+            height: 29px;
+            line-height: 29px;
+            text-align: center;
+            width: 46px;
+            color: #FFFFFF;
+            background-color: #3C3C3C;
+            outline: none;
+            border: none;
+            &:hover {
+                background-color: #505050;
+            }
+            &.btn-close:hover {
+                background-color: #D71526;
+            }
+        }
+    }
+}
+
+#content-panel {
+    position: absolute;
+    top: 29px;
+    left: 0;
+    right: 0;
+    bottom: 245px;
+    background-color: #111111;
+
+    #library-panel {
+        position: absolute;
+        top: 0;
+        left: 0;
+        bottom: 0;
+        width: 30%;
+    }
+    #preview-panel {
+        position: absolute;
+        top: 0;
+        left: 30%;
+        bottom: 0;
+        right: 30%;
+    }
+    #properties-panel {
+        position: absolute;
+        top: 0;
+        left: 70%;
+        bottom: 0;
+        right: 0;
+    }
+}
+
+#timeline-left-panel {
+    position: absolute;
+    left: 0;
+    bottom: 0;
+    width: 40px;
+    height: 245px;
+    overflow: hidden;
+}
+
+#timeline-panel {
+    position: absolute;
+    left: 40px;
+    bottom: 0;
+    right: 0;
+    height: 245px;
+    overflow: hidden;
+}
+
+#vertical-splitter {
+    position: absolute;
+    z-index: 99999;
+    left: 0;
+    right: 0;
+    bottom: 245px;
+    height: 6px;
+    cursor: ns-resize;
+    /*background-color: rgba(255, 0, 0, 0.5);*/
+}

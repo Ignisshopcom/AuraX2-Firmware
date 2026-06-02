@@ -1,0 +1,357 @@
+html, body {
+    height: 100%;
+    overflow: hidden;
+}
+
+
+body {
+    background-color: #222;
+    font-family: Arial, Helvetica, sans-serif;
+    font-size: 13px;
+    color: #eee;
+}
+
+.noselect {
+    -webkit-touch-callout: none; /* iOS Safari */
+      -webkit-user-select: none; /* Safari */
+       -khtml-user-select: none; /* Konqueror HTML */
+         -moz-user-select: none; /* Firefox */
+          -ms-user-select: none; /* Internet Explorer/Edge */
+              user-select: none; /* Non-prefixed version, currently
+                                    supported by Chrome and Opera */
+}
+
+* {
+    margin: 0;
+    padding: 0;
+    .noselect();
+    box-sizing: border-box;
+}
+
+ul {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    li {
+        margin: 0;
+        padding: 0;
+    }
+}
+
+@keyframes loading_rotate {
+    0% {transform: rotate(0deg);}
+    100% {transform: rotate(360deg);}
+}
+
+@keyframes stripe_color {
+    0% {
+        border-right: 2px #f26722 solid;
+        background-color: #AC5022;
+        border-left: 2px #673922 solid;
+    }
+    25% {
+        border-right: 2px #D0F222 solid;
+        background-color: #9BB227 solid;
+        border-left: 2px #67722D solid;
+    }
+    50% {
+        border-right: 2px #E500D1 solid;
+        background-color: #A9119C solid;
+        border-left: 2px #6E2267 solid;
+    }
+    75% {
+        border-right: 2px #00BAE5 solid;
+        background-color: #118DA9 solid;
+        border-left: 2px #22606E solid;
+    }
+    100% {
+        border-right: 2px #f26722 solid;
+        background-color: #AC5022;
+        border-left: 2px #673922 solid;
+    }
+}
+
+@keyframes stripe_color_rev {
+    0% {
+        border-right: 2px #673922 solid;
+        background-color: #AC5022;
+        border-left: 2px #f26722 solid;
+    }
+    25% {
+        border-right: 2px #67722D solid;
+        background-color: #9BB227 solid;
+        border-left: 2px #D0F222 solid;
+    }
+    50% {
+        border-right: 2px #6E2267 solid;
+        background-color: #A9119C solid;
+        border-left: 2px #E500D1 solid;
+    }
+    75% {
+        border-right: 2px #22606E solid;
+        background-color: #118DA9 solid;
+        border-left: 2px #00BAE5 solid;
+    }
+    100% {
+        border-right: 2px #673922 solid;
+        background-color: #AC5022;
+        border-left: 2px #f26722 solid;
+    }
+}
+
+#startup-overlay {
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    right: 0;
+    background-color: #3C3C3C;
+    background-image: url(../img/logo_big.png);
+    background-repeat: no-repeat;
+    background-position: center center;
+    z-index: 9999999;
+    .stripe {
+        background-image: url(../img/loading.png);
+        position: absolute;
+        left: 50%;
+        top: 50%;
+        width: 50%;
+        margin-left: -25%;
+        margin-top: 100px;
+        height: 32px;
+        border-left: 5px @accent solid;
+        border-right: 5px @accent solid;
+        display: none;
+    }
+    .wheel {
+        position: absolute;
+        left: 50%;
+        margin-left: -40px;
+        bottom: 32px;
+        width: 80px;
+        height: 80px;
+        border-radius: 50%;
+        //background-color: #333;
+        border: 8px #333 solid;
+        border-top: 8px #f26722 solid;
+
+        animation: loading_rotate 1s linear infinite;
+    }
+}
+
+#drop-overlay {
+    position: absolute;
+    z-index: 99999;
+    background-color: rgba(0,0,0,0.5);
+    left: 0;
+    top: 0;
+    right: 0;
+    bottom: 0;
+
+    .middle {
+        position: absolute;
+        left: 50%;
+        top: 50%;
+        height: 200px;
+        width: 400px;
+        margin-left: -200px;
+        margin-top: -100px;
+        line-height: 200px;
+        white-space: nowrap;
+        font-size: 20px;
+        font-weight: bold;
+        text-align: center;
+    }
+}
+
+#loading-overlay {
+    position: absolute;
+    top: 29px;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    background-color: rgba(0,0,0,0.5);
+    z-index: 9999;
+    .stripe {
+        background-image: url(../img/loading.png);
+        position: absolute;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        height: 4px;
+    }
+}
+
+#audio-loading-overlay {
+    position: absolute;
+    height: 110px;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    background-color: rgba(0,0,0,0.5);
+    z-index: 9999;
+    .stripe {
+        background-image: url(../img/loading.png);
+        position: absolute;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        height: 4px;
+    }
+}
+
+.file-explorer {
+    .file-record {
+        height: 24px;
+        line-height: 24px;
+        background-color: #111;
+        position: relative;
+
+        &:nth-child(even) {
+            background-color: #000;
+        }
+
+        &:hover {
+            background-color: #333;
+        }
+
+        &.selected {
+            background-color: #f26722;
+        }
+
+        .file-name {
+            position: absolute;
+            left: 0;
+            top: 0;
+            height: 24px;
+            line-height: 24px;
+            right: 48px;
+            padding: 0 8px 0 8px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        .file-buttons {
+            position: absolute;
+            width: 48px;
+            right: 0;
+            top: 0;
+            height: 24px;
+            .file-btn {
+                position: absolute;
+                height: 24px;
+                width: 24px;
+                text-align: center;
+                line-height: 24px;
+                
+                &:hover {
+                    background-color: #eee;
+                    color: #111;
+                }
+
+                &.file-up {
+                    right: 24px;
+                    font-size: 16px;
+                    line-height: 28px;
+                }
+                &.file-dn {
+                    right: 0px;
+                    font-size: 16px;
+                    line-height: 23px;
+                }
+                &.file-rm {
+                    display: none;
+                }
+                /*&.file-rm {
+                    right: 0px;
+                    color: #a00;
+                    font-size: 16px;
+                    &:hover {
+                        background-color: #a00;
+                        color: #fff;
+                    }
+                }*/
+            }
+        }
+
+        &:first-child {
+            .file-buttons {
+                .file-btn {
+                    &.file-up {
+                        display: none;
+                    }
+                }
+            }
+        }
+        &:last-child {
+            .file-buttons {
+                .file-btn {
+                    &.file-dn {
+                        display: none;
+                    }
+                }
+            }
+        }
+    }
+}
+
+#prompt-overlay {
+    position: absolute;
+    left: 0;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    background-color: rgba(0,0,0,0.5);
+    z-index: 999999;
+    #prompt-window {
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        margin-left: -175px;
+        width: 350px;
+        margin-top: -100px;
+        height: 130px;
+        background-color: #333;
+        #prompt-text {
+            position: absolute;
+            top: 15px;
+            left: 15px;
+            right: 15px;
+            text-align: center;
+            height: 24px;
+            line-height: 24px;
+        }
+        #prompt-input-box {
+            position: absolute;
+            bottom: 54px;
+            left: 15px;
+            right: 15px;
+            #prompt-input {
+                text-align: center;
+                color: #fff;
+                background-color: #111;
+                border: none;
+                outline: none;
+                width: 100%;
+                height: 32px;
+                line-height: 32px;
+            }
+        }
+        #prompt-accept, #prompt-cancel {
+            position: absolute;
+            height: 24px;
+            width: 100px;
+            bottom: 15px;
+            border: none;
+            color: #fff;
+        }
+        #prompt-accept {
+            left: 15px;
+            background-color: #589b0c;
+        }
+        #prompt-cancel {
+            right: 15px;
+            background-color: #9b160c;
+        }
+    }
+}

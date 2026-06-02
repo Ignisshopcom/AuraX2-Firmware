@@ -1,0 +1,68 @@
+body.crapple {
+    #top {
+        #top-icon {
+            left: auto;
+            right: 0px;
+        }
+        #window-btns {
+            display: none;
+        }
+        #top-menu {
+            left: 85px;
+        }
+        #window-title {
+            right: 29px;
+        }
+        #mac-btns {
+            display: block;
+            position: absolute;
+            left: 0;
+            top: 0;
+            width: 100px;
+            height: 29px;
+            .btn {
+                width: 15px;
+                height: 15px;
+                border-radius: 12px;
+                position: absolute;
+                top: 7px;
+                outline: none;
+
+                i {
+                    font-size: 80%;
+                }
+
+                &.exit {
+                    background-color: #f36e60;
+                    border: 1px #f36e60 - 50% solid;
+                    color: #f36e60 - 75%;
+                    left: 7px;
+                    &:hover {
+                        background-color: #f36e60 + 50%;
+                        border: 1px #f36e60 solid;
+                    }
+                }
+                &.maximize {
+                    background-color: #5ACA57;
+                    border: 1px #5ACA57 - 50% solid;
+                    color: #5ACA57 - 75%;
+                    left: 63px;
+                    &:hover {
+                        background-color: #5ACA57 + 50%;
+                        border: 1px #5ACA57 solid;
+                    }
+                }
+                &.minimize {
+                    background-color: #FAC04E;
+                    border: 1px #FAC04E - 50% solid;
+                    color: #FAC04E - 75%;
+                    left: 35px;
+                    &:hover {
+                        background-color: #FAC04E + 50%;
+                        border: 1px #FAC04E solid;
+                    }
+                }
+            }
+        }
+    }
+}

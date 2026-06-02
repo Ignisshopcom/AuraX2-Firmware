@@ -1,0 +1,50 @@
+name: Ignis Studio macOS
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "tools/ignis_studio_3_1_axp/**"
+      - ".github/workflows/ignis-studio-mac.yml"
+
+jobs:
+  build-dmg:
+    runs-on: macos-latest
+    defaults:
+      run:
+        working-directory: tools/ignis_studio_3_1_axp
+
+    env:
+      CSC_IDENTITY_AUTO_DISCOVERY: "false"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: tools/ignis_studio_3_1_axp/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Check Electron main process
+        run: npm run check:main
+
+      - name: Build macOS DMG
+        run: npm run installer:mac
+
+      - name: Upload DMG
+        uses: actions/upload-artifact@v4
+        with:
+          name: Ignis-Studio-macOS-DMG
+          path: tools/ignis_studio_3_1_axp/out/installer/*.dmg
+          if-no-files-found: error
+
+      - name: Upload macOS app archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: Ignis-Studio-macOS-unpacked
+          path: tools/ignis_studio_3_1_axp/out/installer/mac*/Ignis Studio.app
+          if-no-files-found: ignore

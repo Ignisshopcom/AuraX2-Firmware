@@ -1,13 +1,5 @@
 function processor_process(project, images, callback)
 {
-    console.log('PROJECT:');
-    console.log(project);
-    console.log('IMAGES:');
-    console.log(images);
-
-    console.log('HASH:');
-    console.log(project.timeline[0].hash);
-
     const program_file_version = 2;         // Version should be incremented with every change of the output file
 
     // Command and parameter definitions ------------------------------------------------------------------------------------------------------------
@@ -103,6 +95,7 @@ function processor_process(project, images, callback)
     var last_command = false;
     var prog_array = [];
     for(var i=0; i<project.timeline.length; i++){
+        var imageKey = getNodeImageKey(project.timeline[i]);
         var cmd = [];
         var j=1;
 
@@ -120,13 +113,13 @@ function processor_process(project, images, callback)
         cmd[j++] = project.timeline[i].dim;
         // Offset
         cmd[j++] = (command_parameter_label << 24) | (offset_type << 16) | 1;
-        cmd[j++] = images_offset_array[project.timeline[i].hash];
+        cmd[j++] = images_offset_array[imageKey];
         // Width of the image
         cmd[j++] = (command_parameter_label << 24) | (width_type << 16) | 1;
-        cmd[j++] = images[project.timeline[i].hash].height;         // Transformed image height = width and vice versa
+        cmd[j++] = images[imageKey].height;         // Transformed image height = width and vice versa
         // Height of the image
         cmd[j++] = (command_parameter_label << 24) | (height_type << 16) | 1;
-        cmd[j++] = images[project.timeline[i].hash].width;
+        cmd[j++] = images[imageKey].width;
         // Frequency
         cmd[j++] = (command_parameter_label << 24) | (frequency_type << 16) | 1;
         cmd[j++] = Math.min(project.timeline[i].frequency, config.project.max_line_frequency || 2500);
@@ -136,9 +129,9 @@ function processor_process(project, images, callback)
         // Picture frequency
         cmd[j++] = (command_parameter_label << 24) | (picture_frequency_type << 16) | 1;
         cmd[j++] = project.timeline[i].picture_frequency;
-        // Accelerometer enable
+        // Legacy motion flag, disabled in Ignis Studio.
         cmd[j++] = (command_parameter_label << 24) | (accelerometer_type << 16) | 1;
-        cmd[j++] = (project.timeline[i].accelerometer) ? 1 : 0;
+        cmd[j++] = 0;
         // Last command info (if this command is the last one in the program, the value is 1)
         cmd[j++] = (command_parameter_label << 24) | (last_command_type << 16) | 1;
         cmd[j++] = (i == project.timeline.length-1) ? 1 : 0;
@@ -174,6 +167,10 @@ function processor_process(project, images, callback)
     callback(buf);
 }
 
+function getNodeImageKey(node) {
+    return node && node.type == 'effect' ? (node.hash + ':' + node.uid) : node.hash;
+}
+
 
 function insert_dw2buf(dw, buf, pos){
     buf.writeUInt32LE((new Uint32Array([dw]))[0], pos*4);
@@ -193,7 +190,12 @@ function reorder_image_pixels_RGBA_to_DimBGR(image){
     var image_array32 = new Uint32Array(image.width*image.height);
     for(var i=0; i<image.data.length; i=i+4){       // Iterate through all pixels in image
         //image_array32[i/4] = ((0xE0 << 24) & 0xFF000000) | (image.data[i+1] << 16) | (image.data[i+2] << 8) | image.data[i];
-        image_array32[i/4] = (image.data[i] << 24) | (image.data[i+1] << 16) | (image.data[i+2] << 8) | (0xE0 & 0xFF);
+        var alpha = image.data[i+3];
+        var r = alpha == 0 ? 0 : image.data[i];
+        var g = alpha == 0 ? 0 : image.data[i+1];
+        var b = alpha == 0 ? 0 : image.data[i+2];
+        var dim = (r || g || b) ? 0xFF : 0xE0;
+        image_array32[i/4] = (r << 24) | (g << 16) | (b << 8) | dim;
     }
     return image_array32;
 }
@@ -212,9 +214,10 @@ function rotate_image_data_array_right_90(width, height, img_array32){
 function processor_process_aurax(project, images, callback)
 {
     const axp_magic = 0x31505841; // "AXP1"
-    const axp_version = 1;
+    const axp_version = 2;
     const axp_codec_raw = 0;
     const axp_codec_columns = 1;
+    const axp_codec_lzss = 2;
     const axp_column_raw = 0;
     const axp_column_rle = 1;
     const axp_column_repeat = 2;
@@ -226,16 +229,19 @@ function processor_process_aurax(project, images, callback)
 
     for (var i = 0; i < project.timeline.length; i++) {
         var node = project.timeline[i];
-        var block = blocksByHash[node.hash];
+        var blockKey = node.type == 'effect' ? (node.hash + ':' + node.uid) : node.hash;
+        var imageKey = node.type == 'effect' ? blockKey : node.hash;
+        var block = blocksByHash[blockKey];
 
         if (!block) {
-            var image = images[node.hash];
+            var image = images[imageKey];
             var reordered = reorder_image_pixels_RGBA_to_DimBGR(image);
             var rotated = rotate_image_data_array_right_90(image.width, image.height, reordered);
             var raw = uint32ArrayToBuffer(rotated);
             var encoded = encodeAuraXColumns(raw, image.height, image.width);
             var rawCodec = { codec: axp_codec_raw, data: raw };
-            var chosen = encoded.data.length < raw.length ? encoded : rawCodec;
+            var lzss = { codec: axp_codec_lzss, data: encodeLzss(raw) };
+            var chosen = chooseSmallest([rawCodec, encoded, lzss]);
 
             block = {
                 hash: node.hash,
@@ -246,7 +252,7 @@ function processor_process_aurax(project, images, callback)
                 data: chosen.data,
             };
             decodedOffset += raw.length;
-            blocksByHash[node.hash] = block;
+            blocksByHash[blockKey] = block;
             blocks.push(block);
         }
 
@@ -339,6 +345,107 @@ function processor_process_aurax(project, images, callback)
         }
 
         return { codec: axp_codec_columns, data: Buffer.concat(parts) };
+    }
+
+    function chooseSmallest(options) {
+        var best = options[0];
+        for (var i = 1; i < options.length; i++) {
+            if (options[i].data.length < best.data.length) best = options[i];
+        }
+        return best;
+    }
+
+    function encodeLzss(input) {
+        const minLength = 3;
+        const maxLength = 18;
+        const maxOffset = 4096;
+        const maxCandidates = 16;
+
+        var dict = Object.create(null);
+        var chunks = [];
+        var tokens = [];
+        var flags = 0;
+        var bit = 0;
+        var pos = 0;
+
+        function keyAt(index) {
+            if (index + 2 >= input.length) return null;
+            return input[index] | (input[index + 1] << 8) | (input[index + 2] << 16);
+        }
+
+        function remember(index) {
+            var key = keyAt(index);
+            if (key === null) return;
+            var bucket = dict[key];
+            if (!bucket) bucket = dict[key] = [];
+            bucket.push(index);
+            if (bucket.length > maxCandidates) bucket.shift();
+        }
+
+        function flushGroup() {
+            if (bit == 0) return;
+            chunks.push(Buffer.from([flags]));
+            for (var i = 0; i < tokens.length; i++) chunks.push(tokens[i]);
+            tokens = [];
+            flags = 0;
+            bit = 0;
+        }
+
+        function emitLiteral(value) {
+            tokens.push(Buffer.from([value]));
+            bit++;
+            if (bit == 8) flushGroup();
+        }
+
+        function emitMatch(offset, length) {
+            flags |= (1 << bit);
+            var token = ((length - minLength) << 12) | (offset - 1);
+            var out = Buffer.allocUnsafe(2);
+            out.writeUInt16LE(token, 0);
+            tokens.push(out);
+            bit++;
+            if (bit == 8) flushGroup();
+        }
+
+        while (pos < input.length) {
+            var bestOffset = 0;
+            var bestLength = 0;
+            var key = keyAt(pos);
+            var bucket = key === null ? null : dict[key];
+
+            if (bucket) {
+                for (var i = bucket.length - 1; i >= 0; i--) {
+                    var candidate = bucket[i];
+                    var offset = pos - candidate;
+                    if (offset <= 0 || offset > maxOffset) continue;
+
+                    var length = 0;
+                    while (length < maxLength &&
+                           pos + length < input.length &&
+                           input[candidate + length] == input[pos + length]) {
+                        length++;
+                    }
+                    if (length >= minLength && length > bestLength) {
+                        bestLength = length;
+                        bestOffset = offset;
+                        if (length == maxLength) break;
+                    }
+                }
+            }
+
+            if (bestLength >= minLength) {
+                emitMatch(bestOffset, bestLength);
+                for (var n = 0; n < bestLength; n++) remember(pos + n);
+                pos += bestLength;
+            } else {
+                emitLiteral(input[pos]);
+                remember(pos);
+                pos++;
+            }
+        }
+
+        flushGroup();
+        return Buffer.concat(chunks);
     }
 
     function encodeRleColumn(column, width) {
