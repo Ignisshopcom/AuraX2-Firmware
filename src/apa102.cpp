@@ -156,13 +156,16 @@ void APA102::setCurrentLimit(uint16_t mALimit, uint16_t mAPerLed) {
 
 static uint16_t mappedLedIndex(uint16_t outIndex, uint16_t count, bool reverse, bool mirror) {
     if (count < 2) return 0;
+    uint16_t mapped = outIndex;
     if (!mirror) return reverse ? (uint16_t)(count - 1 - outIndex) : outIndex;
     if (count & 1) {
         uint16_t center = count / 2;
-        return (outIndex <= center) ? (uint16_t)(center - outIndex) : (uint16_t)(outIndex - center);
+        mapped = (outIndex <= center) ? (uint16_t)(center - outIndex) : (uint16_t)(outIndex - center);
+    } else {
+        uint16_t right = count / 2;
+        mapped = (outIndex < right) ? (uint16_t)(right - 1 - outIndex) : (uint16_t)(outIndex - right);
     }
-    uint16_t right = count / 2;
-    return (outIndex < right) ? (uint16_t)(right - 1 - outIndex) : (uint16_t)(outIndex - right);
+    return reverse ? (uint16_t)(count - 1 - mapped) : mapped;
 }
 
 void APA102::showColumnDirect(const uint8_t* pixData, uint16_t count) {

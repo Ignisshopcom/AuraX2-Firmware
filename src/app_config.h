@@ -18,6 +18,7 @@ struct AppConfig {
     char     password[64];
     char     groupSsid[32];
     char     groupPassword[64];
+    char     apCode[8];      // fallback AP suffix, e.g. AuraX_AB12
     char     pixFile[64];
     char     hostname[32];  // device name / mDNS hostname without .local
     uint8_t  brightness;    // 0 = use per-pixel brightness, 1-100 = global override %
@@ -51,10 +52,22 @@ struct AppConfig {
     uint16_t syncMask;
     // Boot state: 0 = autoplay program, 1 = restore last effect
     uint8_t  autoStart;
+    // Last imported WLED /cfg.json + /wsec.json fingerprint. Used to merge WLED changes after OTA.
+    uint32_t wledImportHash;
 };
 
 // Load from /config.json; falls back to compile-time defaults if missing.
 AppConfig loadConfig();
+
+// Compile-time defaults only. Useful when LittleFS is not mounted yet.
+AppConfig defaultConfig();
+
+// True only after loadConfig() used WLED /cfg.json because AuraX /config.json was missing.
+bool configImportedFromWled();
+
+// True when loadConfig() normalized/imported settings that should be persisted later.
+// Saving is intentionally delayed until WiFi/AP is already alive.
+bool configNeedsSave();
 
 // Save to /config.json; requires LittleFS to be mounted.
 bool saveConfig(const AppConfig& cfg);

@@ -388,8 +388,9 @@ IgnisPreview.prototype.setTextureIdx = function (i, path, node, ratio) {
     }
 
     var texture = new THREE.TextureLoader().load(path);
-    texture.minFilter = THREE.NearestFilter;
-    texture.magFilter = THREE.NearestFilter;
+    var smoothEffect = node && (node.type == 'effect' || node.effectId !== undefined || node.isEffect);
+    texture.minFilter = smoothEffect ? THREE.LinearFilter : THREE.NearestFilter;
+    texture.magFilter = smoothEffect ? THREE.LinearFilter : THREE.NearestFilter;
     texture.wrapS = THREE.RepeatWrapping; //ClampToEdgeWrapping;//RepeatWrapping;
     texture.wrapT = THREE.ClampToEdgeWrapping;
 
@@ -709,8 +710,9 @@ IgnisPreview.prototype.setMultiTexture = function (hash, current_node) {
     tex_file = tex_file + '?t=' + t;
 
     var texture = new THREE.TextureLoader().load(tex_file);
-    texture.minFilter = THREE.NearestFilter;
-    texture.magFilter = THREE.NearestFilter;
+    var smoothEffect = current_node && (current_node.type == 'effect' || current_node.effectId !== undefined || current_node.isEffect);
+    texture.minFilter = smoothEffect ? THREE.LinearFilter : THREE.NearestFilter;
+    texture.magFilter = smoothEffect ? THREE.LinearFilter : THREE.NearestFilter;
     texture.wrapS = THREE.RepeatWrapping;
     texture.wrapT = THREE.ClampToEdgeWrapping;
 

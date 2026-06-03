@@ -1,9 +1,16 @@
 #include "app_config.h"
 #include "config.h"
+#include <Arduino.h>
 #include <LittleFS.h>
 #include <ArduinoJson.h>
+#include <esp_system.h>
 #include <string.h>
 #include <ctype.h>
+
+static bool gImportedFromWled = false;
+static bool gConfigNeedsSave  = false;
+
+static constexpr uint16_t AURAX_CONFIG_VERSION = 2;
 
 void normalizeHostname(char* hostname, size_t len) {
     if (!hostname || len == 0) return;
@@ -38,6 +45,80 @@ static uint16_t voltsToMv(float volts, uint16_t fallback) {
     return (uint16_t)(volts * 1000.0f + 0.5f);
 }
 
+static bool validApCode(const char* code) {
+    if (!code || strlen(code) != 4) return false;
+    for (int i = 0; i < 4; i++) {
+        unsigned char ch = (unsigned char)code[i];
+        if (!isxdigit(ch)) return false;
+    }
+    return true;
+}
+
+static bool ensureApCode(AppConfig& cfg) {
+    if (validApCode(cfg.apCode)) {
+        for (int i = 0; i < 4; i++) cfg.apCode[i] = (char)toupper((unsigned char)cfg.apCode[i]);
+        cfg.apCode[4] = '\0';
+        return false;
+    }
+
+    uint32_t rnd = esp_random() ^ (uint32_t)ESP.getEfuseMac();
+    if ((rnd & 0xFFFFu) == 0) rnd ^= 0xA5A5u;
+    snprintf(cfg.apCode, sizeof(cfg.apCode), "%04X", (unsigned)(rnd & 0xFFFFu));
+    return true;
+}
+
+static bool isPlaceholderSsid(const char* ssid) {
+    if (!ssid || !strlen(ssid)) return false;
+    return strcasecmp(ssid, "Your_Network") == 0 ||
+           strcasecmp(ssid, "Your_WiFi") == 0 ||
+           strcasecmp(ssid, "YOUR_WIFI_SSID") == 0 ||
+           strcasecmp(ssid, "ssid") == 0;
+}
+
+static bool isPlaceholderPassword(const char* password) {
+    if (!password || !strlen(password)) return false;
+    return strcasecmp(password, "Your_Password") == 0 ||
+           strcasecmp(password, "YOUR_WIFI_PASSWORD") == 0 ||
+           strcasecmp(password, "password") == 0;
+}
+
+static bool sanitizeWifiCredentials(AppConfig& cfg) {
+    bool changed = false;
+    if (isPlaceholderSsid(cfg.ssid)) {
+        cfg.ssid[0] = '\0';
+        cfg.password[0] = '\0';
+        changed = true;
+    } else if (isPlaceholderPassword(cfg.password)) {
+        cfg.password[0] = '\0';
+        changed = true;
+    }
+    return changed;
+}
+
+static uint32_t fnv1aFileHash(const char* path) {
+    if (!LittleFS.exists(path)) return 0;
+    File f = LittleFS.open(path, "r");
+    if (!f) return 0;
+    uint32_t hash = 2166136261u;
+    while (f.available()) {
+        uint8_t buf[128];
+        size_t n = f.read(buf, sizeof(buf));
+        for (size_t i = 0; i < n; i++) {
+            hash ^= buf[i];
+            hash *= 16777619u;
+        }
+    }
+    f.close();
+    return hash ? hash : 1;
+}
+
+static uint32_t wledConfigHash() {
+    uint32_t cfgHash = fnv1aFileHash("/cfg.json");
+    if (!cfgHash) return 0;
+    uint32_t secHash = fnv1aFileHash("/wsec.json");
+    return cfgHash ^ (secHash << 7) ^ (secHash >> 25) ^ 0xA20F2D1Du;
+}
+
 static void applyBatteryUsermod(JsonObject battery, AppConfig& cfg) {
     if (battery.isNull()) return;
 
@@ -54,7 +135,8 @@ static void applyBatteryUsermod(JsonObject battery, AppConfig& cfg) {
 
     JsonObject autoOff = battery["auto-off"];
     if (!autoOff.isNull()) {
-        cfg.batAutoOff = (autoOff["enabled"] | (bool)cfg.batAutoOff) ? 1 : 0;
+        // Keep WLED voltage calibration, but do not enable AuraX auto-off during migration.
+        // On clean/test boards the ADC pin may float and would otherwise blackout immediately.
         int threshold = autoOff["threshold"] | cfg.batAutoOffThreshold;
         if (threshold < 0) threshold = 0;
         if (threshold > 100) threshold = 100;
@@ -77,6 +159,7 @@ static void normalizeEffectConfig(AppConfig& cfg) {
     if (cfg.paletteSize < 1 || cfg.paletteSize > 4) cfg.paletteSize = 1;
     cfg.effectReverse = cfg.effectReverse ? 1 : 0;
     cfg.renderMirror = cfg.renderMirror ? 1 : 0;
+    cfg.wifiMode = WIFI_MODE_NORMAL;
     cfg.syncEnabled = cfg.syncEnabled ? 1 : 0;
     cfg.syncMask &= 0x03FF;
     if (cfg.batMaxMv <= cfg.batMinMv) {
@@ -96,20 +179,35 @@ static uint8_t firstSyncChannel(uint16_t mask) {
 
 bool saveConfig(const AppConfig& cfg);  // forward decl — defined below
 
+static bool isWledDataClockType(int type) {
+    return type >= 48 && type <= 63;
+}
+
+static bool isWledDataOnlyType(int type) {
+    return type >= 16 && type <= 31;
+}
+
+static bool isWledUsableLedType(int type) {
+    return isWledDataOnlyType(type) || isWledDataClockType(type);
+}
+
 static void importFromWled(AppConfig& cfg) {
     if (!LittleFS.exists("/cfg.json")) return;
 
-    StaticJsonDocument<768> filter;
+    DynamicJsonDocument filter(1536);
     filter["nw"]["ins"][0]["ssid"]          = true;
     filter["nw"]["ins"][0]["psk"]           = true;
     filter["hw"]["led"]["total"]            = true;
     filter["hw"]["led"]["rev"]              = true;
-    filter["hw"]["led"]["ins"][0]["len"]    = true;
-    filter["hw"]["led"]["ins"][0]["type"]   = true;
-    filter["hw"]["led"]["ins"][0]["pin"][0] = true;
-    filter["hw"]["led"]["ins"][0]["pin"][1] = true;
-    filter["hw"]["led"]["ins"][0]["rev"]    = true;
-    filter["hw"]["led"]["ins"][0]["maxpwr"] = true;
+    for (int i = 0; i < 10; i++) {
+        filter["hw"]["led"]["ins"][i]["start"]  = true;
+        filter["hw"]["led"]["ins"][i]["len"]    = true;
+        filter["hw"]["led"]["ins"][i]["type"]   = true;
+        filter["hw"]["led"]["ins"][i]["pin"][0] = true;
+        filter["hw"]["led"]["ins"][i]["pin"][1] = true;
+        filter["hw"]["led"]["ins"][i]["rev"]    = true;
+        filter["hw"]["led"]["ins"][i]["maxpwr"] = true;
+    }
     filter["hw"]["led"]["maxpwr"]           = true;
     filter["id"]["name"]                    = true;
     filter["id"]["mdns"]                    = true;
@@ -123,7 +221,7 @@ static void importFromWled(AppConfig& cfg) {
     filter["um"]["Battery"]["auto-off"]["enabled"] = true;
     filter["um"]["Battery"]["auto-off"]["threshold"] = true;
 
-    StaticJsonDocument<2048> doc;
+    DynamicJsonDocument doc(4096);
     {
         File f = LittleFS.open("/cfg.json", "r");
         if (!f) return;
@@ -137,31 +235,63 @@ static void importFromWled(AppConfig& cfg) {
     const char* pskInCfg = doc["nw"]["ins"][0]["psk"] | "";
     if (strlen(pskInCfg)) strlcpy(cfg.password, pskInCfg, sizeof(cfg.password));
 
-    int wledType = doc["hw"]["led"]["ins"][0]["type"] | -1;
-    if (wledType >= 0) {
-        if (wledType == 51) {
-            cfg.ledType = LED_TYPE_APA102;
-        } else if (wledType >= 16 && wledType <= 39) {
-            cfg.ledType = LED_TYPE_WS281X;
+    JsonArrayConst buses = doc["hw"]["led"]["ins"].as<JsonArrayConst>();
+    JsonObjectConst selectedBus;
+    uint32_t summedLedCount = 0;
+    int selectedType = -1;
+    int selectedDataPin = -1;
+    int selectedClockPin = -1;
+    int selectedMaxPower = -1;
+    bool selectedReverse = false;
+
+    for (JsonObjectConst bus : buses) {
+        int type = bus["type"] | 22;  // WLED defaults missing bus type to WS281x RGB.
+        uint16_t len = bus["len"] | 0;
+        if (len > 0 && summedLedCount + len <= 2048) summedLedCount += len;
+
+        JsonArrayConst pins = bus["pin"].as<JsonArrayConst>();
+        int dataPin = pins[0] | -1;
+        if (selectedBus.isNull() && len > 0 && dataPin >= 0 && dataPin <= 48 && isWledUsableLedType(type)) {
+            selectedBus = bus;
+            selectedType = type;
+            selectedDataPin = dataPin;
+            selectedClockPin = pins[1] | -1;
+            selectedMaxPower = bus["maxpwr"] | -1;
+            selectedReverse = bus["rev"] | false;
         }
-        uint16_t count = doc["hw"]["led"]["ins"][0]["len"] | 0;
-        if (count == 0) count = doc["hw"]["led"]["total"] | cfg.numLeds;
-        cfg.numLeds = count;
-        cfg.dataPin = doc["hw"]["led"]["ins"][0]["pin"][0] | cfg.dataPin;
-        if (cfg.ledType == 1)
-            cfg.clkPin = doc["hw"]["led"]["ins"][0]["pin"][1] | cfg.clkPin;
-        cfg.effectReverse = (doc["hw"]["led"]["ins"][0]["rev"] | doc["hw"]["led"]["rev"] | false) ? 1 : 0;
     }
 
-    int maxpwr = doc["hw"]["led"]["ins"][0]["maxpwr"] | -1;
+    uint16_t wledTotal = doc["hw"]["led"]["total"] | 0;
+    uint16_t importedCount = 0;
+    if (!selectedBus.isNull()) importedCount = selectedBus["len"] | 0;
+    if (importedCount == 0 && summedLedCount > 0 && summedLedCount <= 2048) importedCount = (uint16_t)summedLedCount;
+    if (importedCount == 0) importedCount = wledTotal;
+    if (importedCount >= 1 && importedCount <= 2048) cfg.numLeds = importedCount;
+
+    if (!selectedBus.isNull()) {
+        cfg.ledType = isWledDataClockType(selectedType) ? LED_TYPE_APA102 : LED_TYPE_WS281X;
+        cfg.dataPin = (uint8_t)selectedDataPin;
+        if (cfg.ledType == LED_TYPE_APA102 && selectedClockPin >= 0 && selectedClockPin <= 48) {
+            cfg.clkPin = (uint8_t)selectedClockPin;
+        }
+        cfg.effectReverse = (selectedReverse || (doc["hw"]["led"]["rev"] | false)) ? 1 : 0;
+        LOG("[cfg] WLED LED bus: type=%d len=%u total=%u data=%d clk=%d -> AuraX ledType=%u numLeds=%u data=%u clk=%u\n",
+            selectedType, (unsigned)(selectedBus["len"] | 0), (unsigned)wledTotal,
+            selectedDataPin, selectedClockPin, cfg.ledType, cfg.numLeds, cfg.dataPin, cfg.clkPin);
+    } else if (importedCount >= 1) {
+        LOG("[cfg] WLED LED count imported without valid bus: total=%u summed=%u -> numLeds=%u\n",
+            (unsigned)wledTotal, (unsigned)summedLedCount, cfg.numLeds);
+    }
+
+    int maxpwr = selectedMaxPower;
     if (maxpwr < 0) maxpwr = doc["hw"]["led"]["maxpwr"] | -1;
     if (maxpwr >= 0) cfg.mALimit = (uint16_t)maxpwr;
 
     const char* mdns = doc["id"]["mdns"] | "";
     const char* name = doc["id"]["name"] | "";
-    if (strlen(mdns) && strcmp(mdns, "x") != 0)
+    if (strlen(mdns) && strcmp(mdns, "x") != 0 && strcasecmp(mdns, "wled") != 0)
         strlcpy(cfg.hostname, mdns, sizeof(cfg.hostname));
-    else if (strlen(name))
+    else if (strlen(name) && strcasecmp(name, "wled") != 0)
         strlcpy(cfg.hostname, name, sizeof(cfg.hostname));
 
     int wbri = doc["def"]["bri"] | -1;
@@ -206,10 +336,11 @@ static AppConfig defaults() {
     cfg.batMinMv            = 3000;
     cfg.batMaxMv            = 4200;
     cfg.batIntervalMs       = 30000;
-    cfg.batAutoOff          = 1;
+    cfg.batAutoOff          = 0;
     cfg.batAutoOffThreshold = 10;
     cfg.syncEnabled         = 0;
     cfg.syncMask            = 0;
+    cfg.wledImportHash      = 0;
     cfg.ledType = LED_TYPE;
     cfg.numLeds = NUM_LEDS;
     cfg.dataPin = (LED_TYPE == LED_TYPE_APA102) ? LED_DATA_PIN : WS_DATA_PIN;
@@ -220,24 +351,50 @@ static AppConfig defaults() {
     strncpy(cfg.groupSsid, GROUP_WIFI_SSID, sizeof(cfg.groupSsid) - 1);
     strncpy(cfg.groupPassword, GROUP_WIFI_PASSWORD, sizeof(cfg.groupPassword) - 1);
     strncpy(cfg.pixFile,  PIX_FILE,      sizeof(cfg.pixFile)  - 1);
+    ensureApCode(cfg);
+    return cfg;
+}
+
+AppConfig defaultConfig() {
+    AppConfig cfg = defaults();
+    if (strlen(cfg.hostname) == 0)
+        strlcpy(cfg.hostname, "aurax", sizeof(cfg.hostname));
+    normalizeEffectConfig(cfg);
     return cfg;
 }
 
 AppConfig loadConfig() {
+    gImportedFromWled = false;
+    gConfigNeedsSave  = false;
     AppConfig cfg = defaults();
     if (!LittleFS.exists(CFG_FILE)) {
+        uint32_t currentWledHash = wledConfigHash();
+        bool hasWledConfig = currentWledHash != 0;
         importFromWled(cfg);
+        cfg.wledImportHash = currentWledHash;
         if (strlen(cfg.hostname) == 0)
             strlcpy(cfg.hostname, "aurax", sizeof(cfg.hostname));
+        sanitizeWifiCredentials(cfg);
+        ensureApCode(cfg);
         normalizeEffectConfig(cfg);
-        saveConfig(cfg);
+        if (hasWledConfig) {
+            gImportedFromWled = true;
+            gConfigNeedsSave = true;
+            LOGLN("[cfg] WLED import kept in RAM; /config.json will be saved after WiFi starts");
+        } else {
+            gConfigNeedsSave = true;
+            LOGLN("[cfg] defaults kept in RAM; /config.json will be saved after WiFi starts");
+        }
         return cfg;
     }
     File f = LittleFS.open(CFG_FILE, "r");
     if (!f) return cfg;
 
-    StaticJsonDocument<1536> doc;
+    StaticJsonDocument<2048> doc;
+    bool shouldSave = false;
+    uint16_t savedConfigVersion = 0;
     if (deserializeJson(doc, f) == DeserializationError::Ok) {
+        savedConfigVersion = doc["auraxConfigVersion"] | 0;
         cfg.ledType = doc["ledType"] | cfg.ledType;
         cfg.numLeds = doc["numLeds"] | cfg.numLeds;
         cfg.dataPin = doc["dataPin"] | cfg.dataPin;
@@ -248,6 +405,7 @@ AppConfig loadConfig() {
         strlcpy(cfg.password, doc["password"] | cfg.password, sizeof(cfg.password));
         strlcpy(cfg.groupSsid, doc["groupSsid"] | cfg.groupSsid, sizeof(cfg.groupSsid));
         strlcpy(cfg.groupPassword, doc["groupPassword"] | cfg.groupPassword, sizeof(cfg.groupPassword));
+        strlcpy(cfg.apCode, doc["apCode"] | cfg.apCode, sizeof(cfg.apCode));
         strlcpy(cfg.pixFile,  doc["pixFile"]  | cfg.pixFile,  sizeof(cfg.pixFile));
         const char* host = doc["deviceName"] | "";
         if (!strlen(host)) host = doc["hostname"] | "";
@@ -273,6 +431,7 @@ AppConfig loadConfig() {
         cfg.batAutoOff          = doc["batAutoOff"]          | cfg.batAutoOff;
         cfg.batAutoOffThreshold = doc["batAutoOffThreshold"] | cfg.batAutoOffThreshold;
         cfg.syncEnabled         = doc["syncEnabled"]         | cfg.syncEnabled;
+        cfg.wledImportHash      = doc["wledImportHash"]      | cfg.wledImportHash;
         if (doc.containsKey("syncMask")) {
             cfg.syncMask = doc["syncMask"] | cfg.syncMask;
         } else {
@@ -288,18 +447,50 @@ AppConfig loadConfig() {
         }
     }
     f.close();
+    uint32_t currentWledHash = wledConfigHash();
+    if (currentWledHash && cfg.wledImportHash != currentWledHash) {
+        importFromWled(cfg);
+        cfg.wledImportHash = currentWledHash;
+        gImportedFromWled = true;
+        shouldSave = true;
+        LOGLN("[cfg] WLED config changed; merged /cfg.json into AuraX settings");
+    } else if (savedConfigVersion < AURAX_CONFIG_VERSION && LittleFS.exists("/cfg.json")) {
+        cfg.wledImportHash = currentWledHash;
+        shouldSave = true;
+        LOGLN("[cfg] older AuraX config marked as migrated");
+    }
     if (strlen(cfg.hostname) == 0)
         strlcpy(cfg.hostname, "aurax", sizeof(cfg.hostname));
+    if (strcasecmp(cfg.hostname, "wled") == 0) {
+        strlcpy(cfg.hostname, "aurax", sizeof(cfg.hostname));
+        if (cfg.batAutoOff) cfg.batAutoOff = 0;
+        shouldSave = true;
+    }
     if (strlen(cfg.groupSsid) == 0)
         strlcpy(cfg.groupSsid, GROUP_WIFI_SSID, sizeof(cfg.groupSsid));
     if (strlen(cfg.groupPassword) > 0 && strlen(cfg.groupPassword) < 8)
         strlcpy(cfg.groupPassword, GROUP_WIFI_PASSWORD, sizeof(cfg.groupPassword));
+    shouldSave = sanitizeWifiCredentials(cfg) || shouldSave;
+    shouldSave = ensureApCode(cfg) || shouldSave;
     normalizeEffectConfig(cfg);
+    if (shouldSave) {
+        gConfigNeedsSave = true;
+        LOGLN("[cfg] config normalized in RAM; /config.json will be saved after WiFi starts");
+    }
     return cfg;
 }
 
+bool configImportedFromWled() {
+    return gImportedFromWled;
+}
+
+bool configNeedsSave() {
+    return gConfigNeedsSave;
+}
+
 bool saveConfig(const AppConfig& cfg) {
-    StaticJsonDocument<1536> doc;
+    StaticJsonDocument<2048> doc;
+    doc["auraxConfigVersion"] = AURAX_CONFIG_VERSION;
     doc["ledType"]  = cfg.ledType;
     doc["numLeds"]  = cfg.numLeds;
     doc["dataPin"]  = cfg.dataPin;
@@ -309,6 +500,7 @@ bool saveConfig(const AppConfig& cfg) {
     doc["password"] = cfg.password;
     doc["groupSsid"] = cfg.groupSsid;
     doc["groupPassword"] = cfg.groupPassword;
+    doc["apCode"]   = cfg.apCode;
     doc["pixFile"]  = cfg.pixFile;
     doc["deviceName"] = cfg.hostname;
     doc["hostname"]   = cfg.hostname;
@@ -336,6 +528,7 @@ bool saveConfig(const AppConfig& cfg) {
     doc["syncMask"]            = cfg.syncMask;
     doc["syncChannel"]         = firstSyncChannel(cfg.syncMask);
     doc["autoStart"]           = cfg.autoStart;
+    doc["wledImportHash"]      = cfg.wledImportHash;
     JsonArray pR = doc.createNestedArray("paletteR");
     JsonArray pG = doc.createNestedArray("paletteG");
     JsonArray pB = doc.createNestedArray("paletteB");

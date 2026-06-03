@@ -283,6 +283,9 @@ export function AuraXApp() {
   const powerOn = status?.power_on ?? status?.playing ?? false
   const selectedProgram = programs?.files.find((file) => file.slot === selectedSlot)
   const colorSlotCount = colorSlotsForEffect(effect.effectId)
+  const activeColorValue = effect.colors[activeColor] ?? effect.colors[0] ?? DEFAULT_EFFECT.colors[0]
+  const activeHsv = colorToHsv(activeColorValue)
+  const brightnessValue = (config?.brightness ?? 100) > 0 ? (config?.brightness ?? 100) : 100
 
   return (
     <div class="app-shell">
@@ -363,9 +366,11 @@ export function AuraXApp() {
               <span>{PALETTES.find((p) => p.id === effect.paletteId)?.name ?? 'Custom'}</span>
             </div>
             <div class="color-layout">
-              {colorSlotCount > 0 && (
-                <ColorWheel color={effect.colors[activeColor] ?? effect.colors[0]} onChange={(color) => setColor(activeColor, color)} />
-              )}
+              <div class="color-left">
+                {colorSlotCount > 0 && (
+                  <ColorWheel color={activeColorValue} onChange={(color) => setColor(activeColor, color)} />
+                )}
+              </div>
               <div class="color-slots">
                 {effect.colors.slice(0, colorSlotCount).map((color, i) => (
                   <button
@@ -377,6 +382,22 @@ export function AuraXApp() {
                   </button>
                 ))}
               </div>
+              <div class="color-adjustments">
+                {colorSlotCount > 0 && (
+                  <label class="value-control">
+                    <span>Value</span>
+                    <input type="range" min={0} max={100} value={Math.round(activeHsv.v * 100)}
+                      onInput={(e) => setColor(activeColor, hsvToColor(activeHsv.h, activeHsv.s, +(e.currentTarget as HTMLInputElement).value / 100))} />
+                    <b>{Math.round(activeHsv.v * 100)}%</b>
+                  </label>
+                )}
+                <label class="brightness">
+                  <span>LED brightness</span>
+                  <input type="range" min={1} max={100} value={brightnessValue}
+                    onInput={(e) => setBrightness(+(e.currentTarget as HTMLInputElement).value)} />
+                  <b>{brightnessValue}%</b>
+                </label>
+              </div>
             </div>
             <h3>Color Palettes</h3>
             <div class="palette-grid">
@@ -386,12 +407,6 @@ export function AuraXApp() {
                   <i style={`background:linear-gradient(90deg,${palette.colors.map(colorToHex).join(',')})`} />
                 </button>
               ))}
-            </div>
-            <div class="brightness">
-              <label>Brightness</label>
-              <input type="range" min={0} max={100} value={config?.brightness ?? 0}
-                onInput={(e) => setBrightness(+(e.currentTarget as HTMLInputElement).value)} />
-              <span>{config?.brightness === 0 ? 'PIX' : `${config?.brightness ?? 0}%`}</span>
             </div>
           </section>
         )}
@@ -540,12 +555,6 @@ function ColorWheel({ color, onChange }: { color: Color; onChange: (color: Color
       >
         <span />
       </div>
-      <label class="value-control">
-        <span>Value</span>
-        <input type="range" min={0} max={100} value={Math.round(hsv.v * 100)}
-          onInput={(e) => onChange(hsvToColor(hsv.h, hsv.s, +(e.currentTarget as HTMLInputElement).value / 100))} />
-        <b>{Math.round(hsv.v * 100)}%</b>
-      </label>
     </div>
   )
 }
@@ -627,54 +636,71 @@ function SettingsPanel({
     xhr.send(fd)
   }
 
+  function formatStorage() {
+    if (!window.confirm('Format storage? This removes all programs and settings.')) return
+    setMessage('Formatting storage...')
+    fetch('/storage/format', { method: 'POST' })
+      .then((res) => res.text().then((text) => {
+        if (!res.ok) throw new Error(text || 'Storage format failed')
+        setMessage(text || 'Storage formatted, device rebooting...')
+      }))
+      .catch((err) => setMessage(err.message || 'Storage format failed'))
+  }
+
   return (
     <section class="panel settings">
       <div class="section-head">
         <h2>Settings</h2>
         <button onClick={() => saveSettings(form)}>Save</button>
       </div>
-      <div class="form-grid">
-        <label>Device name<input value={form.hostname} onInput={(e) => set({ hostname: (e.currentTarget as HTMLInputElement).value })} /></label>
+      <div class="settings-basic">
+        <label class="full">Device name<input value={form.hostname} onInput={(e) => set({ hostname: (e.currentTarget as HTMLInputElement).value })} /></label>
         <label>WiFi SSID<input value={form.ssid} onInput={(e) => set({ ssid: (e.currentTarget as HTMLInputElement).value })} /></label>
         <label>Password<input type="password" value={form.password} onInput={(e) => set({ password: (e.currentTarget as HTMLInputElement).value })} /></label>
       </div>
+
+      <h3>Rendering</h3>
+      <div class="render-modes">
+        <button
+          type="button"
+          class={form.effectReverse ? 'mode-button active' : 'mode-button'}
+          onClick={() => set({ effectReverse: !form.effectReverse })}
+        >
+          <ReverseIcon /> Reverse rendering
+        </button>
+        <button
+          type="button"
+          class={form.renderMirror ? 'mode-button active' : 'mode-button'}
+          onClick={() => set({ renderMirror: !form.renderMirror })}
+        >
+          <MirrorIcon /> Center mirror
+        </button>
+      </div>
+
+      <h3>Sync channels</h3>
+      <label class="check"><input type="checkbox" checked={form.syncEnabled} onChange={(e) => set({ syncEnabled: (e.currentTarget as HTMLInputElement).checked, syncMask: form.syncMask || 1 })} /> Enable sync</label>
+      <div class={form.syncEnabled ? 'sync-classes' : 'sync-classes disabled'}>
+        {Array.from({ length: 10 }, (_, i) => i + 1).map((ch) => {
+          const bit = 1 << (ch - 1)
+          return (
+            <label class={form.syncMask & bit ? 'checked' : ''}>
+              <input type="checkbox" checked={!!(form.syncMask & bit)}
+                onChange={(e) => set({ syncMask: (e.currentTarget as HTMLInputElement).checked ? form.syncMask | bit : form.syncMask & ~bit })} />
+              {ch}
+            </label>
+          )
+        })}
+      </div>
+
       <div class="firmware-row">
         <button onClick={() => fetch('/reboot', { method: 'POST' })}>Reboot</button>
         <label class="fw-button">Firmware<input type="file" accept=".bin" onChange={updateFw} /></label>
       </div>
       <details class="advanced-settings">
         <summary>Advanced</summary>
-        <h3>Rendering</h3>
-        <div class="render-modes">
-          <button
-            type="button"
-            class={form.effectReverse && !form.renderMirror ? 'mode-button active' : 'mode-button'}
-            onClick={() => set({ effectReverse: form.effectReverse && !form.renderMirror ? false : true, renderMirror: false })}
-          >
-            <ReverseIcon /> Reverse rendering
-          </button>
-          <button
-            type="button"
-            class={form.renderMirror ? 'mode-button active' : 'mode-button'}
-            onClick={() => set({ renderMirror: !form.renderMirror, effectReverse: false })}
-          >
-            <MirrorIcon /> Center mirror
-          </button>
-        </div>
-
-        <h3>Sync channels</h3>
-        <label class="check"><input type="checkbox" checked={form.syncEnabled} onChange={(e) => set({ syncEnabled: (e.currentTarget as HTMLInputElement).checked, syncMask: form.syncMask || 1 })} /> Enable sync</label>
-        <div class={form.syncEnabled ? 'sync-classes' : 'sync-classes disabled'}>
-          {Array.from({ length: 10 }, (_, i) => i + 1).map((ch) => {
-            const bit = 1 << (ch - 1)
-            return (
-              <label class={form.syncMask & bit ? 'checked' : ''}>
-                <input type="checkbox" checked={!!(form.syncMask & bit)}
-                  onChange={(e) => set({ syncMask: (e.currentTarget as HTMLInputElement).checked ? form.syncMask | bit : form.syncMask & ~bit })} />
-                {ch}
-              </label>
-            )
-          })}
+        <h3>Storage</h3>
+        <div class="firmware-row">
+          <button type="button" onClick={formatStorage}>Format storage</button>
         </div>
 
         <h3>LED output</h3>
@@ -685,7 +711,9 @@ function SettingsPanel({
           </select></label>
           <label>LED count<input type="number" value={form.numLeds} min={1} max={2048} onInput={(e) => set({ numLeds: +(e.currentTarget as HTMLInputElement).value })} /></label>
           <label>Data pin<input type="number" value={form.dataPin} min={0} max={48} onInput={(e) => set({ dataPin: +(e.currentTarget as HTMLInputElement).value })} /></label>
-          <label>Clock pin<input type="number" value={form.clkPin} min={0} max={48} onInput={(e) => set({ clkPin: +(e.currentTarget as HTMLInputElement).value })} /></label>
+          {form.ledType === 1 && (
+            <label>Clock pin<input type="number" value={form.clkPin} min={0} max={48} onInput={(e) => set({ clkPin: +(e.currentTarget as HTMLInputElement).value })} /></label>
+          )}
           <label>Current limit mA<input type="number" value={form.mALimit} min={0} max={65000} step={100} onInput={(e) => set({ mALimit: +(e.currentTarget as HTMLInputElement).value })} /></label>
         </div>
 

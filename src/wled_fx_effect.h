@@ -20,6 +20,34 @@ enum AuraXEffectId : uint8_t {
     EFFECT_STROBE     = 23,
     EFFECT_FADE       = 24,
     EFFECT_RAINBOW    = 25,
+    EFFECT_TWINKLE    = 26,
+    EFFECT_SPARKLE    = 27,
+    EFFECT_FIREWORKS  = 28,
+    EFFECT_SCANNER    = 29,
+    EFFECT_SCANNER_DUAL = 30,
+    EFFECT_THEATER    = 31,
+    EFFECT_COLOR_WIPE = 32,
+    EFFECT_JUGGLE     = 33,
+    EFFECT_SINELON    = 34,
+    EFFECT_FIRE       = 35,
+    EFFECT_PLASMA     = 36,
+    EFFECT_GRADIENT   = 37,
+    EFFECT_BREATH     = 38,
+    EFFECT_DOTS       = 39,
+    EFFECT_COUNTER_CHASE = 40,
+    EFFECT_SPLIT_CHASE   = 41,
+    EFFECT_COLLIDE       = 42,
+    EFFECT_SAW           = 43,
+    EFFECT_CHEVRON       = 44,
+    EFFECT_PULSE_TRAIN   = 45,
+    EFFECT_CROSS_WAVES   = 46,
+    EFFECT_BARBER_POLE   = 47,
+    EFFECT_SCAN_BARS     = 48,
+    EFFECT_PRISM         = 49,
+    EFFECT_SPIN          = 50,
+    EFFECT_TWIST         = 51,
+    EFFECT_CHASE         = 52,
+    EFFECT_FIRE_CLASSIC  = 53,
 };
 
 class WledFxEffect : public IEffect {
@@ -74,4 +102,31 @@ private:
     void renderStrobe(const EffectParams& p);
     void renderFade(const EffectParams& p);
     void renderRainbow(const EffectParams& p);
+    void renderTwinkle(const EffectParams& p);
+    void renderSparkle(const EffectParams& p);
+    void renderFireworks(const EffectParams& p);
+    void renderScanner(const EffectParams& p, bool dual);
+    void renderTheater(const EffectParams& p);
+    void renderColorWipe(const EffectParams& p);
+    void renderJuggle(const EffectParams& p);
+    void renderSinelon(const EffectParams& p);
+    void renderFire(const EffectParams& p);
+    void renderPlasma(const EffectParams& p);
+    void renderGradient(const EffectParams& p);
+    void renderBreath(const EffectParams& p);
+    void renderDots(const EffectParams& p);
+    void renderCounterChase(const EffectParams& p);
+    void renderSplitChase(const EffectParams& p);
+    void renderCollide(const EffectParams& p);
+    void renderSaw(const EffectParams& p);
+    void renderChevron(const EffectParams& p);
+    void renderPulseTrain(const EffectParams& p);
+    void renderCrossWaves(const EffectParams& p);
+    void renderBarberPole(const EffectParams& p);
+    void renderScanBars(const EffectParams& p);
+    void renderPrism(const EffectParams& p);
+    void renderSpin(const EffectParams& p);
+    void renderTwist(const EffectParams& p);
+    void renderChaseSingle(const EffectParams& p);
+    void renderFireClassic(const EffectParams& p);
 };

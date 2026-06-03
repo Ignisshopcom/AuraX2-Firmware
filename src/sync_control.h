@@ -21,7 +21,7 @@ public:
     // Call from the wifi_ctrl task loop. Processes received packets.
     void process();
 
-    void broadcastPlay(const char* file, uint8_t endBehavior = 255, uint32_t delayMs = 200, uint8_t programSlot = 0);
+    int broadcastPlay(const char* file, uint8_t endBehavior = 255, uint32_t delayMs = 200, uint8_t programSlot = 0);
     void broadcastStop();
     void broadcastEffect(const EffectParams& p);
     void broadcastBrightness(uint8_t brightness);

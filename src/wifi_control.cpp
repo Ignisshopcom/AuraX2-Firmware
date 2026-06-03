@@ -7,6 +7,8 @@
 #include <NetBIOS.h>
 #include <ArduinoOTA.h>
 #include <Update.h>
+#include <esp_ota_ops.h>
+#include <esp_partition.h>
 #include <esp_wifi.h>
 #include <mdns.h>
 #include "web_html.h"
@@ -22,8 +24,198 @@ static String jsonEscape(const String& s) {
     return out;
 }
 
+static String compactMac() {
+    String mac = WiFi.macAddress();
+    mac.replace(":", "");
+    mac.toLowerCase();
+    return mac;
+}
+
+static String fallbackApSsid(const AppConfig& cfg) {
+    (void)cfg;
+    char apSsid[32];
+    snprintf(apSsid, sizeof(apSsid), "AuraX-%04X", (uint16_t)ESP.getEfuseMac());
+    return String(apSsid);
+}
+
+static const esp_partition_t* findPartition(esp_partition_type_t type, esp_partition_subtype_t subtype, const char* label) {
+    return esp_partition_find_first(type, subtype, label);
+}
+
+static String partitionLayoutName() {
+    const esp_partition_t* app0 = findPartition(ESP_PARTITION_TYPE_APP, ESP_PARTITION_SUBTYPE_APP_OTA_0, nullptr);
+    const esp_partition_t* app1 = findPartition(ESP_PARTITION_TYPE_APP, ESP_PARTITION_SUBTYPE_APP_OTA_1, nullptr);
+    const esp_partition_t* fs = findPartition(ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_DATA_SPIFFS, "spiffs");
+
+    if (app0 && app1 && fs) {
+        if (app0->size == 0x200000 && app1->size == 0x200000 && fs->address == 0x410000) {
+            return "aurax_wled_8mb_2m_ota";
+        }
+        if (app0->size == 0x180000 && app1->size == 0x180000 && fs->address == 0x310000) {
+            return "aurax_8mb_1m5_ota";
+        }
+    }
+    return "custom";
+}
+
+static uint8_t wifiSignalPct(int32_t rssi) {
+    if (rssi >= -50) return 100;
+    if (rssi <= -100) return 0;
+    return (uint8_t)((rssi + 100) * 2);
+}
+
+static uint8_t auraBrightnessToWled(uint8_t pct) {
+    if (pct == 0) return 255;  // AuraX 0 = use per-pixel program brightness.
+    if (pct > 100) pct = 100;
+    uint16_t bri = ((uint16_t)pct * 255u + 50u) / 100u;
+    return (uint8_t)(bri < 1 ? 1 : bri);
+}
+
+static uint8_t wledBrightnessToAura(uint16_t bri) {
+    if (bri > 255) bri = 255;
+    uint16_t pct = (bri * 100u + 127u) / 255u;
+    return (uint8_t)(pct < 1 && bri > 0 ? 1 : pct);
+}
+
 static bool isProgramExtension(const String& lowerName) {
     return lowerName.endsWith(".pix") || lowerName.endsWith(".axp");
+}
+
+static String playerLoadErrorText(int err) {
+    if (err == 7) {
+        return "Program LED count does not match this device. Export the program with the same LED count as the device settings.";
+    }
+    return "load failed: " + String(err);
+}
+
+static bool readProgramDw(File& f, uint32_t& out) {
+    uint8_t b[4];
+    if (f.read(b, 4) != 4) return false;
+    out = (uint32_t)b[0]
+        | ((uint32_t)b[1] << 8)
+        | ((uint32_t)b[2] << 16)
+        | ((uint32_t)b[3] << 24);
+    return true;
+}
+
+static void splitProgramDw(uint32_t dw, uint8_t& label, uint8_t& type, uint16_t& size) {
+    label = (dw >> 24) & 0xFF;
+    type  = (dw >> 16) & 0xFF;
+    size  = dw & 0xFFFF;
+}
+
+static bool programMatchesLedCount(const String& path, uint16_t ledCount, String& error) {
+    File f = LittleFS.open(path, "r");
+    if (!f) {
+        error = "Program validation failed: cannot open file";
+        return false;
+    }
+
+    uint32_t dw = 0;
+    if (!readProgramDw(f, dw)) {
+        f.close();
+        error = "Program validation failed: file is too small";
+        return false;
+    }
+
+    if (dw == 0x31505841) {  // "AXP1"
+        uint32_t version = 0, commandCount = 0, numLeds = 0, endBehavior = 0, decodedBytes = 0;
+        bool ok = readProgramDw(f, version) && readProgramDw(f, commandCount) &&
+                  readProgramDw(f, numLeds) && readProgramDw(f, endBehavior) &&
+                  readProgramDw(f, decodedBytes);
+        (void)endBehavior;
+        (void)decodedBytes;
+        if (!ok || commandCount == 0 || commandCount > 64 || version < 1 || version > 2) {
+            f.close();
+            error = "Program validation failed: invalid AXP header";
+            return false;
+        }
+        if (numLeds != 0 && numLeds != ledCount) {
+            f.close();
+            error = "Program has " + String(numLeds) + " LEDs, but this device is set to " + String(ledCount) + ".";
+            return false;
+        }
+        for (uint32_t i = 0; i < commandCount; i++) {
+            uint32_t startTime = 0, endTime = 0, width = 0, height = 0, frequency = 0;
+            uint32_t dataOffset = 0, dataSize = 0, decodedOffset = 0, codec = 0, isLast = 0;
+            ok = readProgramDw(f, startTime) && readProgramDw(f, endTime) &&
+                 readProgramDw(f, width) && readProgramDw(f, height) &&
+                 readProgramDw(f, frequency) && readProgramDw(f, dataOffset) &&
+                 readProgramDw(f, dataSize) && readProgramDw(f, decodedOffset) &&
+                 readProgramDw(f, codec) && readProgramDw(f, isLast);
+            (void)startTime; (void)endTime; (void)height; (void)frequency;
+            (void)dataOffset; (void)dataSize; (void)decodedOffset; (void)codec; (void)isLast;
+            if (!ok) {
+                f.close();
+                error = "Program validation failed: incomplete AXP command table";
+                return false;
+            }
+            if (width != ledCount) {
+                f.close();
+                error = "Program has " + String(width) + " LEDs per frame, but this device is set to " + String(ledCount) + ".";
+                return false;
+            }
+        }
+        f.close();
+        return true;
+    }
+
+    f.seek(0);
+    while (true) {
+        if (!readProgramDw(f, dw)) break;
+        uint8_t label, type;
+        uint16_t size;
+        splitProgramDw(dw, label, type, size);
+        if (label != 0xD1) {
+            f.seek(f.position() - 4);
+            break;
+        }
+        f.seek(f.position() + (uint32_t)size * 4u);
+    }
+
+    while (readProgramDw(f, dw)) {
+        uint8_t label, type;
+        uint16_t size;
+        splitProgramDw(dw, label, type, size);
+        if (label != 0xA1) break;
+        if (type != 1) {
+            if (size > 0) f.seek(f.position() + (uint32_t)(size - 1) * 4u);
+            continue;
+        }
+
+        int remaining = (int)size - 1;
+        while (remaining > 0 && readProgramDw(f, dw)) {
+            remaining--;
+            uint8_t pl, pt;
+            uint16_t ps;
+            splitProgramDw(dw, pl, pt, ps);
+            if (pl != 0xB1) {
+                f.seek(f.position() - 4);
+                break;
+            }
+            uint32_t val = 0;
+            if (ps >= 1) {
+                if (!readProgramDw(f, val)) {
+                    f.close();
+                    error = "Program validation failed: incomplete PIX parameter";
+                    return false;
+                }
+                remaining--;
+            }
+            if (ps > 1) {
+                f.seek(f.position() + (uint32_t)(ps - 1) * 4u);
+                remaining -= (int)ps - 1;
+            }
+            if (pt == 0x0A && val != ledCount) {
+                f.close();
+                error = "Program has " + String(val) + " LEDs per frame, but this device is set to " + String(ledCount) + ".";
+                return false;
+            }
+        }
+    }
+
+    f.close();
+    return true;
 }
 
 static String sanitizeProgramPath(const String& input) {
@@ -218,6 +410,11 @@ void WifiControl::mdnsBegin(const char* hostname) {
         MDNS.addService("aurax", "tcp", 80);
         MDNS.addServiceTxt("aurax", "tcp", "hostname", mdnsHost);
         MDNS.addServiceTxt("aurax", "tcp", "ip", activeIP().toString().c_str());
+        String mac = compactMac();
+        MDNS.addService("wled", "tcp", 80);
+        MDNS.addServiceTxt("wled", "tcp", "mac", mac.c_str());
+        MDNS.addServiceTxt("wled", "tcp", "brand", "AuraX");
+        MDNS.addServiceTxt("wled", "tcp", "name", mdnsHost);
         LOG("[mdns] http://%s.local\n", mdnsHost);
     }
     if (strcmp(mdnsHost, "aurax") != 0) {
@@ -230,14 +427,20 @@ void WifiControl::mdnsBegin(const char* hostname) {
     }
 }
 
-WifiControl::WifiControl(PixPlayer& player, EffectPlayer& effectPlayer, ILedDriver& leds, AppConfig& cfg, SyncControl* sync)
-    : _player(player), _effectPlayer(effectPlayer), _leds(leds), _cfg(cfg), _sync(sync) {}
+WifiControl::WifiControl(PixPlayer& player, EffectPlayer& effectPlayer, ILedDriver& leds, AppConfig& cfg,
+                         SyncControl* sync, bool fsMounted)
+    : _player(player), _effectPlayer(effectPlayer), _leds(leds), _cfg(cfg), _sync(sync), _fsMounted(fsMounted) {}
 
 bool WifiControl::saveRuntimeConfig() {
+    if (!_fsMounted) return false;
     AppConfig saved = _cfg;
     if (strlen(_wantedHostname) > 0)
         strlcpy(saved.hostname, _wantedHostname, sizeof(saved.hostname));
     return saveConfig(saved);
+}
+
+bool WifiControl::storageReady() {
+    return _fsMounted;
 }
 
 IPAddress WifiControl::activeIP() const {
@@ -430,7 +633,19 @@ bool WifiControl::begin(uint32_t timeoutMs) {
         _server.send(200, "text/plain", "OK");
     });
     _server.on("/power", HTTP_POST, [this]() { handlePower(); });
-    _server.on("/status", HTTP_GET,  [this]() { handleStatus();    });
+    _server.on("/status", HTTP_OPTIONS, [this]() { handleCorsOptions(); });
+    _server.on("/status", HTTP_GET,     [this]() { handleStatus();      });
+    _server.on("/json", HTTP_OPTIONS, [this]() { handleCorsOptions(); });
+    _server.on("/json", HTTP_GET, [this]() { handleWledJson(); });
+    _server.on("/json/si", HTTP_OPTIONS, [this]() { handleCorsOptions(); });
+    _server.on("/json/si", HTTP_GET, [this]() { handleWledJson(); });
+    _server.on("/json/info", HTTP_OPTIONS, [this]() { handleCorsOptions(); });
+    _server.on("/json/info", HTTP_GET, [this]() { handleWledInfo(); });
+    _server.on("/json/state", HTTP_OPTIONS, [this]() { handleCorsOptions(); });
+    _server.on("/json/state", HTTP_GET, [this]() { handleWledState(); });
+    _server.on("/json/state", HTTP_POST, [this]() { handleWledStatePost(); });
+    _server.on("/json/effects", HTTP_GET, [this]() { handleWledEffects(); });
+    _server.on("/json/palettes", HTTP_GET, [this]() { handleWledPalettes(); });
     _server.on("/config", HTTP_GET,  [this]() { handleConfigGet(); });
     _server.on("/config", HTTP_POST, [this]() { handleConfigPost(); });
     _server.on("/programs", HTTP_GET, [this]() { handlePrograms(); });
@@ -438,16 +653,33 @@ bool WifiControl::begin(uint32_t timeoutMs) {
     _server.on("/program/delete", HTTP_POST, [this]() { handleProgramDelete(); });
     _server.on("/program/reorder", HTTP_POST, [this]() { handleProgramReorder(); });
     _server.on("/program/start", HTTP_POST, [this]() { handleProgramStart(); });
+    _server.on("/identify", HTTP_POST, [this]() { handleIdentify(); });
     _server.on("/sync", HTTP_POST, [this]() { handleSyncNow(); });
     _server.on("/reboot", HTTP_POST, [this]() {
         _server.send(200, "text/plain", "OK");
         delay(200);
         esp_restart();
     });
+    _server.on("/storage/format", HTTP_POST, [this]() {
+        _effectPlayer.stop();
+        _player.stopTask();
+        _player.unload();
+        _leds.clear();
+        bool ok = LittleFS.format();
+        if (ok) _fsMounted = LittleFS.begin(false);
+        _server.send(ok ? 200 : 500, "text/plain",
+            ok ? "Storage formatted, rebooting..." : "Storage format failed");
+        delay(300);
+        if (ok) esp_restart();
+    });
 
     _server.on("/upload", HTTP_POST,
         [this]() {
             if (_uploadFile) _uploadFile.close();
+            if (!_fsMounted) {
+                _server.send(503, "text/plain", "Storage unavailable. Format storage first.");
+                return;
+            }
             if (_uploadError) {
                 if (_uploadPath.length()) LittleFS.remove(_uploadPath);
                 _server.send(500, "text/plain", "Chyba: nedostatek místa v LittleFS");
@@ -457,6 +689,10 @@ bool WifiControl::begin(uint32_t timeoutMs) {
         },
         [this]() {
             HTTPUpload& up = _server.upload();
+            if (!_fsMounted) {
+                _uploadError = true;
+                return;
+            }
             if (up.status == UPLOAD_FILE_START) {
                 _uploadError = false;
                 _player.unload();
@@ -480,10 +716,20 @@ bool WifiControl::begin(uint32_t timeoutMs) {
     _server.on("/program/upload", HTTP_POST,
         [this]() {
             if (_uploadFile) _uploadFile.close();
+            if (!_fsMounted) {
+                _server.send(503, "text/plain", "Storage unavailable. Format storage first.");
+                return;
+            }
             if (_uploadError) {
                 if (_uploadPath.length()) LittleFS.remove(_uploadPath);
                 _server.send(413, "text/plain", "Upload failed: not enough LittleFS space");
             } else {
+                String validationError;
+                if (!programMatchesLedCount(_uploadPath, _leds.numLeds(), validationError)) {
+                    if (_uploadPath.length()) LittleFS.remove(_uploadPath);
+                    _server.send(400, "text/plain", validationError);
+                    return;
+                }
                 strlcpy(_cfg.pixFile, _uploadPath.c_str(), sizeof(_cfg.pixFile));
                 _cfg.autoStart = 0;
                 renumberPrograms(&_cfg);
@@ -493,6 +739,10 @@ bool WifiControl::begin(uint32_t timeoutMs) {
         },
         [this]() {
             HTTPUpload& up = _server.upload();
+            if (!_fsMounted) {
+                _uploadError = true;
+                return;
+            }
             if (up.status == UPLOAD_FILE_START) {
                 _uploadError = false;
                 _uploadPath = nextUploadProgramPath(up.filename);
@@ -559,7 +809,8 @@ bool WifiControl::begin(uint32_t timeoutMs) {
     });
     _server.on("/effect",      HTTP_POST, [this]() { handleEffectStart(); });
     _server.on("/effect/stop", HTTP_GET,  [this]() { handleEffectStop();  });
-    _server.on("/peers",  HTTP_GET,  [this]() { handlePeers(); });
+    _server.on("/peers",  HTTP_OPTIONS, [this]() { handleCorsOptions(); });
+    _server.on("/peers",  HTTP_GET,     [this]() { handlePeers(); });
     _server.on("/generate_204",       HTTP_GET, [this]() { handleCaptivePortal(); });
     _server.on("/gen_204",            HTTP_GET, [this]() { handleCaptivePortal(); });
     _server.on("/hotspot-detect.html", HTTP_GET, [this]() { handleCaptivePortal(); });
@@ -701,16 +952,21 @@ void WifiControl::handleCaptivePortal() {
 }
 
 void WifiControl::handlePlay() {
+    if (!_fsMounted) {
+        _server.send(503, "text/plain", "Storage unavailable. Format storage or flash LittleFS first.");
+        return;
+    }
     _effectPlayer.stop();
     _cfg.autoStart = 0;
     saveRuntimeConfig();
     if (_sync) {
-        _sync->broadcastPlay(_cfg.pixFile, _cfg.endBehavior, 0, (uint8_t)slotForProgramPath(_cfg.pixFile));
+        int err = _sync->broadcastPlay(_cfg.pixFile, _cfg.endBehavior, 0, (uint8_t)slotForProgramPath(_cfg.pixFile));
+        if (err) { _server.send(500, "text/plain", playerLoadErrorText(err)); return; }
     } else {
         int64_t startUs = esp_timer_get_time();
         _player.stopTask();
         int err = _player.load(_cfg.pixFile);
-        if (err) { _server.send(500, "text/plain", "load failed: " + String(err)); return; }
+        if (err) { _server.send(500, "text/plain", playerLoadErrorText(err)); return; }
         _player.scheduleStart(startUs);
         _player.startTask(1);
     }
@@ -729,6 +985,12 @@ void WifiControl::handleStop() {
 }
 
 void WifiControl::handlePrograms() {
+    if (!_fsMounted) {
+        String json = "{\"total\":0,\"used\":0,\"free\":0,\"selected\":\"\",\"selected_slot\":0,"
+                      "\"storage_mounted\":false,\"error\":\"Storage unavailable\",\"files\":[]}";
+        _server.send(200, "application/json", json);
+        return;
+    }
     size_t total = LittleFS.totalBytes();
     size_t used = LittleFS.usedBytes();
     ProgramEntry entries[32];
@@ -753,6 +1015,10 @@ void WifiControl::handlePrograms() {
 }
 
 void WifiControl::handleProgramSelect() {
+    if (!_fsMounted) {
+        _server.send(503, "text/plain", "Storage unavailable");
+        return;
+    }
     StaticJsonDocument<160> doc;
     if (deserializeJson(doc, _server.arg("plain")) != DeserializationError::Ok) {
         _server.send(400, "text/plain", "JSON error");
@@ -779,6 +1045,10 @@ void WifiControl::handleProgramSelect() {
 }
 
 void WifiControl::handleProgramDelete() {
+    if (!_fsMounted) {
+        _server.send(503, "text/plain", "Storage unavailable");
+        return;
+    }
     StaticJsonDocument<160> doc;
     if (deserializeJson(doc, _server.arg("plain")) != DeserializationError::Ok) {
         _server.send(400, "text/plain", "JSON error");
@@ -802,6 +1072,10 @@ void WifiControl::handleProgramDelete() {
 }
 
 void WifiControl::handleProgramReorder() {
+    if (!_fsMounted) {
+        _server.send(503, "text/plain", "Storage unavailable");
+        return;
+    }
     StaticJsonDocument<128> doc;
     if (deserializeJson(doc, _server.arg("plain")) != DeserializationError::Ok) {
         _server.send(400, "text/plain", "JSON error");
@@ -829,6 +1103,10 @@ void WifiControl::handleProgramReorder() {
 }
 
 void WifiControl::handleProgramStart() {
+    if (!_fsMounted) {
+        _server.send(503, "text/plain", "Storage unavailable");
+        return;
+    }
     StaticJsonDocument<128> doc;
     if (deserializeJson(doc, _server.arg("plain")) != DeserializationError::Ok) {
         _server.send(400, "text/plain", "JSON error");
@@ -844,16 +1122,56 @@ void WifiControl::handleProgramStart() {
     _cfg.autoStart = 0;
     saveRuntimeConfig();
     if (_sync) {
-        _sync->broadcastPlay(_cfg.pixFile, _cfg.endBehavior, 0, (uint8_t)slot);
+        int err = _sync->broadcastPlay(_cfg.pixFile, _cfg.endBehavior, 0, (uint8_t)slot);
+        if (err) { _server.send(500, "text/plain", playerLoadErrorText(err)); return; }
     } else {
         int64_t startUs = esp_timer_get_time();
         _effectPlayer.stop();
         _player.stopTask();
         int err = _player.load(_cfg.pixFile);
-        if (err) { _server.send(500, "text/plain", "load failed: " + String(err)); return; }
+        if (err) { _server.send(500, "text/plain", playerLoadErrorText(err)); return; }
         _player.scheduleStart(startUs);
         _player.startTask(1);
     }
+    _server.send(200, "text/plain", "OK");
+}
+
+void WifiControl::handleIdentify() {
+    _effectPlayer.stop();
+    _player.stopTask();
+
+    uint16_t count = _leds.numLeds();
+    uint8_t* frame = (uint8_t*)malloc((size_t)count * 4);
+    if (!frame) {
+        _server.send(500, "text/plain", "Identify allocation failed");
+        return;
+    }
+    for (uint16_t i = 0; i < count; i++) {
+        frame[(size_t)i * 4 + 0] = 0xFF;  // full brightness
+        frame[(size_t)i * 4 + 1] = 0;
+        frame[(size_t)i * 4 + 2] = 0;
+        frame[(size_t)i * 4 + 3] = 255;
+    }
+
+    for (int i = 0; i < 3; i++) {
+        _leds.showColumnDirect(frame, count);
+        delay(45);
+        for (uint16_t j = 0; j < count; j++) {
+            frame[(size_t)j * 4 + 0] = 0xE0;
+            frame[(size_t)j * 4 + 1] = 0;
+            frame[(size_t)j * 4 + 2] = 0;
+            frame[(size_t)j * 4 + 3] = 0;
+        }
+        _leds.showColumnDirect(frame, count);
+        delay(70);
+        for (uint16_t j = 0; j < count; j++) {
+            frame[(size_t)j * 4 + 0] = 0xFF;
+            frame[(size_t)j * 4 + 1] = 0;
+            frame[(size_t)j * 4 + 2] = 0;
+            frame[(size_t)j * 4 + 3] = 255;
+        }
+    }
+    free(frame);
     _server.send(200, "text/plain", "OK");
 }
 
@@ -882,13 +1200,14 @@ void WifiControl::handlePower() {
     } else {
         uint16_t slot = slotForProgramPath(_cfg.pixFile);
         if (_sync) {
-            _sync->broadcastPlay(_cfg.pixFile, _cfg.endBehavior, 0, (uint8_t)slot);
+            int err = _sync->broadcastPlay(_cfg.pixFile, _cfg.endBehavior, 0, (uint8_t)slot);
+            if (err) { _server.send(500, "text/plain", playerLoadErrorText(err)); return; }
         } else {
             int64_t startUs = esp_timer_get_time();
             _effectPlayer.stop();
             _player.stopTask();
             int err = _player.load(_cfg.pixFile);
-            if (err) { _server.send(500, "text/plain", "load failed: " + String(err)); return; }
+            if (err) { _server.send(500, "text/plain", playerLoadErrorText(err)); return; }
             _player.scheduleStart(startUs);
             _player.startTask(1);
         }
@@ -903,13 +1222,14 @@ void WifiControl::handleSyncNow() {
         else _effectPlayer.start(p);
     } else {
         if (_sync) {
-            _sync->broadcastPlay(_cfg.pixFile, _cfg.endBehavior, 0, (uint8_t)slotForProgramPath(_cfg.pixFile));
+            int err = _sync->broadcastPlay(_cfg.pixFile, _cfg.endBehavior, 0, (uint8_t)slotForProgramPath(_cfg.pixFile));
+            if (err) { _server.send(500, "text/plain", playerLoadErrorText(err)); return; }
         } else {
             int64_t startUs = esp_timer_get_time();
             _effectPlayer.stop();
             _player.stopTask();
             int err = _player.load(_cfg.pixFile);
-            if (err) { _server.send(500, "text/plain", "load failed: " + String(err)); return; }
+            if (err) { _server.send(500, "text/plain", playerLoadErrorText(err)); return; }
             _player.scheduleStart(startUs);
             _player.startTask(1);
         }
@@ -918,14 +1238,18 @@ void WifiControl::handleSyncNow() {
 }
 
 void WifiControl::handleStatus() {
+    sendCorsHeaders();
     auto st = _player.stats();
-    char apSsid[32] = "";
+    String apSsid;
     if (_apActive) {
         if (_cfg.wifiMode == WIFI_MODE_GROUP_MASTER)
-            strlcpy(apSsid, _cfg.groupSsid, sizeof(apSsid));
+            apSsid = _cfg.groupSsid;
         else
-            snprintf(apSsid, sizeof(apSsid), "AuraX-%04X", (uint16_t)ESP.getEfuseMac());
+            apSsid = fallbackApSsid(_cfg);
     }
+    const esp_partition_t* running = esp_ota_get_running_partition();
+    const esp_partition_t* next = esp_ota_get_next_update_partition(nullptr);
+    const esp_partition_t* fsPart = findPartition(ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_DATA_SPIFFS, "spiffs");
     String json = "{";
     json += "\"playing\":"          + String(_player.isLoaded() ? "true" : "false") + ",";
     json += "\"effect_running\":"   + String(_effectPlayer.isRunning() ? "true" : "false") + ",";
@@ -939,16 +1263,222 @@ void WifiControl::handleStatus() {
     json += "\"hostname\":\""       + String(_cfg.hostname) + "\",";
     json += "\"device_name\":\""    + String(strlen(_wantedHostname) ? _wantedHostname : _cfg.hostname) + "\",";
     json += "\"wifi_mode\":"        + String(_cfg.wifiMode) + ",";
-    json += "\"ap_ssid\":\""        + String(apSsid) + "\",";
+    json += "\"ap_ssid\":\""        + jsonEscape(apSsid) + "\",";
     json += "\"ap_mode\":"          + String(_apMode ? "true" : "false") + ",";
+    json += "\"storage_mounted\":"  + String(_fsMounted ? "true" : "false") + ",";
+    json += "\"partition_layout\":\"" + partitionLayoutName() + "\",";
+    json += "\"running_app_size\":" + String(running ? (unsigned)running->size : 0) + ",";
+    json += "\"next_ota_size\":"    + String(next ? (unsigned)next->size : 0) + ",";
+    json += "\"fs_offset\":"        + String(fsPart ? (unsigned)fsPart->address : 0) + ",";
+    json += "\"fs_size\":"          + String(fsPart ? (unsigned)fsPart->size : 0) + ",";
     json += "\"battery_mv\":"       + String(_batMonitor.mv()) + ",";
     json += "\"battery_pct\":"      + String(_batMonitor.pct()) + ",";
     json += "\"sync_enabled\":"     + String(_cfg.syncEnabled ? "true" : "false") + ",";
     json += "\"sync_mask\":"        + String(_cfg.syncMask) + ",";
     json += "\"sync_channel\":"     + String(firstSyncChannel(_cfg.syncMask)) + ",";
-    json += "\"rssi\":"             + String(_apMode ? 0 : WiFi.RSSI());
+    json += "\"rssi\":"             + String(_apMode ? 0 : WiFi.RSSI()) + ",";
+    json += "\"fs\":{\"u\":" + String(_fsMounted ? (unsigned long)LittleFS.usedBytes() : 0);
+    json += ",\"t\":" + String(_fsMounted ? (unsigned long)LittleFS.totalBytes() : 0);
+    json += ",\"mounted\":" + String(_fsMounted ? "true" : "false") + "}";
     json += "}";
     _server.send(200, "application/json", json);
+}
+
+String WifiControl::wledStateJson() {
+    bool on = _player.isLoaded() || _effectPlayer.isRunning();
+    uint8_t bri = auraBrightnessToWled(_cfg.brightness);
+    uint8_t fx = _effectPlayer.isRunning() ? _cfg.effectId : 0;
+    if (fx > 25) fx = 0;
+
+    int sx = 128;
+    if (_cfg.effectSpeed <= 10) {
+        sx = 0;
+    } else if (_cfg.effectSpeed >= 1000) {
+        sx = 255;
+    } else {
+        sx = ((_cfg.effectSpeed - 10) * 255) / 990;
+    }
+
+    String json;
+    json.reserve(720);
+    json += "{\"on\":";
+    json += on ? "true" : "false";
+    json += ",\"bri\":" + String(bri);
+    json += ",\"transition\":0,\"ps\":-1,\"pl\":-1";
+    json += ",\"nl\":{\"on\":false,\"dur\":60,\"mode\":1,\"tbri\":0,\"rem\":-1}";
+    json += ",\"udpn\":{\"send\":false,\"recv\":false}";
+    json += ",\"lor\":0,\"mainseg\":0";
+    json += ",\"seg\":[{\"id\":0,\"start\":0,\"stop\":" + String(_leds.numLeds());
+    json += ",\"len\":" + String(_leds.numLeds());
+    json += ",\"grp\":1,\"spc\":0,\"of\":0,\"on\":";
+    json += on ? "true" : "false";
+    json += ",\"frz\":false,\"bri\":" + String(bri);
+    json += ",\"col\":[";
+    for (int i = 0; i < 3; i++) {
+        if (i > 0) json += ",";
+        json += "[" + String(_cfg.paletteR[i]) + "," + String(_cfg.paletteG[i]) + "," + String(_cfg.paletteB[i]) + "]";
+    }
+    json += "],\"fx\":" + String(fx);
+    json += ",\"sx\":" + String(sx);
+    json += ",\"ix\":" + String(_cfg.effectIntensity);
+    json += ",\"pal\":" + String(_cfg.effectPaletteId);
+    json += ",\"sel\":true,\"rev\":";
+    json += _cfg.effectReverse ? "true" : "false";
+    json += ",\"mi\":";
+    json += _cfg.renderMirror ? "true" : "false";
+    json += "}]}";
+    return json;
+}
+
+String WifiControl::wledInfoJson() {
+    auto st = _player.stats();
+    uint16_t fpsX10 = _effectPlayer.isRunning() ? _effectPlayer.fpsX10() : st.fpsX10;
+    int32_t rssi = (_apMode || WiFi.status() != WL_CONNECTED) ? 0 : WiFi.RSSI();
+    uint8_t signal = _apMode ? 100 : wifiSignalPct(rssi);
+    String deviceName = strlen(_wantedHostname) ? String(_wantedHostname) : String(_cfg.hostname);
+
+    String json;
+    json.reserve(920);
+    json += "{\"ver\":\"0.14.4\",\"vid\":2403290,\"cn\":\"AuraX\"";
+    json += ",\"release\":\"AuraX WLED discovery compatibility\"";
+    json += ",\"name\":\"" + jsonEscape(deviceName) + "\"";
+    json += ",\"brand\":\"AuraX\",\"product\":\"AuraX\",\"btype\":\"esp32s3\"";
+    json += ",\"mac\":\"" + compactMac() + "\"";
+    json += ",\"ip\":\"" + activeIP().toString() + "\"";
+    json += ",\"arch\":\"esp32\",\"core\":\"arduino\",\"lwip\":0";
+    json += ",\"freeheap\":" + String((unsigned long)ESP.getFreeHeap());
+    json += ",\"uptime\":" + String((unsigned long)(millis() / 1000));
+    json += ",\"opt\":0,\"str\":false,\"udpport\":21324,\"live\":false";
+    json += ",\"lm\":\"\",\"lip\":\"\",\"ws\":-1";
+    json += ",\"fxcount\":54,\"palcount\":30";
+    json += ",\"leds\":{\"count\":" + String(_leds.numLeds());
+    json += ",\"fps\":" + String((fpsX10 + 5) / 10);
+    json += ",\"maxpwr\":" + String(_cfg.mALimit);
+    json += ",\"maxseg\":1,\"lc\":1,\"pwr\":0,\"rgbw\":false}";
+    json += ",\"wifi\":{\"bssid\":\"\",\"rssi\":" + String(rssi);
+    json += ",\"signal\":" + String(signal);
+    json += ",\"channel\":" + String(WiFi.channel()) + "}";
+    json += ",\"fs\":{\"u\":" + String(_fsMounted ? (unsigned long)LittleFS.usedBytes() : 0);
+    json += ",\"t\":" + String(_fsMounted ? (unsigned long)LittleFS.totalBytes() : 0);
+    json += ",\"pmt\":0}";
+    json += ",\"ndc\":0,\"platform\":\"esp32\"}";
+    return json;
+}
+
+String WifiControl::wledEffectsJson() {
+    return "[\"Solid\",\"Android\",\"BPM\",\"Flow\",\"Gravcenter\",\"Gravfreq\",\"Chase 2\",\"Chase 3\",\"Chunchun\",\"Lake\",\"Meteor\",\"Noise 3\",\"Oscillate\",\"Ripple\",\"Running\",\"Strobe\",\"Fade\",\"Rainbow\",\"Twinkle\",\"Sparkle\",\"Fireworks\",\"Scanner\",\"Dual Scanner\",\"Theater Chase\",\"Color Wipe\",\"Juggle\",\"Sinelon\",\"Fire Flicker\",\"Plasma\",\"Gradient\",\"Breath\",\"Dots\",\"Counter Chase\",\"Split Chase\",\"Collision\",\"Saw\",\"Chevron\",\"Pulse Train\",\"Cross Waves\",\"Barber Pole\",\"Scan Bars\",\"Prism\",\"Spin\",\"Twist\",\"Chase\",\"Fire\"]";
+}
+
+String WifiControl::wledPalettesJson() {
+    return "[\"Custom\",\"Rainbow\",\"Fire\",\"Ocean\",\"Forest\",\"Party\",\"Sunset\",\"Polar\",\"Lava\",\"Pastel\",\"Neon\",\"Candy\",\"Aurora\",\"Vintage\",\"Rainbow Stripe\",\"Blue Purple\",\"Pink Candy\",\"C9\",\"Tiamat\",\"Dry Wet\",\"Red Blue\",\"Yellow Green\",\"Purple Green\",\"Warm White\",\"Aqua Magenta\",\"Police\",\"Matrix\",\"Sakura\",\"Electric\",\"Amber Teal\"]";
+}
+
+void WifiControl::handleWledJson() {
+    sendCorsHeaders();
+    String json;
+    json.reserve(1900);
+    json += "{\"state\":";
+    json += wledStateJson();
+    json += ",\"info\":";
+    json += wledInfoJson();
+    json += ",\"effects\":";
+    json += wledEffectsJson();
+    json += ",\"palettes\":";
+    json += wledPalettesJson();
+    json += "}";
+    _server.send(200, "application/json", json);
+}
+
+void WifiControl::handleWledInfo() {
+    sendCorsHeaders();
+    _server.send(200, "application/json", wledInfoJson());
+}
+
+void WifiControl::handleWledState() {
+    sendCorsHeaders();
+    _server.send(200, "application/json", wledStateJson());
+}
+
+void WifiControl::handleWledStatePost() {
+    sendCorsHeaders();
+    StaticJsonDocument<512> doc;
+    DeserializationError err = deserializeJson(doc, _server.arg("plain"));
+    if (err != DeserializationError::Ok) {
+        _server.send(400, "text/plain", "JSON error");
+        return;
+    }
+
+    if (doc.containsKey("bri")) {
+        _cfg.brightness = wledBrightnessToAura((uint16_t)(doc["bri"] | 255));
+        if (_sync) {
+            _sync->broadcastBrightness(_cfg.brightness);
+        } else {
+            _leds.setBrightness(_cfg.brightness);
+            _player.setBrightness(_cfg.brightness);
+        }
+    }
+
+    if (doc.containsKey("on")) {
+        bool on = doc["on"] | false;
+        if (!on) {
+            if (_sync) {
+                _sync->broadcastStop();
+            } else {
+                _effectPlayer.stop();
+                _player.blackout();
+            }
+        } else if (!_player.isLoaded() && !_effectPlayer.isRunning()) {
+            if (_cfg.autoStart == 1) {
+                EffectParams p = effectParamsFromConfig(_cfg);
+                if (_sync) _sync->broadcastEffect(p);
+                else _effectPlayer.start(p);
+            } else {
+                int64_t startUs = esp_timer_get_time();
+                if (_sync) {
+                    int errPlay = _sync->broadcastPlay(_cfg.pixFile, _cfg.endBehavior, 0, (uint8_t)slotForProgramPath(_cfg.pixFile));
+                    if (errPlay) {
+                        _server.send(500, "text/plain", playerLoadErrorText(errPlay));
+                        return;
+                    }
+                } else {
+                    _effectPlayer.stop();
+                    _player.stopTask();
+                    int errLoad = _player.load(_cfg.pixFile);
+                    if (errLoad) {
+                        _server.send(500, "text/plain", playerLoadErrorText(errLoad));
+                        return;
+                    }
+                    _player.scheduleStart(startUs);
+                    _player.startTask(1);
+                }
+            }
+        }
+    }
+
+    _server.send(200, "application/json", wledStateJson());
+}
+
+void WifiControl::handleWledEffects() {
+    sendCorsHeaders();
+    _server.send(200, "application/json", wledEffectsJson());
+}
+
+void WifiControl::handleWledPalettes() {
+    sendCorsHeaders();
+    _server.send(200, "application/json", wledPalettesJson());
+}
+
+void WifiControl::sendCorsHeaders() {
+    _server.sendHeader("Access-Control-Allow-Origin", "*");
+    _server.sendHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+    _server.sendHeader("Access-Control-Allow-Headers", "Content-Type");
+    _server.sendHeader("Access-Control-Allow-Private-Network", "true");
+    _server.sendHeader("Vary", "Origin, Access-Control-Request-Method, Access-Control-Request-Headers, Access-Control-Request-Private-Network");
+}
+
+void WifiControl::handleCorsOptions() {
+    sendCorsHeaders();
+    _server.send(204, "text/plain", "");
 }
 
 void WifiControl::handleConfigGet() {
@@ -1007,7 +1537,7 @@ void WifiControl::handleEffectStart() {
     }
     EffectParams p = {};
     int effectId = doc["id"] | 1;
-    if (effectId != 1 && effectId != 2 && (effectId < 10 || effectId > 25)) effectId = 1;
+    if (effectId != 1 && effectId != 2 && (effectId < 10 || effectId > 53)) effectId = 1;
     p.effectId = (uint8_t)effectId;
     int speed = doc["speed"] | 100;
     if (speed < 10) speed = 10;
@@ -1025,7 +1555,7 @@ void WifiControl::handleEffectStart() {
     if (p.dotSize > _cfg.numLeds)       p.dotSize = _cfg.numLeds;
     int paletteId = doc["paletteId"] | 0;
     if (paletteId < 0) paletteId = 0;
-    if (paletteId > 32) paletteId = 32;
+    if (paletteId > 29) paletteId = 29;
     p.paletteId = (uint8_t)paletteId;
     p.reverse = (doc["reverse"] | (int)_cfg.effectReverse) ? 1 : 0;
     JsonArray palette = doc["colors"].as<JsonArray>();
@@ -1142,7 +1672,7 @@ void WifiControl::handleConfigPost() {
     _player.setEndBehavior(_cfg.endBehavior);
     {
         int effectId = doc["effectId"] | _cfg.effectId;
-        if (effectId == 1 || effectId == 2 || (effectId >= 10 && effectId <= 25)) {
+        if (effectId == 1 || effectId == 2 || (effectId >= 10 && effectId <= 53)) {
             _cfg.effectId = (uint8_t)effectId;
         }
     }
@@ -1168,7 +1698,7 @@ void WifiControl::handleConfigPost() {
     {
         int paletteId = doc["effectPaletteId"] | _cfg.effectPaletteId;
         if (paletteId < 0) paletteId = 0;
-        if (paletteId > 32) paletteId = 32;
+        if (paletteId > 29) paletteId = 29;
         _cfg.effectPaletteId = (uint8_t)paletteId;
     }
     if (doc.containsKey("effectReverse")) _cfg.effectReverse = doc["effectReverse"] ? 1 : 0;
@@ -1344,6 +1874,7 @@ void WifiControl::expirePeers() {
 }
 
 void WifiControl::handlePeers() {
+    sendCorsHeaders();
     String json = "[";
     for (int i = 0; i < _peerCount; i++) {
         if (i > 0) json += ",";

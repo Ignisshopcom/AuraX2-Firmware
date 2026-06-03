@@ -305,9 +305,17 @@ h3 { font-size: .92rem; margin-top: 18px; color: var(--muted); }
 
 .color-layout {
   display: grid;
-  grid-template-columns: 210px 1fr;
-  align-items: center;
-  gap: 16px;
+  grid-template-columns: minmax(190px, 220px) 1fr;
+  align-items: start;
+  gap: 12px 16px;
+}
+
+.color-left {
+  display: grid;
+  justify-items: center;
+  gap: 12px;
+  width: 100%;
+  max-width: 230px;
 }
 
 .color-control {
@@ -345,7 +353,7 @@ h3 { font-size: .92rem; margin-top: 18px; color: var(--muted); }
 
 .value-control {
   display: grid;
-  grid-template-columns: 48px 1fr 44px;
+  grid-template-columns: 104px minmax(0, 1fr) 52px;
   align-items: center;
   gap: 8px;
   width: 100%;
@@ -361,6 +369,18 @@ h3 { font-size: .92rem; margin-top: 18px; color: var(--muted); }
 .color-slots, .palette-grid, .effect-list {
   display: grid;
   gap: 8px;
+}
+
+.color-slots {
+  align-self: start;
+  padding-top: 6px;
+}
+
+.color-adjustments {
+  grid-column: 1 / -1;
+  display: grid;
+  gap: 10px;
+  margin-top: 2px;
 }
 
 .slot {
@@ -396,10 +416,17 @@ h3 { font-size: .92rem; margin-top: 18px; color: var(--muted); }
 
 .brightness {
   display: grid;
-  grid-template-columns: 88px 1fr 54px;
+  grid-template-columns: 104px minmax(0, 1fr) 52px;
   align-items: center;
   gap: 10px;
-  margin-top: 18px;
+  width: 100%;
+  color: var(--muted);
+  font-size: .82rem;
+}
+
+.brightness b {
+  color: var(--text);
+  text-align: right;
 }
 
 .effect-list {
@@ -435,11 +462,22 @@ h3 { font-size: .92rem; margin-top: 18px; color: var(--muted); }
   gap: 10px;
 }
 
+.settings-basic {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.settings-basic label,
 .form-grid label {
   display: grid;
   gap: 5px;
   color: var(--muted);
   font-size: .84rem;
+}
+
+.settings-basic .full {
+  grid-column: 1 / -1;
 }
 
 .form-grid .check {
@@ -701,8 +739,12 @@ h3 { font-size: .92rem; margin-top: 18px; color: var(--muted); }
     width: 100%;
   }
 
-  .palette-grid, .effect-list, .form-grid, .render-modes {
+.palette-grid, .effect-list, .form-grid, .settings-basic, .render-modes {
     grid-template-columns: 1fr;
+  }
+
+  .settings-basic .full {
+    grid-column: auto;
   }
 
   .device-row {

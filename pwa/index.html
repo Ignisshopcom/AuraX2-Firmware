@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0b0b0b">
+  <meta name="description" content="Find and open AuraX devices on the local network.">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="AuraX Finder">
+  <link rel="manifest" href="./manifest.webmanifest">
+  <link rel="icon" href="./icons/ignis-192.png">
+  <link rel="apple-touch-icon" href="./icons/ignis-192.png">
+  <link rel="stylesheet" href="./styles.css">
+  <title>AuraX Finder</title>
+</head>
+<body>
+  <main class="app">
+    <header class="hero">
+      <div class="brand-row">
+        <img class="logo" src="./icons/ignis-192.png" alt="">
+        <div class="title">
+          <h1>AuraX Finder</h1>
+          <p>Local devices</p>
+        </div>
+      </div>
+      <div class="top-actions">
+        <button id="installBtn" class="secondary" hidden>Install</button>
+        <button id="scanBtn">Scan</button>
+      </div>
+    </header>
+
+    <section class="connect-panel">
+      <form id="manualForm" class="manual">
+        <label>
+          <span>Device address</span>
+          <input id="addressInput" inputmode="url" autocomplete="off" placeholder="aurax.local or 192.168.1.42">
+        </label>
+        <button type="submit">Add</button>
+      </form>
+
+      <div class="quick">
+        <button data-open="aurax.local">aurax.local</button>
+        <button data-open="192.168.4.1">192.168.4.1</button>
+        <button data-open="4.3.2.1">4.3.2.1</button>
+      </div>
+    </section>
+
+    <div class="list-head">
+      <h2>Devices</h2>
+      <p id="status" class="status">Ready</p>
+    </div>
+    <p id="hint" class="hint"></p>
+    <section id="deviceList" class="devices" aria-live="polite"></section>
+  </main>
+
+  <template id="deviceTemplate">
+    <article class="device">
+      <button class="device-main" type="button">
+        <span class="device-name"></span>
+        <span class="arrow" aria-hidden="true">&gt;</span>
+      </button>
+      <div class="meta">
+        <span class="chip battery"></span>
+        <span class="chip sync"></span>
+        <span class="chip wifi"></span>
+      </div>
+      <div class="device-actions">
+        <button class="refresh" type="button">Refresh</button>
+        <button class="remove" type="button">Remove</button>
+      </div>
+    </article>
+  </template>
+
+  <script src="./app.js" defer></script>
+</body>
+</html>

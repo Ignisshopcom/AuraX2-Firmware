@@ -15,7 +15,7 @@ function IgnisLibrary(ignis)
     };
     this.effects = [
         { id: 1, name: 'Solid', icon: 'fa-square', colors: ['#ff6000'], speed: null, intensity: null, size: null },
-        { id: 2, name: 'Android', icon: 'fa-android', colors: ['#ff6000', '#00b4ff'], speed: 'Speed', intensity: null, size: 'Width', sizeMax: 32 },
+        { id: 2, name: 'Android', icon: 'fa-android', colors: ['#ff6000'], speed: 'Speed', intensity: null, size: 'Width', sizeMax: 32 },
         { id: 10, name: 'BPM', icon: 'fa-heartbeat', colors: ['#ff6000', '#00b4ff', '#ffffff'], speed: 'BPM', intensity: 'Beat depth', size: null },
         { id: 11, name: 'Flow', icon: 'fa-water', colors: ['#ff6000', '#00b4ff', '#ffffff'], speed: 'Speed', intensity: 'Waves', size: null },
         { id: 12, name: 'Gravcenter', icon: 'fa-dot-circle', colors: ['#ff6000', '#00b4ff', '#ffffff'], speed: 'Speed', intensity: null, size: 'Width', sizeMax: 32 },
@@ -992,14 +992,14 @@ IgnisLibrary.prototype.effectGalleryPreviewDataUrl = function (effect)
     function drawAndroid() {
         ctx.fillStyle = '#000';
         ctx.fillRect(0, 0, width, height);
-        ctx.strokeStyle = 'rgba(255,255,255,0.18)';
+        ctx.strokeStyle = rgb(colors[0], 0.22);
         ctx.lineWidth = 10;
         ctx.lineCap = 'round';
         ctx.beginPath();
         ctx.moveTo(22, height * 0.72);
         ctx.lineTo(width - 22, height * 0.28);
         ctx.stroke();
-        ctx.strokeStyle = '#ffffff';
+        ctx.strokeStyle = rgb(colors[0], 1);
         ctx.lineWidth = 4;
         ctx.beginPath();
         ctx.moveTo(28, height * 0.70);
@@ -1507,7 +1507,8 @@ IgnisLibrary.prototype.renderEffectEditor = function ()
         preview.prop('draggable', true);
         preview.data('n', draft);
         preview.attr('hash', draft.hash);
-        preview.append($('<div class="effect-preview-strip"></div>').css('background-image', 'url(' + this.effectGalleryPreviewDataUrl(effect) + ')'));
+        var previewImage = this.getStaticEffectPreviewDataUrl(effect, draft);
+        preview.append($('<div class="effect-preview-strip"></div>').css('background-image', 'url(' + previewImage + ')'));
         preview.append($('<strong></strong>').text(effect.name));
         preview.on('click', $.proxy(function (e) {
             $('.library-effect').removeClass('selected');
@@ -1531,6 +1532,23 @@ IgnisLibrary.prototype.renderEffectEditor = function ()
         box.append(preview);
     }
     this.resize();
+}
+
+IgnisLibrary.prototype.getStaticEffectPreviewDataUrl = function (effect, draft)
+{
+    effect = this.getEffectById(effect && effect.id);
+    var cacheKey = 'effect-gallery-fixed-30-' + effect.id;
+    if (this.effectGalleryPreviewCache[cacheKey]) return this.effectGalleryPreviewCache[cacheKey];
+
+    var previewImage = this.effectGalleryPreviewDataUrl(effect);
+    if (this.ignis.project && this.ignis.project.effectPreviewDataUrl) {
+        previewImage = this.ignis.project.effectPreviewDataUrl(draft || this.getDefaultEffectDraft(effect), 100, 100, {
+            leds: 30,
+            previewScale: 4
+        });
+    }
+    this.effectGalleryPreviewCache[cacheKey] = previewImage;
+    return previewImage;
 }
 
 IgnisLibrary.prototype.createEffectRange = function (label, key, value, min, max)
@@ -1783,7 +1801,7 @@ IgnisLibrary.prototype.updateEffectPreviewCard = function ()
     el.data('n', draft);
     el.attr('hash', draft.hash);
     el.find('strong').text(effect.name);
-    el.find('.effect-preview-strip').css('background-image', 'url(' + this.effectGalleryPreviewDataUrl(effect) + ')');
+    el.find('.effect-preview-strip').css('background-image', 'url(' + this.getStaticEffectPreviewDataUrl(effect, draft) + ')');
     this.refreshEffectColorControls();
 }
 

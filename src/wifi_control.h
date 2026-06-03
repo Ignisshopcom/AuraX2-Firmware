@@ -21,7 +21,8 @@ static constexpr uint8_t  GROUP_AP_CHANNEL = 6;
 
 class WifiControl {
 public:
-    WifiControl(PixPlayer& player, EffectPlayer& effectPlayer, ILedDriver& leds, AppConfig& cfg, SyncControl* sync = nullptr);
+    WifiControl(PixPlayer& player, EffectPlayer& effectPlayer, ILedDriver& leds, AppConfig& cfg,
+                SyncControl* sync = nullptr, bool fsMounted = true);
 
     // Connect to WiFi and start HTTP server. Returns false on timeout.
     bool begin(uint32_t timeoutMs = STA_CONNECT_TIMEOUT_MS);
@@ -41,14 +42,23 @@ private:
     void handleProgramDelete();
     void handleProgramReorder();
     void handleProgramStart();
+    void handleIdentify();
     void handlePower();
     void handleSyncNow();
     void handleStatus();
     void handlePeers();
+    void handleWledJson();
+    void handleWledInfo();
+    void handleWledState();
+    void handleWledStatePost();
+    void handleWledEffects();
+    void handleWledPalettes();
     void handleConfigGet();
     void handleConfigPost();
     void handleOta();
     void handleCaptivePortal();
+    void sendCorsHeaders();
+    void handleCorsOptions();
 
     void mdnsBegin(const char* hostname);
     IPAddress activeIP() const;
@@ -69,6 +79,11 @@ private:
     void receivePeers();
     void expirePeers();
     bool saveRuntimeConfig();
+    bool storageReady();
+    String wledInfoJson();
+    String wledStateJson();
+    String wledEffectsJson();
+    String wledPalettesJson();
 
     struct Peer {
         char      hostname[32];
@@ -96,6 +111,7 @@ private:
     bool         _apActive = false;
     bool         _apHadClient = false;
     bool         _staServicesStarted = false;
+    bool         _fsMounted = true;
     uint32_t     _lastStaRetryMs = 0;
     uint32_t     _staDisconnectedSinceMs = 0;
 

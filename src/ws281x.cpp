@@ -82,15 +82,29 @@ void WS281x::setCurrentLimit(uint16_t mALimit, uint16_t mAPerLed) {
     _mAPerLed = mAPerLed > 0 ? mAPerLed : 1;
 }
 
+uint16_t WS281x::maxRefreshHz() const {
+    // WS281x sends 24 bits/LED at 800 kHz (~30 us/LED) plus reset/latch time.
+    // Keep a safety margin for RMT driver overhead and the player task.
+    uint32_t frameUs = (uint32_t)_numLeds * 30u + 80u;
+    if (frameUs == 0) return 1;
+    uint32_t hz = (1000000u / frameUs) * 9u / 10u;
+    if (hz < 1) hz = 1;
+    if (hz > 2500) hz = 2500;
+    return (uint16_t)hz;
+}
+
 static uint16_t mappedLedIndex(uint16_t outIndex, uint16_t count, bool reverse, bool mirror) {
     if (count < 2) return 0;
+    uint16_t mapped = outIndex;
     if (!mirror) return reverse ? (uint16_t)(count - 1 - outIndex) : outIndex;
     if (count & 1) {
         uint16_t center = count / 2;
-        return (outIndex <= center) ? (uint16_t)(center - outIndex) : (uint16_t)(outIndex - center);
+        mapped = (outIndex <= center) ? (uint16_t)(center - outIndex) : (uint16_t)(outIndex - center);
+    } else {
+        uint16_t right = count / 2;
+        mapped = (outIndex < right) ? (uint16_t)(right - 1 - outIndex) : (uint16_t)(outIndex - right);
     }
-    uint16_t right = count / 2;
-    return (outIndex < right) ? (uint16_t)(right - 1 - outIndex) : (uint16_t)(outIndex - right);
+    return reverse ? (uint16_t)(count - 1 - mapped) : mapped;
 }
 
 // Encode .pix column data [0xE0|bri, B, G, R] × count into RMT items.

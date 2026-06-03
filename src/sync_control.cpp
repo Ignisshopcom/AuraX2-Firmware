@@ -39,7 +39,7 @@ static int collectSyncPrograms(SyncProgramEntry* entries, int maxEntries) {
             if (!name.startsWith("/")) name = "/" + name;
             String lower = name;
             lower.toLowerCase();
-            if (lower.endsWith(".pix")) {
+            if (lower.endsWith(".pix") || lower.endsWith(".axp")) {
                 strlcpy(entries[count].path, name.c_str(), sizeof(entries[count].path));
                 entries[count].storedSlot = storedSlotFromPath(name);
                 count++;
@@ -201,7 +201,7 @@ void SyncControl::handlePacket(const Packet& pkt, int64_t rxUs) {
     }
 }
 
-void SyncControl::broadcastPlay(const char* file, uint8_t endBehavior, uint32_t delayMs, uint8_t programSlot) {
+int SyncControl::broadcastPlay(const char* file, uint8_t endBehavior, uint32_t delayMs, uint8_t programSlot) {
     int64_t startUs = esp_timer_get_time() + (int64_t)delayMs * 1000;
     Packet pkt = {};
     pkt.cmd              = CMD_PLAY;
@@ -219,10 +219,14 @@ void SyncControl::broadcastPlay(const char* file, uint8_t endBehavior, uint32_t 
     _effectPlayer.stop();
     _player.stopTask();
     int err = _player.load(file);
-    if (err) { LOG("[sync] load failed: %d\n", err); return; }
+    if (err) {
+        LOG("[sync] load failed: %d\n", err);
+        return err;
+    }
     _player.setEndBehavior(endBehavior);
     _player.scheduleStart(startUs);
     _player.startTask(1);
+    return 0;
 }
 
 void SyncControl::broadcastStop() {

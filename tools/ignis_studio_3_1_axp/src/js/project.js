@@ -2068,7 +2068,7 @@ IgnisProject.prototype.effectLakeColor = function (node, pos, colors)
 IgnisProject.prototype.effectSignature = function (node, leds, maxColumns)
 {
     var data = {
-        renderer: 2,
+        renderer: 4,
         id: node.effectId || node.id || node.hash,
         speed: node.effectSpeed || node.speed,
         intensity: node.effectIntensity || node.intensity,
@@ -2092,12 +2092,14 @@ IgnisProject.prototype.effectSignature = function (node, leds, maxColumns)
 
 IgnisProject.prototype.effectPreviewDataUrl = function (node, width, height, zoomed)
 {
-    var ledCount = Math.max(1, parseInt(this.leds || config.project.default_leds || 170));
+    var opts = (zoomed && typeof zoomed == 'object') ? zoomed : {};
+    var ledCount = Math.max(1, parseInt(opts.leds || this.leds || config.project.default_leds || 170));
+    var previewScale = Math.max(1, Math.min(4, parseInt(opts.previewScale || 4)));
     var previewW = Math.max(32, parseInt(width || 100));
     var previewH = Math.max(32, parseInt(height || 100));
     var columns = Math.max(1, Math.round(ledCount * previewW / previewH));
     var previewNode = $.extend(true, {}, node, { duration: 2200, frequency: 80 });
-    var image = this.generateEffectImageData(previewNode, { leds: ledCount, columns: columns });
+    var image = this.generateEffectImageData(previewNode, { leds: ledCount, columns: columns * previewScale, previewScale: previewScale });
     var canvas = document.createElement('canvas');
     canvas.width = previewW;
     canvas.height = previewH;
@@ -2109,7 +2111,8 @@ IgnisProject.prototype.effectPreviewDataUrl = function (node, width, height, zoo
     var data = srcCtx.createImageData(image.width, image.height);
     data.data.set(image.data);
     srcCtx.putImageData(data, 0, 0);
-    ctx.imageSmoothingEnabled = false;
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = 'high';
     ctx.drawImage(src, 0, 0, image.width, image.height, 0, 0, previewW, previewH);
     return canvas.toDataURL('image/png');
 }
@@ -2121,7 +2124,7 @@ IgnisProject.prototype.ensureEffectTexture = function (node, leds)
     var sig = this.effectSignature(node, leds, maxColumns);
     var filePath = ignis_texdir() + path.sep + 'effect_' + sig + '_' + leds + '.png';
     if (!fs.existsSync(filePath)) {
-        var image = this.generateEffectImageData(node, { leds: leds, maxColumns: maxColumns });
+        var image = this.generateEffectImageData(node, { leds: leds, maxColumns: maxColumns, previewScale: 4 });
         var canvas = document.createElement('canvas');
         canvas.width = image.width;
         canvas.height = image.height;
@@ -2131,7 +2134,7 @@ IgnisProject.prototype.ensureEffectTexture = function (node, leds)
         ctx.putImageData(data, 0, 0);
         var png = canvas.toDataURL('image/png').replace(/^data:image\/png;base64,/, '');
         fs.writeFileSync(filePath, Buffer.from(png, 'base64'));
-        node._effectTextureRatio = image.width / image.height;
+        node._effectTextureRatio = this.getEffectTextureRatio(node, leds, maxColumns);
     }
     return {
         path: filePath.replace(/\\/g, '/'),
@@ -2260,10 +2263,18 @@ IgnisProject.prototype.applyEffectTransforms = function (image, node)
 IgnisProject.prototype.generateEffectImageData = function (node, options)
 {
     options = options || {};
-    var leds = Math.max(1, parseInt(options.leds || this.leds || config.project.default_leds || 170));
+    var logicalLeds = Math.max(1, parseInt(options.leds || this.leds || config.project.default_leds || 170));
+    var previewScale = Math.max(1, Math.min(4, parseInt(options.previewScale || 1)));
+    var leds = logicalLeds * previewScale;
+    if (previewScale > 1) {
+        node = $.extend(true, {}, node);
+        if (node.size !== undefined) node.size = Math.max(1, Math.round(parseInt(node.size || 1) * previewScale));
+        if (node.effectSize !== undefined) node.effectSize = Math.max(1, Math.round(parseInt(node.effectSize || 1) * previewScale));
+        if (node.mgap !== undefined) node.mgap = Math.max(0, Math.round(parseInt(node.mgap || 0) * previewScale));
+    }
     var frequency = Math.max(1, Math.min(parseInt(node.frequency || 40), config.project.max_line_frequency || 2500));
     var fullCols = Math.max(1, Math.ceil((node.duration || 1000) * frequency / 1000));
-    var cols = options.columns ? parseInt(options.columns) : fullCols;
+    var cols = options.columns ? parseInt(options.columns) : fullCols * previewScale;
     if (options.maxColumns && cols > options.maxColumns) cols = options.maxColumns;
     cols = Math.max(1, cols);
 
@@ -2388,7 +2399,8 @@ IgnisProject.prototype.generateEffectImageData = function (node, options)
     }
 
     for (var x = 0; x < cols; x++) {
-        var frame = Math.floor(x * fullCols / cols);
+        var frame = x * fullCols / cols;
+        var frameIndex = Math.floor(frame);
         phase = frame * speedStep();
 
         switch (effectId) {
@@ -2512,7 +2524,7 @@ IgnisProject.prototype.generateEffectImageData = function (node, options)
                     rippleOrigin = randomLed();
                     rippleRadius = 1;
                 }
-                var c = palette(frame * 17);
+                var c = palette(frameIndex * 17);
                 for (var i = 0; i < leds; i++) {
                     var d = circularDistance(i, rippleOrigin);
                     var diff = Math.abs(d - rippleRadius);
@@ -2533,7 +2545,7 @@ IgnisProject.prototype.generateEffectImageData = function (node, options)
                 var cycle = 24 + Math.trunc((1010 - speed) / 18);
                 var onTime = 2 + Math.trunc(inten * (Math.trunc(cycle / 2) + 1) / 255);
                 clear();
-                if ((frame % cycle) < onTime) {
+                if ((frameIndex % cycle) < onTime) {
                     var c = palette(phase >> 1);
                     for (var i = 0; i < leds; i++) setPixel(i, c, 255);
                 }

@@ -25,7 +25,8 @@ public:
 
         _pct = lipoPercent(_mv, _cfg->batMinMv, _cfg->batMaxMv);
 
-        bool low = _cfg->batAutoOff && _pct <= _cfg->batAutoOffThreshold;
+        bool validReading = (_mv >= 1000 && _mv <= 6500);
+        bool low = validReading && _cfg->batAutoOff && _pct <= _cfg->batAutoOffThreshold;
         if (low && !_autoOffActive) {
             _autoOffActive = true;
             return true;  // trigger blackout

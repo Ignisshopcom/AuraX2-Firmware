@@ -31,6 +31,7 @@ public:
     void setCurrentLimit(uint16_t mALimit, uint16_t mAPerLed) override;
     void clear() override;
     uint16_t numLeds() const override { return _numLeds; }
+    uint16_t maxRefreshHz() const override;
 
 private:
     void encodePixels(rmt_item32_t* dst, const uint8_t* pixData, uint16_t count, uint16_t scale256 = 256);
