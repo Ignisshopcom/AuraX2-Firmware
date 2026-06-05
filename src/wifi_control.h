@@ -17,7 +17,6 @@ static constexpr uint32_t PEER_EXPIRE_MS   = 90000;
 static constexpr uint32_t ANNOUNCE_INTERVAL_MS = 10000;
 static constexpr uint32_t STA_CONNECT_TIMEOUT_MS = 12000;
 static constexpr uint32_t STA_RETRY_INTERVAL_MS = 18000;
-static constexpr uint8_t  GROUP_AP_CHANNEL = 6;
 
 class WifiControl {
 public:
@@ -55,6 +54,8 @@ private:
     void handleWledPalettes();
     void handleConfigGet();
     void handleConfigPost();
+    void handleFirmwareStatus();
+    void handleFirmwareCheck();
     void handleOta();
     void handleCaptivePortal();
     void sendCorsHeaders();
@@ -68,10 +69,8 @@ private:
     uint8_t apClientCount() const;
     const char* staSsid() const;
     const char* staPassword() const;
-    const char* groupPassword() const;
     bool connectSta(uint32_t timeoutMs);
     void startFallbackAp();
-    void startGroupMasterAp();
     void stopFallbackAp();
     void startStaServices();
     void maintainWifi();
@@ -80,6 +79,8 @@ private:
     void expirePeers();
     bool saveRuntimeConfig();
     bool storageReady();
+    bool checkFirmwareManifest(bool force);
+    String firmwareStatusJson() const;
     String wledInfoJson();
     String wledStateJson();
     String wledEffectsJson();
@@ -93,6 +94,19 @@ private:
         int8_t    rssi;
         uint8_t   syncEnabled;
         uint16_t  syncMask;
+    };
+
+    struct FirmwareCheckState {
+        bool     checked = false;
+        bool     updateAvailable = false;
+        uint32_t checkedAtMs = 0;
+        uint32_t remoteBuild = 0;
+        uint32_t remoteSize = 0;
+        char     remoteVersion[16] = {};
+        char     remoteUrl[160] = {};
+        char     remotePage[160] = {};
+        char     remoteNotes[160] = {};
+        char     error[128] = {};
     };
 
     PixPlayer&    _player;
@@ -121,5 +135,6 @@ private:
     int            _peerCount      = 0;
     uint32_t       _lastAnnounceMs = 0;
     char           _wantedHostname[32] = {};  // hostname z configu; po konfliktu zkusíme znovu jakmile peer zmizí
+    FirmwareCheckState _fwCheck;
     BatteryMonitor _batMonitor;
 };

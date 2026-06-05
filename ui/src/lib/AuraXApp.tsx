@@ -1,5 +1,6 @@
+import { Fragment } from 'preact'
 import { useEffect, useRef, useState } from 'preact/hooks'
-import type { Color, Config, PeerInfo, ProgramsResponse, StatusResponse } from './types'
+import type { Color, Config, FirmwareStatus, PeerInfo, ProgramsResponse, StatusResponse } from './types'
 import { colorToHex, colorToHsv, hsvToColor, postJson, rssiPercent } from './utils'
 
 type Tab = 'programs' | 'colors' | 'effects' | 'settings'
@@ -29,6 +30,7 @@ const EFFECTS: EffectMeta[] = [
   { id: 11, name: 'Flow', speed: 'Speed', intensity: 'Waves' },
   { id: 12, name: 'Gravcenter', speed: 'Speed', size: 'Width', sizeMax: 32 },
   { id: 13, name: 'Gravfreq', speed: 'Speed', intensity: 'Frequency' },
+  { id: 52, name: 'Chase', speed: 'Speed', intensity: 'Sparks', size: 'Tail', sizeMax: 32 },
   { id: 14, name: 'Chase 2', speed: 'Speed', size: 'Tail', sizeMax: 32 },
   { id: 15, name: 'Chase 3', speed: 'Speed', size: 'Tail', sizeMax: 32 },
   { id: 16, name: 'Chunchun', speed: 'Speed', size: 'Width', sizeMax: 32 },
@@ -41,6 +43,33 @@ const EFFECTS: EffectMeta[] = [
   { id: 23, name: 'Strobe', speed: 'Rate', intensity: 'Duty' },
   { id: 24, name: 'Fade', speed: 'Speed', intensity: 'Depth' },
   { id: 25, name: 'Rainbow', speed: 'Speed', intensity: 'Spread' },
+  { id: 26, name: 'Twinkle', speed: 'Speed', intensity: 'Density' },
+  { id: 27, name: 'Sparkle', speed: 'Speed', intensity: 'Density' },
+  { id: 28, name: 'Fireworks', speed: 'Speed', intensity: 'Bursts', size: 'Width', sizeMax: 24 },
+  { id: 29, name: 'Scanner', speed: 'Speed', intensity: 'Fade', size: 'Width', sizeMax: 32 },
+  { id: 30, name: 'Scanner Dual', speed: 'Speed', intensity: 'Fade', size: 'Width', sizeMax: 32 },
+  { id: 31, name: 'Theater', speed: 'Speed', intensity: 'Spacing', size: 'Width', sizeMax: 16 },
+  { id: 32, name: 'Color Wipe', speed: 'Speed' },
+  { id: 33, name: 'Juggle', speed: 'Speed', intensity: 'Dots' },
+  { id: 34, name: 'Sinelon', speed: 'Speed', intensity: 'Trail', size: 'Width', sizeMax: 32 },
+  { id: 35, name: 'Fire', speed: 'Speed', intensity: 'Heat' },
+  { id: 36, name: 'Plasma', speed: 'Speed', intensity: 'Scale' },
+  { id: 37, name: 'Gradient', speed: 'Speed', intensity: 'Spread' },
+  { id: 38, name: 'Breath', speed: 'Speed', intensity: 'Floor' },
+  { id: 39, name: 'Dots', speed: 'Speed', intensity: 'Count', size: 'Width', sizeMax: 18 },
+  { id: 40, name: 'Counter Chase', speed: 'Speed', size: 'Tail', sizeMax: 32 },
+  { id: 41, name: 'Split Chase', speed: 'Speed', size: 'Tail', sizeMax: 32 },
+  { id: 42, name: 'Collision', speed: 'Speed', size: 'Width', sizeMax: 32 },
+  { id: 43, name: 'Saw', speed: 'Speed', intensity: 'Width' },
+  { id: 44, name: 'Chevron', speed: 'Speed', intensity: 'Width' },
+  { id: 45, name: 'Pulse Train', speed: 'Speed', intensity: 'Count', size: 'Width', sizeMax: 24 },
+  { id: 46, name: 'Cross Waves', speed: 'Speed', intensity: 'Frequency' },
+  { id: 47, name: 'Barber Pole', speed: 'Speed', intensity: 'Bands' },
+  { id: 48, name: 'Scan Bars', speed: 'Speed', intensity: 'Bars', size: 'Width', sizeMax: 24 },
+  { id: 49, name: 'Prism', speed: 'Speed', intensity: 'Spread' },
+  { id: 50, name: 'Spin', speed: 'Speed', size: 'Width', sizeMax: 32 },
+  { id: 51, name: 'Twist', speed: 'Speed', intensity: 'Density' },
+  { id: 53, name: 'Fire Classic', speed: 'Speed', intensity: 'Heat' },
 ]
 
 const PALETTES = [
@@ -67,7 +96,7 @@ const PALETTES = [
 
 const DEFAULT_EFFECT: EffectState = {
   effectId: 1,
-  speed: 100,
+  speed: 128,
   intensity: 128,
   size: 3,
   paletteId: 0,
@@ -97,7 +126,7 @@ function readEffect(config: Config | null): EffectState {
   while (colors.length < 3) colors.push({ r: 0, g: 0, b: 0 })
   return {
     effectId: config.effectId ?? 1,
-    speed: config.effectSpeed ?? 100,
+    speed: config.effectSpeed ?? 128,
     intensity: config.effectIntensity ?? 128,
     size: config.effectDotSize ?? 3,
     paletteId: config.effectPaletteId ?? 0,
@@ -108,8 +137,14 @@ function readEffect(config: Config | null): EffectState {
 function colorSlotsForEffect(effectId: number): number {
   if (effectId === 25) return 0
   if (effectId === 1 || effectId === 23) return 1
-  if (effectId === 2) return 2
+  if (effectId === 2) return 1
   return 3
+}
+
+function chunkEffects(effects: EffectMeta[], perRow = 2): EffectMeta[][] {
+  const rows: EffectMeta[][] = []
+  for (let i = 0; i < effects.length; i += perRow) rows.push(effects.slice(i, i + perRow))
+  return rows
 }
 
 function effectPayload(effect: EffectState, persist = true) {
@@ -131,18 +166,25 @@ export function AuraXApp() {
   const [peers, setPeers] = useState<PeerInfo[]>([])
   const [config, setConfig] = useState<Config | null>(null)
   const [programs, setPrograms] = useState<ProgramsResponse | null>(null)
+  const [firmware, setFirmware] = useState<FirmwareStatus | null>(null)
   const [selectedSlot, setSelectedSlot] = useState(1)
   const [effect, setEffect] = useState<EffectState>(DEFAULT_EFFECT)
   const [activeColor, setActiveColor] = useState(0)
   const [message, setMessage] = useState('')
+  const [pressedAction, setPressedAction] = useState<'start' | 'stop' | 'power' | null>(null)
   const effectTimerRef = useRef<number | null>(null)
   const messageTimerRef = useRef<number | null>(null)
+  const pressTimerRef = useRef<number | null>(null)
+  const latencyEstimateMsRef = useRef(40)
 
   async function refresh(includePrograms = false) {
+    const statusStartedAt = performance.now()
     const [s, p] = await Promise.all([
       fetch('/status').then((r) => r.json()),
       fetch('/peers').then((r) => r.json()).catch(() => []),
     ])
+    const statusRttMs = performance.now() - statusStartedAt
+    latencyEstimateMsRef.current = Math.max(10, Math.min(450, Math.round(statusRttMs / 2)))
     setStatus(s)
     setPeers(p)
     if (!includePrograms) return
@@ -165,6 +207,39 @@ export function AuraXApp() {
     }
   }
 
+  function markPressed(action: 'start' | 'stop' | 'power') {
+    setPressedAction(action)
+    if (pressTimerRef.current !== null) window.clearTimeout(pressTimerRef.current)
+    pressTimerRef.current = window.setTimeout(() => {
+      pressTimerRef.current = null
+      setPressedAction(null)
+    }, 420)
+  }
+
+  function startAgeMs(pressedAt: number) {
+    return Math.max(0, Math.min(1200, Math.round(latencyEstimateMsRef.current + performance.now() - pressedAt)))
+  }
+
+  async function loadFirmwareStatus() {
+    const fw = await fetch('/fw/status').then((r) => r.json()).catch(() => null)
+    if (fw) setFirmware(fw)
+  }
+
+  async function checkFirmware(force = false) {
+    if (force) showMessage('Checking firmware version...')
+    const fw = await fetch(`/fw/check${force ? '?force=1' : ''}`, { method: 'POST' })
+      .then((r) => r.json())
+      .catch(() => null)
+    if (!fw) {
+      showMessage('Firmware check failed')
+      return
+    }
+    setFirmware(fw)
+    if (fw.error) showMessage(fw.error, 2600)
+    else if (fw.update_available) showMessage(`Firmware ${fw.remote_version} is available`, 2600)
+    else if (force) showMessage('Firmware is up to date', 1800)
+  }
+
   useEffect(() => {
     fetch('/config')
       .then((r) => r.json())
@@ -178,8 +253,15 @@ export function AuraXApp() {
       clearInterval(id)
       if (effectTimerRef.current !== null) window.clearTimeout(effectTimerRef.current)
       if (messageTimerRef.current !== null) window.clearTimeout(messageTimerRef.current)
+      if (pressTimerRef.current !== null) window.clearTimeout(pressTimerRef.current)
     }
   }, [])
+
+  useEffect(() => {
+    if (tab !== 'settings') return
+    loadFirmwareStatus()
+    checkFirmware(false)
+  }, [tab])
 
   function applyEffect(next: EffectState, immediate = false) {
     setEffect(next)
@@ -242,10 +324,13 @@ export function AuraXApp() {
   }
 
   function startProgram() {
-    postJson('/program/start', { slot: selectedSlot }).then(() => refresh(false))
+    const pressedAt = performance.now()
+    markPressed('start')
+    postJson('/program/start', { slot: selectedSlot, ageMs: startAgeMs(pressedAt) }).then(() => refresh(false))
   }
 
   function stopProgram() {
+    markPressed('stop')
     fetch('/stop').then(() => refresh(false)).catch(() => showMessage('Stop failed'))
   }
 
@@ -258,7 +343,10 @@ export function AuraXApp() {
   }
 
   function togglePower() {
-    postJson('/power', { on: !(status?.power_on ?? status?.playing ?? false) }).then(() => refresh(false))
+    const pressedAt = performance.now()
+    const on = !(status?.power_on ?? status?.playing ?? false)
+    markPressed('power')
+    postJson('/power', { on, ageMs: on ? startAgeMs(pressedAt) : 0 }).then(() => refresh(false))
   }
 
   function saveSettings(patch: Partial<Config>) {
@@ -286,6 +374,15 @@ export function AuraXApp() {
   const activeColorValue = effect.colors[activeColor] ?? effect.colors[0] ?? DEFAULT_EFFECT.colors[0]
   const activeHsv = colorToHsv(activeColorValue)
   const brightnessValue = (config?.brightness ?? 100) > 0 ? (config?.brightness ?? 100) : 100
+  const effectRows = chunkEffects(EFFECTS, 2)
+  const hasEffectControls = !!(meta.speed || meta.intensity || meta.size)
+  const effectControls = hasEffectControls && (
+    <div class="effect-controls-inline">
+      {meta.speed && <Slider label={meta.speed} value={effect.speed} min={0} max={255} onInput={(value) => patchEffect({ speed: value })} />}
+      {meta.intensity && <Slider label={meta.intensity} value={effect.intensity} min={0} max={255} onInput={(value) => patchEffect({ intensity: value })} />}
+      {meta.size && <Slider label={meta.size} value={Math.min(effect.size, sizeMax)} min={1} max={sizeMax} onInput={(value) => patchEffect({ size: value })} />}
+    </div>
+  )
 
   return (
     <div class="app-shell">
@@ -298,13 +395,12 @@ export function AuraXApp() {
           <div class="header-metrics">
             <span>IP {status?.ip ?? '-'}</span>
             <span><WifiIcon /> {rssiPercent(status?.rssi) !== null ? `${rssiPercent(status?.rssi)}%` : '-'}</span>
-            <span>{fmtFps(status)}</span>
             <span><BatteryIcon /> {status?.battery_pct ?? 0}%</span>
           </div>
           <button class={syncEnabled ? 'sync-toggle active' : 'sync-toggle'} onClick={() => setSyncEnabled(!syncEnabled)}>
             SYNC
           </button>
-          <button class={powerOn ? 'power-button active' : 'power-button'} onClick={togglePower} title={powerOn ? 'Off' : 'On'} aria-label={powerOn ? 'Off' : 'On'}>
+          <button class={`${powerOn ? 'power-button active' : 'power-button'} ${pressedAction === 'power' ? 'pressed' : ''}`} onClick={togglePower} title={powerOn ? 'Off' : 'On'} aria-label={powerOn ? 'Off' : 'On'}>
             <PowerIcon />
           </button>
         </div>
@@ -324,8 +420,8 @@ export function AuraXApp() {
               <span>{programs ? `${fmtBytes(programs.free)} free` : 'Loading'}</span>
             </div>
             <div class="start-row">
-              <button class="start-button" disabled={!selectedProgram} onClick={startProgram}>START</button>
-              <button class="stop-button" onClick={stopProgram}>STOP</button>
+              <button class={`start-button ${pressedAction === 'start' ? 'pressed' : ''}`} disabled={!selectedProgram} onClick={startProgram}>START</button>
+              <button class={`stop-button ${pressedAction === 'stop' ? 'pressed' : ''}`} onClick={stopProgram}>STOP</button>
               <div class="program-picker">
                 {Array.from({ length: 5 }, (_, i) => i + 1).map((slot) => (
                   <button class={selectedSlot === slot ? 'active' : ''} onClick={() => selectProgramSlot(slot)}>
@@ -418,16 +514,17 @@ export function AuraXApp() {
               <span>{meta.name}</span>
             </div>
             <div class="effect-list">
-              {EFFECTS.map((fx) => (
-                <button class={effect.effectId === fx.id ? 'effect active' : 'effect'} onClick={() => patchEffect({ effectId: fx.id }, true)}>
-                  {fx.name}
-                </button>
+              {effectRows.map((row) => (
+                <Fragment key={row[0].id}>
+                  {row.map((fx) => (
+                    <button class={effect.effectId === fx.id ? 'effect active' : 'effect'} onClick={() => patchEffect({ effectId: fx.id }, true)}>
+                      {fx.name}
+                    </button>
+                  ))}
+                  {row.length < 2 && <span class="effect-spacer" aria-hidden="true" />}
+                  {row.some((fx) => fx.id === effect.effectId) && effectControls}
+                </Fragment>
               ))}
-            </div>
-            <div class="controls">
-              {meta.speed && <Slider label={meta.speed} value={effect.speed} min={10} max={1000} onInput={(value) => patchEffect({ speed: value })} />}
-              {meta.intensity && <Slider label={meta.intensity} value={effect.intensity} min={0} max={255} onInput={(value) => patchEffect({ intensity: value })} />}
-              {meta.size && <Slider label={meta.size} value={Math.min(effect.size, sizeMax)} min={1} max={sizeMax} onInput={(value) => patchEffect({ size: value })} />}
             </div>
           </section>
         )}
@@ -438,6 +535,8 @@ export function AuraXApp() {
             status={status}
             syncMask={syncMask}
             syncEnabled={syncEnabled}
+            firmware={firmware}
+            checkFirmware={() => checkFirmware(true)}
             saveSettings={saveSettings}
             setMessage={setMessage}
           />
@@ -575,6 +674,8 @@ function SettingsPanel({
   status,
   syncMask,
   syncEnabled,
+  firmware,
+  checkFirmware,
   saveSettings,
   setMessage,
 }: {
@@ -582,6 +683,8 @@ function SettingsPanel({
   status: StatusResponse | null
   syncMask: number
   syncEnabled: boolean
+  firmware: FirmwareStatus | null
+  checkFirmware: () => void
   saveSettings: (patch: Partial<Config>) => void
   setMessage: (message: string) => void
 }) {
@@ -647,6 +750,18 @@ function SettingsPanel({
       .catch((err) => setMessage(err.message || 'Storage format failed'))
   }
 
+  const currentVersion = firmware?.current_version ?? config.fwVersion ?? status?.fw_version ?? '1.0'
+  const latestVersion = firmware?.remote_version || currentVersion
+  const releasePage = firmware?.remote_page || firmware?.releases_url || config.releasesUrl || ''
+  const downloadUrl = firmware?.remote_url || ''
+  const firmwareState = firmware?.error
+    ? firmware.error
+    : firmware?.update_available
+      ? `Firmware ${latestVersion} is available`
+      : firmware?.checked
+        ? 'Firmware is up to date'
+        : 'Not checked yet'
+
   return (
     <section class="panel settings">
       <div class="section-head">
@@ -693,8 +808,29 @@ function SettingsPanel({
       </div>
 
       <div class="firmware-row">
+        <div class="firmware-card">
+          <div>
+            <strong>Firmware {currentVersion}</strong>
+            <span>{firmwareState}</span>
+          </div>
+          <div class="firmware-actions">
+            <button type="button" onClick={checkFirmware}>Check for updates</button>
+            {firmware?.update_available && downloadUrl && (
+              <a class="button-link" href={downloadUrl}>Download {latestVersion}</a>
+            )}
+            {releasePage && (
+              <a class="button-link subtle" href={releasePage}>Version history</a>
+            )}
+          </div>
+          {firmware?.update_available && (
+            <p>Download the .bin file to this phone or computer, then upload it below. The device will not flash firmware directly from the internet.</p>
+          )}
+        </div>
+      </div>
+
+      <div class="firmware-row">
         <button onClick={() => fetch('/reboot', { method: 'POST' })}>Reboot</button>
-        <label class="fw-button">Firmware<input type="file" accept=".bin" onChange={updateFw} /></label>
+        <label class="fw-button">Upload firmware file<input type="file" accept=".bin" onChange={updateFw} /></label>
       </div>
       <details class="advanced-settings">
         <summary>Advanced</summary>

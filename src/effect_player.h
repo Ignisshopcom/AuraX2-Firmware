@@ -28,6 +28,7 @@ private:
     ILedDriver&  _leds;
     EffectParams _params  = {};
     IEffect*     _effect  = nullptr;
+    portMUX_TYPE _paramsMux = portMUX_INITIALIZER_UNLOCKED;
 
     TaskHandle_t  _taskHandle  = nullptr;
     volatile bool _taskRunning = false;

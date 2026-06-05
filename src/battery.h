@@ -1,6 +1,7 @@
 #pragma once
 #include <Arduino.h>
 #include "app_config.h"
+#include "config.h"
 
 class BatteryMonitor {
 public:
@@ -11,10 +12,27 @@ public:
     bool update() {
         if (!_cfg) return false;
         uint32_t now = millis();
-        if (_lastMs != 0 && now - _lastMs < _cfg->batIntervalMs) return false;
+        uint32_t intervalMs = _cfg->batIntervalMs;
+        if (intervalMs < BATTERY_MIN_INTERVAL_MS) intervalMs = BATTERY_MIN_INTERVAL_MS;
+        if (_lastMs != 0 && now - _lastMs < intervalMs) return false;
+
+        if (batteryPinConflictsWithLed()) {
+            if (!_pinConflictLogged) {
+                LOG("[bat] ADC pin %u conflicts with LED output, battery read skipped\n", _cfg->batPin);
+                _pinConflictLogged = true;
+            }
+            if (_lastMs == 0) {
+                _mvf = 0.0f;
+                _mv = 0;
+                _pct = 0;
+            }
+            _lastMs = now;
+            return false;
+        }
 
         float voltage = (analogReadMilliVolts(_cfg->batPin) / 1000.0f) * _cfg->batMultiplier
                         + _cfg->batCalibration;
+        _pinConflictLogged = false;
         float raw = voltage * 1000.0f;
         if (_lastMs == 0)
             _mvf = raw;
@@ -42,6 +60,14 @@ public:
     uint8_t  pct() const { return _pct; }
 
 private:
+    bool batteryPinConflictsWithLed() const {
+        if (!_cfg) return true;
+        if (_cfg->batPin > 48) return true;
+        if (_cfg->batPin == _cfg->dataPin) return true;
+        if (_cfg->ledType == LED_TYPE_APA102 && _cfg->batPin == _cfg->clkPin) return true;
+        return false;
+    }
+
     static uint8_t lipoPercent(uint16_t mv, uint16_t minMv, uint16_t maxMv) {
         if (maxMv <= minMv) return 100;
 
@@ -65,4 +91,5 @@ private:
     uint16_t   _mv           = 0;
     uint8_t    _pct          = 0;
     bool       _autoOffActive = false;
+    bool       _pinConflictLogged = false;
 };

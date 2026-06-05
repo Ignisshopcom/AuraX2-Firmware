@@ -8,7 +8,7 @@ Usage:
 import sys
 import requests
 
-FIRMWARE = ".pio/build/esp32s3dev_8MB_PSRAM_opi/firmware.bin"
+FIRMWARE = ".pio/build/seeed_xiao_esp32s3/firmware.bin"
 UPLOAD_TIMEOUT = 90
 
 

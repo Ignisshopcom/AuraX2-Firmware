@@ -2,6 +2,7 @@
 #include "solid_effect.h"
 #include "android_effect.h"
 #include "wled_fx_effect.h"
+#include "task_compat.h"
 #include <esp_timer.h>
 
 EffectPlayer::EffectPlayer(ILedDriver& leds) : _leds(leds) {}
@@ -32,11 +33,17 @@ void EffectPlayer::start(const EffectParams& p) {
     _fpsWindowStartUs = esp_timer_get_time();
     _currentFpsX10 = 0;
     _taskRunning = true;
-    xTaskCreatePinnedToCore(taskEntry, "effect", 4096, this, 4, &_taskHandle, 1);
+    xTaskCreatePinnedToCore(taskEntry, "effect", 4096, this, 4, &_taskHandle, AURAX_LED_TASK_CORE);
 }
 
 void EffectPlayer::apply(const EffectParams& p) {
-    if (!_taskHandle || !_effect || effectFamily(_params.effectId) != effectFamily(p.effectId)) {
+    EffectParams current = {};
+    portENTER_CRITICAL(&_paramsMux);
+    current = _params;
+    portEXIT_CRITICAL(&_paramsMux);
+
+    if (!_taskHandle || !_effect || current.effectId != p.effectId ||
+        effectFamily(current.effectId) != effectFamily(p.effectId)) {
         start(p);
         return;
     }
@@ -53,7 +60,9 @@ void EffectPlayer::stop() {
 }
 
 void EffectPlayer::setParams(const EffectParams& p) {
+    portENTER_CRITICAL(&_paramsMux);
     _params = p;
+    portEXIT_CRITICAL(&_paramsMux);
 }
 
 void EffectPlayer::taskEntry(void* arg) {
@@ -64,18 +73,30 @@ void EffectPlayer::taskEntry(void* arg) {
 }
 
 void EffectPlayer::runTask() {
+    int64_t nextUs = esp_timer_get_time();
     while (_taskRunning) {
-        EffectParams p = _params;
-        int64_t now = esp_timer_get_time();
+        EffectParams p = {};
+        portENTER_CRITICAL(&_paramsMux);
+        p = _params;
+        portEXIT_CRITICAL(&_paramsMux);
+
         _effect->update(_leds, p);
         _fpsWindowFrames++;
-        int64_t fpsElapsedUs = now - _fpsWindowStartUs;
+
+        int64_t afterUpdateUs = esp_timer_get_time();
+        int64_t fpsElapsedUs = afterUpdateUs - _fpsWindowStartUs;
         if (fpsElapsedUs >= 1000000LL) {
             _currentFpsX10 = (uint16_t)((_fpsWindowFrames * 10000000ULL + (uint64_t)fpsElapsedUs / 2) / (uint64_t)fpsElapsedUs);
             _fpsWindowFrames = 0;
-            _fpsWindowStartUs = now;
+            _fpsWindowStartUs = afterUpdateUs;
         }
-        int64_t nextUs    = now + (int64_t)_effect->intervalUs(p);
+
+        int64_t intervalUs = (int64_t)_effect->intervalUs(p);
+        nextUs += intervalUs;
+        if (nextUs < afterUpdateUs) {
+            nextUs = afterUpdateUs + intervalUs;
+        }
+
         int64_t remaining = nextUs - esp_timer_get_time();
         if (remaining > 10000) {
             vTaskDelay(pdMS_TO_TICKS(remaining / 1000 - 5));

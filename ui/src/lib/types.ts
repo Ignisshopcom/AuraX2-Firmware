@@ -10,7 +10,6 @@ export interface StatusResponse {
   ip: string
   hostname?: string
   device_name?: string
-  wifi_mode?: number
   ap_ssid?: string
   ap_mode?: boolean
   battery_pct: number
@@ -19,6 +18,8 @@ export interface StatusResponse {
   sync_mask?: number
   sync_channel?: number
   rssi?: number
+  fw_version?: string
+  fw_build?: number
 }
 
 export interface PeerInfo {
@@ -45,9 +46,6 @@ export interface Config {
   pixFile?: string
   ssid?: string
   password?: string
-  wifiMode?: number
-  groupSsid?: string
-  groupPassword?: string
   deviceName?: string
   hostname?: string
   syncChannel?: number
@@ -74,6 +72,10 @@ export interface Config {
   paletteR?: number[]
   paletteG?: number[]
   paletteB?: number[]
+  fwVersion?: string
+  fwBuild?: number
+  updateManifestUrl?: string
+  releasesUrl?: string
 }
 
 export interface ProgramFile {
@@ -90,4 +92,21 @@ export interface ProgramsResponse {
   selected: string
   selected_slot?: number
   files: ProgramFile[]
+}
+
+export interface FirmwareStatus {
+  current_version: string
+  current_build: number
+  manifest_url: string
+  releases_url: string
+  checked: boolean
+  update_available: boolean
+  checked_at_ms: number
+  remote_build: number
+  remote_size: number
+  remote_version: string
+  remote_url: string
+  remote_page: string
+  remote_notes: string
+  error: string
 }

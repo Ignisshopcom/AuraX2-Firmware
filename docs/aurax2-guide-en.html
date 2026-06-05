@@ -1,0 +1,1095 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AuraX2 - Quick Guide</title>
+  <style>
+    :root {
+      --bg: #080a0c;
+      --panel: #11151a;
+      --panel-2: #171c22;
+      --line: #2b333d;
+      --text: #f4f7fb;
+      --muted: #aeb8c4;
+      --soft: #6f7b88;
+      --orange: #ff7a1a;
+      --orange-2: #ff9a3d;
+      --green: #35d07f;
+      --red: #e45858;
+      --blue: #55b7ff;
+      --radius: 16px;
+      --shadow: 0 20px 60px rgba(0, 0, 0, .35);
+      --inner: inset 0 1px 0 rgba(255, 255, 255, .04);
+      color-scheme: dark;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html {
+      scroll-behavior: smooth;
+    }
+
+    body {
+      margin: 0;
+      background:
+        radial-gradient(circle at 20% -10%, rgba(255, 122, 26, .22), transparent 30%),
+        radial-gradient(circle at 95% 10%, rgba(85, 183, 255, .14), transparent 28%),
+        linear-gradient(180deg, #0b0d10 0%, var(--bg) 36%, #050607 100%);
+      color: var(--text);
+      line-height: 1.55;
+    }
+
+    a {
+      color: inherit;
+    }
+
+    .page {
+      max-width: 1180px;
+      margin: 0 auto;
+      padding: 28px 20px 64px;
+    }
+
+    .topbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      margin-bottom: 26px;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      font-weight: 800;
+      letter-spacing: .2px;
+    }
+
+    .logo {
+      width: 42px;
+      height: 42px;
+      border-radius: 12px;
+      background: #050607;
+      border: 1px solid #26303a;
+      display: grid;
+      place-items: center;
+      box-shadow: 0 10px 28px rgba(255, 122, 26, .18);
+    }
+
+    .logo svg {
+      width: 26px;
+      height: 26px;
+    }
+
+    .print-button {
+      border: 1px solid #39434e;
+      background: #151a20;
+      color: var(--text);
+      border-radius: 10px;
+      padding: 10px 14px;
+      font-weight: 700;
+      cursor: pointer;
+      box-shadow: var(--inner);
+    }
+
+    .hero {
+      display: grid;
+      grid-template-columns: minmax(0, 1.05fr) minmax(300px, .95fr);
+      gap: 26px;
+      align-items: center;
+      padding: 34px;
+      border: 1px solid #27313b;
+      border-radius: 22px;
+      background:
+        linear-gradient(145deg, rgba(255, 122, 26, .13), transparent 42%),
+        linear-gradient(180deg, rgba(255, 255, 255, .04), rgba(255, 255, 255, .01)),
+        var(--panel);
+      box-shadow: var(--shadow), var(--inner);
+      overflow: hidden;
+    }
+
+    .eyebrow {
+      color: var(--orange-2);
+      font-weight: 800;
+      text-transform: uppercase;
+      letter-spacing: .12em;
+      font-size: 12px;
+      margin: 0 0 10px;
+    }
+
+    h1 {
+      font-size: clamp(34px, 6vw, 66px);
+      line-height: .96;
+      margin: 0 0 18px;
+      letter-spacing: 0;
+    }
+
+    .lead {
+      color: #d5dde7;
+      max-width: 680px;
+      margin: 0;
+      font-size: clamp(17px, 2vw, 21px);
+    }
+
+    .quick-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 26px;
+    }
+
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      text-decoration: none;
+      border: 1px solid #39434e;
+      background: #151a20;
+      border-radius: 999px;
+      padding: 10px 14px;
+      color: var(--text);
+      font-weight: 700;
+      box-shadow: var(--inner);
+    }
+
+    .pill.primary {
+      background: linear-gradient(180deg, #ff8a2f, #ef6410);
+      color: #140800;
+      border-color: #ff9a3d;
+    }
+
+    .hero-visual {
+      width: 100%;
+      min-height: 420px;
+    }
+
+    .nav {
+      position: sticky;
+      top: 0;
+      z-index: 3;
+      display: flex;
+      gap: 8px;
+      overflow-x: auto;
+      margin: 18px 0 26px;
+      padding: 10px;
+      border: 1px solid #26303a;
+      border-radius: 16px;
+      background: rgba(11, 14, 18, .88);
+      backdrop-filter: blur(14px);
+      box-shadow: 0 12px 36px rgba(0, 0, 0, .22);
+    }
+
+    .nav a {
+      flex: 0 0 auto;
+      text-decoration: none;
+      color: #dce5ef;
+      font-weight: 700;
+      padding: 9px 12px;
+      border-radius: 10px;
+      border: 1px solid transparent;
+    }
+
+    .nav a:hover {
+      border-color: #38434f;
+      background: #161b21;
+    }
+
+    section {
+      margin-top: 34px;
+    }
+
+    h2 {
+      margin: 0 0 14px;
+      font-size: clamp(25px, 3vw, 36px);
+      letter-spacing: 0;
+    }
+
+    h3 {
+      margin: 0 0 8px;
+      font-size: 19px;
+    }
+
+    p {
+      color: var(--muted);
+      margin: 0 0 12px;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 14px;
+    }
+
+    .grid.two {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .card {
+      border: 1px solid #27313b;
+      border-radius: var(--radius);
+      background: linear-gradient(180deg, rgba(255, 255, 255, .035), rgba(255, 255, 255, .01)), var(--panel);
+      padding: 18px;
+      box-shadow: 0 12px 34px rgba(0, 0, 0, .24), var(--inner);
+    }
+
+    .card strong {
+      color: var(--text);
+    }
+
+    .step {
+      display: grid;
+      grid-template-columns: 44px minmax(0, 1fr);
+      gap: 14px;
+      padding: 16px;
+      border: 1px solid #26303a;
+      border-radius: var(--radius);
+      background: #101419;
+      margin-bottom: 10px;
+    }
+
+    .num {
+      width: 38px;
+      height: 38px;
+      display: grid;
+      place-items: center;
+      border-radius: 12px;
+      background: linear-gradient(180deg, #ff8a2f, #e95f0c);
+      color: #120700;
+      font-weight: 900;
+      box-shadow: 0 10px 24px rgba(255, 122, 26, .22);
+    }
+
+    .callout {
+      border: 1px solid rgba(255, 122, 26, .45);
+      background: linear-gradient(135deg, rgba(255, 122, 26, .13), rgba(255, 122, 26, .04));
+      border-radius: var(--radius);
+      padding: 18px;
+      box-shadow: var(--inner);
+    }
+
+    .callout.good {
+      border-color: rgba(53, 208, 127, .45);
+      background: linear-gradient(135deg, rgba(53, 208, 127, .12), rgba(53, 208, 127, .035));
+    }
+
+    .callout.warn {
+      border-color: rgba(228, 88, 88, .45);
+      background: linear-gradient(135deg, rgba(228, 88, 88, .12), rgba(228, 88, 88, .035));
+    }
+
+    .code {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 8px;
+      background: #050708;
+      border: 1px solid #2a333e;
+      color: #f8fbff;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: .95em;
+    }
+
+    .screen {
+      border: 1px solid #2e3843;
+      border-radius: 20px;
+      background: #0c0f13;
+      box-shadow: 0 20px 44px rgba(0, 0, 0, .38), var(--inner);
+      overflow: hidden;
+    }
+
+    .screen-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 12px 14px;
+      background: #151a20;
+      border-bottom: 1px solid #28323c;
+      color: #dfe8f3;
+      font-weight: 800;
+    }
+
+    .dots {
+      display: flex;
+      gap: 6px;
+    }
+
+    .dots span {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: #586471;
+    }
+
+    .mock-ui {
+      padding: 15px;
+    }
+
+    .mock-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      border: 1px solid #27313b;
+      background: #151a20;
+      border-radius: 12px;
+      padding: 12px;
+      margin-bottom: 10px;
+    }
+
+    .mock-row.active {
+      border-color: var(--orange);
+      background: rgba(255, 122, 26, .14);
+    }
+
+    .mock-button {
+      border-radius: 10px;
+      background: var(--orange);
+      color: #160800;
+      padding: 9px 12px;
+      font-weight: 900;
+      min-width: 76px;
+      text-align: center;
+    }
+
+    .mock-tabbar {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 8px;
+      margin-top: 10px;
+    }
+
+    .mock-tabbar span {
+      background: #1b2128;
+      border: 1px solid #303a45;
+      border-radius: 10px;
+      padding: 9px 6px;
+      text-align: center;
+      color: #dfe8f3;
+      font-weight: 700;
+      font-size: 13px;
+    }
+
+    .mock-tabbar span:first-child {
+      border-color: var(--orange);
+      background: rgba(255, 122, 26, .17);
+    }
+
+    .list {
+      display: grid;
+      gap: 10px;
+      margin: 14px 0 0;
+      padding: 0;
+      list-style: none;
+    }
+
+    .list li {
+      position: relative;
+      padding-left: 24px;
+      color: var(--muted);
+    }
+
+    .list li::before {
+      content: "";
+      position: absolute;
+      left: 0;
+      top: .55em;
+      width: 9px;
+      height: 9px;
+      border-radius: 3px;
+      background: var(--orange);
+      box-shadow: 0 0 0 4px rgba(255, 122, 26, .12);
+    }
+
+    .table-wrap {
+      overflow-x: auto;
+      border: 1px solid #27313b;
+      border-radius: var(--radius);
+      background: #0f1318;
+      box-shadow: var(--inner);
+    }
+
+    table {
+      border-collapse: collapse;
+      width: 100%;
+      min-width: 720px;
+    }
+
+    th, td {
+      text-align: left;
+      padding: 14px 16px;
+      border-bottom: 1px solid #27313b;
+      vertical-align: top;
+    }
+
+    th {
+      color: #fff;
+      background: #161b21;
+      font-size: 13px;
+      text-transform: uppercase;
+      letter-spacing: .08em;
+    }
+
+    td {
+      color: var(--muted);
+    }
+
+    tr:last-child td {
+      border-bottom: 0;
+    }
+
+    .footer {
+      margin-top: 46px;
+      padding-top: 24px;
+      border-top: 1px solid #27313b;
+      color: var(--soft);
+      font-size: 14px;
+    }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      border: 1px solid #34404c;
+      border-radius: 999px;
+      padding: 7px 10px;
+      color: #dce5ef;
+      background: #12171d;
+      font-weight: 700;
+      font-size: 13px;
+    }
+
+    .badges {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 12px;
+    }
+
+    @media (max-width: 900px) {
+      .hero,
+      .grid,
+      .grid.two {
+        grid-template-columns: 1fr;
+      }
+
+      .hero {
+        padding: 24px;
+      }
+    }
+
+    @media print {
+      body {
+        background: #fff;
+        color: #111;
+      }
+
+      .nav,
+      .print-button {
+        display: none;
+      }
+
+      .hero,
+      .card,
+      .step,
+      .callout,
+      .screen,
+      .table-wrap {
+        box-shadow: none;
+        break-inside: avoid;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <header class="topbar">
+      <div class="brand">
+        <div class="logo" aria-hidden="true">
+          <svg viewBox="0 0 48 48" role="img">
+            <path fill="#ff7a1a" d="M24 2 38 24 24 46 10 24z"/>
+            <path fill="#ff9a3d" d="M24 2v44L10 24z"/>
+            <path fill="#171c22" d="M24 10 32 24 24 38 16 24z"/>
+            <path fill="#f6f7fb" d="M24 10v28l-8-14z" opacity=".92"/>
+          </svg>
+        </div>
+        <div>
+          <div>AuraX2</div>
+          <div style="color:var(--muted);font-size:13px;font-weight:700;">quick setup and control guide</div>
+        </div>
+      </div>
+      <button class="print-button" onclick="window.print()">Print / Save PDF</button>
+    </header>
+
+    <div class="hero">
+      <div>
+        <p class="eyebrow">Ignisshop controller</p>
+        <h1>Set up AuraX2 without guesswork</h1>
+        <p class="lead">
+          This guide explains how to find AuraX2, connect it to Wi-Fi, and control it from a phone,
+          a computer, or a laptop running Ignis Studio. The important rule is simple: AuraX devices,
+          your phone, and your computer must be on the same network. That network can be created by
+          a router, a phone hotspot, or a laptop hotspot.
+        </p>
+        <div class="quick-actions">
+          <a class="pill primary" href="#quick-start">Quick Start</a>
+          <a class="pill" href="#ap-mode">AuraX-XXXX Wi-Fi</a>
+          <a class="pill" href="#app">Ignis.APP</a>
+          <a class="pill" href="#troubleshooting">Troubleshooting</a>
+        </div>
+      </div>
+
+      <svg class="hero-visual" viewBox="0 0 760 560" aria-label="AuraX2 shared Wi-Fi network diagram">
+        <defs>
+          <linearGradient id="orangeGlow" x1="0" x2="1">
+            <stop offset="0" stop-color="#ff7a1a"/>
+            <stop offset="1" stop-color="#ffbd73"/>
+          </linearGradient>
+          <filter id="glow">
+            <feGaussianBlur stdDeviation="5" result="blur"/>
+            <feMerge>
+              <feMergeNode in="blur"/>
+              <feMergeNode in="SourceGraphic"/>
+            </feMerge>
+          </filter>
+          <clipPath id="networkClip">
+            <rect x="24" y="24" width="712" height="500" rx="32"/>
+          </clipPath>
+        </defs>
+        <rect x="24" y="24" width="712" height="500" rx="32" fill="#0c1015" stroke="#2b333d"/>
+
+        <g clip-path="url(#networkClip)" opacity=".9">
+          <circle cx="380" cy="130" r="112" fill="none" stroke="#ff7a1a" stroke-width="2" opacity=".30"/>
+          <circle cx="380" cy="130" r="172" fill="none" stroke="#ff7a1a" stroke-width="2" opacity=".15"/>
+          <circle cx="160" cy="168" r="126" fill="none" stroke="#55b7ff" stroke-width="2" opacity=".30"/>
+          <circle cx="160" cy="168" r="188" fill="none" stroke="#55b7ff" stroke-width="2" opacity=".14"/>
+          <circle cx="170" cy="398" r="118" fill="none" stroke="#35d07f" stroke-width="2" opacity=".31"/>
+          <circle cx="170" cy="398" r="176" fill="none" stroke="#35d07f" stroke-width="2" opacity=".15"/>
+          <circle cx="610" cy="176" r="120" fill="none" stroke="#ff9a3d" stroke-width="2" opacity=".30"/>
+          <circle cx="610" cy="176" r="174" fill="none" stroke="#ff9a3d" stroke-width="2" opacity=".14"/>
+          <circle cx="610" cy="398" r="112" fill="none" stroke="#55b7ff" stroke-width="2" opacity=".30"/>
+          <circle cx="610" cy="398" r="164" fill="none" stroke="#55b7ff" stroke-width="2" opacity=".13"/>
+        </g>
+
+        <g transform="translate(260 248)">
+          <rect width="240" height="92" rx="24" fill="#111820" stroke="#ff7a1a"/>
+          <path d="M67 45c36-39 70-39 106 0" fill="none" stroke="#ff7a1a" stroke-width="8" stroke-linecap="round" filter="url(#glow)"/>
+          <path d="M90 26c18-14 42-14 60 0" fill="none" stroke="#ffbd73" stroke-width="7" stroke-linecap="round"/>
+          <circle cx="120" cy="60" r="7" fill="#ffbd73"/>
+          <text x="120" y="116" text-anchor="middle" fill="#f4f7fb" font-size="19" font-weight="900">Shared Wi-Fi network</text>
+          <text x="120" y="138" text-anchor="middle" fill="#aeb8c4" font-size="13" font-weight="700">all devices can see each other</text>
+        </g>
+
+        <g transform="translate(304 62)">
+          <rect width="152" height="118" rx="22" fill="#151a20" stroke="#ff7a1a"/>
+          <path d="M36 60c27-29 53-29 80 0" fill="none" stroke="#ff7a1a" stroke-width="7" stroke-linecap="round"/>
+          <path d="M54 42c13-10 31-10 44 0" fill="none" stroke="#ffbd73" stroke-width="6" stroke-linecap="round"/>
+          <circle cx="76" cy="72" r="6" fill="#ffbd73"/>
+          <text x="76" y="96" text-anchor="middle" fill="#f4f7fb" font-size="16" font-weight="900">Router</text>
+          <text x="76" y="113" text-anchor="middle" fill="#35d07f" font-size="12" font-weight="800">most stable</text>
+        </g>
+
+        <g transform="translate(66 96)">
+          <rect width="196" height="136" rx="22" fill="#151a20" stroke="#34404c"/>
+          <rect x="22" y="22" width="152" height="70" rx="12" fill="#090c10" stroke="#26303a"/>
+          <rect x="36" y="38" width="120" height="10" rx="5" fill="#ff7a1a"/>
+          <rect x="36" y="60" width="82" height="10" rx="5" fill="#35d07f"/>
+          <text x="98" y="112" text-anchor="middle" fill="#f4f7fb" font-size="17" font-weight="800">Laptop</text>
+          <text x="98" y="130" text-anchor="middle" fill="#aeb8c4" font-size="12" font-weight="700">Ignis Studio</text>
+        </g>
+
+        <g transform="translate(90 330)">
+          <rect width="160" height="154" rx="28" fill="#151a20" stroke="#34404c"/>
+          <rect x="24" y="22" width="112" height="78" rx="13" fill="#090c10" stroke="#26303a"/>
+          <rect x="38" y="38" width="78" height="11" rx="6" fill="#ff7a1a"/>
+          <rect x="38" y="62" width="62" height="11" rx="6" fill="#2b333d"/>
+          <circle cx="80" cy="112" r="6" fill="#39434e"/>
+          <text x="80" y="130" text-anchor="middle" fill="#f4f7fb" font-size="17" font-weight="800">Phone</text>
+          <text x="80" y="148" text-anchor="middle" fill="#aeb8c4" font-size="12" font-weight="700">browser / hotspot</text>
+        </g>
+
+        <g transform="translate(532 96)">
+          <rect width="156" height="134" rx="24" fill="#151a20" stroke="#34404c"/>
+          <rect x="24" y="30" width="108" height="18" rx="9" fill="#ff7a1a"/>
+          <rect x="24" y="62" width="108" height="18" rx="9" fill="#35d07f"/>
+          <circle cx="26" cy="17" r="8" fill="#55b7ff"/>
+          <text x="78" y="108" text-anchor="middle" fill="#f4f7fb" font-size="17" font-weight="800">AuraX2</text>
+          <text x="78" y="126" text-anchor="middle" fill="#aeb8c4" font-size="12" font-weight="700">aurax.local</text>
+        </g>
+
+        <g transform="translate(532 332)">
+          <rect width="156" height="120" rx="24" fill="#151a20" stroke="#34404c"/>
+          <rect x="26" y="28" width="104" height="15" rx="8" fill="#55b7ff"/>
+          <rect x="26" y="56" width="104" height="15" rx="8" fill="#ff7a1a"/>
+          <circle cx="116" cy="17" r="8" fill="#35d07f"/>
+          <text x="78" y="96" text-anchor="middle" fill="#f4f7fb" font-size="17" font-weight="800">AuraX2</text>
+          <text x="78" y="114" text-anchor="middle" fill="#aeb8c4" font-size="12" font-weight="700">IP from Ignis Studio</text>
+        </g>
+
+        <text x="380" y="508" text-anchor="middle" fill="#aeb8c4" font-size="16" font-weight="700">
+          All devices are on the same network and can communicate with each other
+        </text>
+      </svg>
+    </div>
+
+    <nav class="nav" aria-label="Contents">
+      <a href="#quick-start">Quick Start</a>
+      <a href="#network">Shared Network</a>
+      <a href="#ap-mode">AuraX Wi-Fi</a>
+      <a href="#app">Ignis.APP</a>
+      <a href="#web-ui">Web Control</a>
+      <a href="#programs">Programs</a>
+      <a href="#sync">Sync</a>
+      <a href="#troubleshooting">Troubleshooting</a>
+    </nav>
+
+    <section id="quick-start">
+      <h2>Quick Start</h2>
+      <div class="grid">
+        <div class="card">
+          <h3>Best option</h3>
+          <p>
+            Connect AuraX2, your phone, and the computer running Ignis Studio to the same Wi-Fi router.
+            A router is the most stable solution when using multiple devices. You can then control AuraX2
+            from a phone or PC through <span class="code">http://aurax.local</span>, through its IP address,
+            or through Ignis.APP.
+          </p>
+        </div>
+        <div class="card">
+          <h3>Rescue network AuraX-XXXX</h3>
+          <p>
+            If AuraX2 cannot connect to the saved Wi-Fi network, it automatically creates its own
+            <span class="code">AuraX-XXXX</span> Wi-Fi. This makes it possible to always connect to the
+            device, change Wi-Fi settings, or control it directly for temporary use.
+          </p>
+        </div>
+        <div class="card">
+          <h3>Network without a router</h3>
+          <p>
+            A shared network can also be created by a phone hotspot or a laptop hotspot.
+            Connect AuraX2 and the device you want to control it from to that same network.
+          </p>
+        </div>
+        <div class="card">
+          <h3>Firmware update notice</h3>
+          <p>
+            When AuraX2 has internet access, it can quietly check whether a newer firmware version is
+            available. If an update exists, the notification appears in Settings. The update will not
+            start by itself without user confirmation.
+          </p>
+        </div>
+      </div>
+    </section>
+
+    <section id="network">
+      <h2>Shared Wi-Fi network: router or hotspot</h2>
+      <div class="grid two">
+        <div>
+          <div class="step">
+            <div class="num">1</div>
+            <div>
+              <h3>Choose the Wi-Fi source</h3>
+              <p>A regular Wi-Fi router is the best option. If a router is not available, the network can be created by a phone hotspot or a laptop hotspot.</p>
+            </div>
+          </div>
+          <div class="step">
+            <div class="num">2</div>
+            <div>
+              <h3>Connect everything to the same network</h3>
+              <p>Connect AuraX2 devices, your phone, and the computer running Ignis Studio to the same Wi-Fi network. Once they are on the same network, they can communicate.</p>
+            </div>
+          </div>
+          <div class="step">
+            <div class="num">3</div>
+            <div>
+              <h3>Control from phone or computer</h3>
+              <p>Open a browser on your phone or PC and enter <span class="code">http://aurax.local</span>. This opens the AuraX2 web control page without installing an app.</p>
+            </div>
+          </div>
+          <div class="step">
+            <div class="num">4</div>
+            <div>
+              <h3>Ignis Studio shows IP addresses</h3>
+              <p>Use <strong>Scan</strong> in Ignis Studio. It will search for AuraX2 devices on the same network and show the IP address of each device.</p>
+            </div>
+          </div>
+          <div class="step">
+            <div class="num">5</div>
+            <div>
+              <h3>The app is optional</h3>
+              <p>Once you know <span class="code">aurax.local</span> or the IP address, open it in a browser on your phone or PC. Control runs directly from the device web page.</p>
+            </div>
+          </div>
+          <div class="step">
+            <div class="num">6</div>
+            <div>
+              <h3>If <span class="code">aurax.local</span> does not open</h3>
+              <p>Open the device IP address directly, for example <span class="code">http://10.91.105.247</span>. You can find the IP address in Ignis Studio after pressing <strong>Scan</strong>.</p>
+            </div>
+          </div>
+        </div>
+        <div class="screen">
+          <div class="screen-head">
+            <span>Ignis Studio / browser</span>
+            <div class="dots"><span></span><span></span><span></span></div>
+          </div>
+          <div class="mock-ui">
+            <div class="mock-row active">
+              <div>
+                <strong>stage-left</strong><br>
+                <span style="color:var(--muted)">10.91.105.247 - open on phone or PC</span>
+              </div>
+              <div class="mock-button">Open</div>
+            </div>
+            <div class="mock-row">
+              <span>stage-right - 10.91.105.248</span>
+              <span style="color:var(--green);font-weight:800;">online</span>
+            </div>
+            <div class="mock-row">
+              <span>Ignis Studio Scan shows IP addresses</span>
+              <span style="color:var(--blue);font-weight:800;">Scan</span>
+            </div>
+            <div class="mock-tabbar">
+              <span>Programs</span><span>Colors</span><span>Effects</span><span>Settings</span>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="callout good" style="margin-top:14px;">
+        <h3>Recommendation</h3>
+        <p>
+          Use a router when you want to control several props or devices at the same time. A phone or
+          laptop hotspot can work, but a router is more stable. You can control devices without the app:
+          scan in Ignis Studio, copy the IP address, and open it in a browser.
+        </p>
+      </div>
+    </section>
+
+    <section id="ap-mode">
+      <h2>When AuraX2 broadcasts its own AuraX-XXXX Wi-Fi</h2>
+      <div class="callout good" style="margin-bottom:14px;">
+        <h3>This is the rescue mode</h3>
+        <p>
+          If AuraX2 cannot connect to the configured Wi-Fi network, it automatically starts its own
+          <span class="code">AuraX-XXXX</span> Wi-Fi. This is intentional: it lets you reach the device
+          even if the router password changed, the hotspot was turned off, or the device is being used
+          in a new location.
+        </p>
+      </div>
+      <div class="grid two">
+        <div class="screen">
+          <div class="screen-head">
+            <span>Phone Wi-Fi</span>
+            <div class="dots"><span></span><span></span><span></span></div>
+          </div>
+          <div class="mock-ui">
+            <div class="mock-row active">
+              <div>
+                <strong>AuraX-7772</strong><br>
+                <span style="color:var(--muted)">no internet is normal</span>
+              </div>
+              <span style="color:var(--orange);font-weight:900;">connect</span>
+            </div>
+            <div class="mock-row">
+              <div>
+                <strong>Home_WiFi</strong><br>
+                <span style="color:var(--muted)">saved network</span>
+              </div>
+              <span style="color:var(--soft)">router</span>
+            </div>
+          </div>
+        </div>
+        <div>
+          <div class="step">
+            <div class="num">1</div>
+            <div>
+              <h3>Find the AuraX-XXXX network</h3>
+              <p>In your Wi-Fi list, choose a network such as <span class="code">AuraX-7772</span>. The number is different for each device so multiple units do not look identical.</p>
+            </div>
+          </div>
+          <div class="step">
+            <div class="num">2</div>
+            <div>
+              <h3>Stay connected even without internet</h3>
+              <p>Your phone may say that the network has no internet. This is normal. Choose <strong>Stay connected</strong> or <strong>Yes</strong>.</p>
+            </div>
+          </div>
+          <div class="step">
+            <div class="num">3</div>
+            <div>
+              <h3>Open the settings page</h3>
+              <p>If the page does not open automatically, enter <span class="code">http://aurax.local</span>. If that does not work, enter <span class="code">http://192.168.4.1</span>.</p>
+            </div>
+          </div>
+          <div class="step">
+            <div class="num">4</div>
+            <div>
+              <h3>Set Wi-Fi</h3>
+              <p>In <strong>Settings</strong>, enter the Wi-Fi name and password. After saving, AuraX2 connects to that network and turns off its own setup Wi-Fi.</p>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="callout warn" style="margin-top:14px;">
+        <h3>Important for Android</h3>
+        <p>
+          If the phone keeps disconnecting from <span class="code">AuraX-XXXX</span>, temporarily turn off
+          mobile data or confirm in the phone notification that you want to stay connected even without internet.
+        </p>
+      </div>
+    </section>
+
+    <section id="app">
+      <h2>Ignis.APP</h2>
+      <div class="grid two">
+        <div>
+          <p>
+            Ignis.APP is mainly a convenient way to avoid typing IP addresses. It searches for AuraX2
+            devices on the local network and opens their web control page when you tap a device.
+          </p>
+          <div class="step">
+            <div class="num">1</div>
+            <div>
+              <h3>Put the phone on the same Wi-Fi</h3>
+              <p>Your phone and AuraX2 must be on the same local network. A home or venue router is the most reliable setup.</p>
+            </div>
+          </div>
+          <div class="step">
+            <div class="num">2</div>
+            <div>
+              <h3>Press Scan</h3>
+              <p>The app shows found devices with their name, IP address, battery state, Wi-Fi signal, and sync channels.</p>
+            </div>
+          </div>
+          <div class="step">
+            <div class="num">3</div>
+            <div>
+              <h3>Tap a device</h3>
+              <p>The control page for that AuraX2 device opens.</p>
+            </div>
+          </div>
+        </div>
+        <div class="screen">
+          <div class="screen-head">
+            <span>Ignis.APP</span>
+            <div class="dots"><span></span><span></span><span></span></div>
+          </div>
+          <div class="mock-ui">
+            <div class="mock-row">
+              <strong>Local devices</strong>
+              <div class="mock-button">Scan</div>
+            </div>
+            <div class="mock-row active">
+              <div>
+                <strong>stage-left</strong><br>
+                <span style="color:var(--muted)">10.91.105.247</span>
+              </div>
+              <div style="text-align:right;color:#dbe5ef;">
+                Wi-Fi 98%<br>
+                Battery 95%
+              </div>
+            </div>
+            <div class="mock-row">
+              <div>
+                <strong>stage-right</strong><br>
+                <span style="color:var(--muted)">10.91.105.248</span>
+              </div>
+              <div style="text-align:right;color:#dbe5ef;">
+                Wi-Fi 84%<br>
+                Battery 72%
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="web-ui">
+      <h2>AuraX2 web control</h2>
+      <div class="grid">
+        <div class="card">
+          <h3>Programs</h3>
+          <p>Upload, delete, and start programs exported from Ignis Studio. AuraX2 checks free space and upload integrity.</p>
+        </div>
+        <div class="card">
+          <h3>Colors</h3>
+          <p>Select colors, brightness, and prepared color palettes for effects that use color settings.</p>
+        </div>
+        <div class="card">
+          <h3>Effects</h3>
+          <p>Run instant effects without uploading a program. Each effect shows only the controls that make sense for that effect.</p>
+        </div>
+        <div class="card">
+          <h3>Settings</h3>
+          <p>Device name, Wi-Fi, firmware status, update notifications, firmware update, and reboot. Do not change Advanced settings without consultation or exact knowledge of the device.</p>
+        </div>
+        <div class="card">
+          <h3>ON / OFF</h3>
+          <p>OFF turns LEDs off. ON resumes the last running program or effect.</p>
+        </div>
+        <div class="card">
+          <h3>Device status</h3>
+          <p>The interface shows the IP address, Wi-Fi signal, battery state, and other useful status information.</p>
+        </div>
+      </div>
+    </section>
+
+    <section id="programs">
+      <h2>Uploading programs from Ignis Studio</h2>
+      <div class="grid two">
+        <div>
+          <div class="step">
+            <div class="num">1</div>
+            <div>
+              <h3>Create the program in Ignis Studio</h3>
+              <p>Prepare the program in Ignis Studio and export it for AuraX2. If you are not sure about the project settings, verify them before uploading.</p>
+            </div>
+          </div>
+          <div class="step">
+            <div class="num">2</div>
+            <div>
+              <h3>Upload directly to the device</h3>
+              <p>Open <strong>Programs</strong> in AuraX2, choose the file, and upload it. Upload progress is shown on screen.</p>
+            </div>
+          </div>
+          <div class="step">
+            <div class="num">3</div>
+            <div>
+              <h3>Start the program</h3>
+              <p>Select the slot or program and press <strong>START</strong>. STOP stops the program.</p>
+            </div>
+          </div>
+        </div>
+        <div class="callout">
+          <h3>What AuraX2 checks</h3>
+          <ul class="list">
+            <li>Whether there is enough free space on the device.</li>
+            <li>Whether the file was uploaded correctly.</li>
+            <li>Whether a program, effect, or blackout state is active.</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <section id="sync">
+      <h2>Synchronizing multiple devices</h2>
+      <div class="grid two">
+        <div class="card">
+          <h3>When to use Sync</h3>
+          <p>
+            Turn Sync on when you want one control action to change programs, colors, effects, or brightness
+            on multiple devices at once. Devices must be on the same network and in the same sync channel.
+          </p>
+          <div class="badges">
+            <span class="badge">channels 1-10</span>
+            <span class="badge">multiple devices</span>
+            <span class="badge">shared START</span>
+          </div>
+        </div>
+        <div class="card">
+          <h3>When to turn Sync off</h3>
+          <p>
+            If you want to control only one specific prop or device, turn Sync off. Commands are then sent
+            only to the device currently open in the browser.
+          </p>
+          <div class="badges">
+            <span class="badge">single device</span>
+            <span class="badge">local control</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="settings">
+      <h2>Common settings</h2>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Setting</th>
+              <th>Purpose</th>
+              <th>Recommendation</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><strong>Device name</strong></td>
+              <td>Name shown in the app, device list, and network.</td>
+              <td>Use a practical name such as <span class="code">stage-left</span> or <span class="code">staff-01</span>.</td>
+            </tr>
+            <tr>
+              <td><strong>Wi-Fi SSID / Password</strong></td>
+              <td>The network AuraX2 should connect to.</td>
+              <td>Use one stable Wi-Fi network when controlling multiple devices.</td>
+            </tr>
+            <tr>
+              <td><strong>Advanced settings</strong></td>
+              <td>Service area for hardware-specific configuration.</td>
+              <td>Do not change without consultation or exact knowledge of the device.</td>
+            </tr>
+            <tr>
+              <td><strong>Firmware update</strong></td>
+              <td>Current firmware version, check for newer firmware, and manual firmware update.</td>
+              <td>AuraX2 can notify you when a newer version is available. Update only with stable power and do not interrupt the upload.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="troubleshooting">
+      <h2>Troubleshooting</h2>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Problem</th>
+              <th>What to try</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><span class="code">aurax.local</span> does not open</td>
+              <td>Check that you are on the same Wi-Fi network. Press <strong>Scan</strong> in Ignis Studio and open the device IP address. On AuraX setup Wi-Fi, try <span class="code">192.168.4.1</span>.</td>
+            </tr>
+            <tr>
+              <td>The phone disconnects from <span class="code">AuraX-XXXX</span></td>
+              <td>Confirm that you want to stay connected to a network without internet. If needed, temporarily disable mobile data or automatic Wi-Fi switching.</td>
+            </tr>
+            <tr>
+              <td>Ignis.APP finds no devices</td>
+              <td>Put your phone, computer, and AuraX2 on the same Wi-Fi. Try Scan again in Ignis Studio. If the phone is used as a hotspot, some phones limit client discovery; use the IP address or a router instead.</td>
+            </tr>
+            <tr>
+              <td><span class="code">AuraX-XXXX</span> disappeared after setting Wi-Fi</td>
+              <td>This is correct. The device connected to the selected network and turned off its own setup Wi-Fi.</td>
+            </tr>
+            <tr>
+              <td>Program upload fails</td>
+              <td>Check free space and the file exported from Ignis Studio. If upload through the app is blocked by the phone, try a regular browser.</td>
+            </tr>
+            <tr>
+              <td>The device does not respond</td>
+              <td>Disconnect and reconnect power. Wait up to 60 seconds. If it cannot connect to the saved Wi-Fi, it should start broadcasting <span class="code">AuraX-XXXX</span>.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section>
+      <h2>The simple rule</h2>
+      <div class="callout good">
+        <h3>Router is best, hotspot is backup</h3>
+        <p>
+          Whenever possible, connect all AuraX2 devices, your phone, and your computer to one Wi-Fi router.
+          If no router is available, a phone or laptop can create a hotspot. Then use <span class="code">aurax.local</span>,
+          the IP address from Ignis Studio, or Ignis.APP to open the device.
+        </p>
+      </div>
+    </section>
+  </div>
+</body>
+</html>

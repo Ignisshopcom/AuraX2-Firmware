@@ -41,6 +41,7 @@ private:
     bool          _mirror = false;
     uint16_t      _mALimit  = 0;         // 0 = no limit
     uint16_t      _mAPerLed = 60;
+    uint16_t      _currentScale256 = 256; // smoothed current limiter scale
     uint8_t       _dataPin;
     uint16_t      _numLeds;
     rmt_channel_t _channel;

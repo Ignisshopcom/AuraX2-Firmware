@@ -3,6 +3,7 @@
 #include <Arduino.h>
 #include <LittleFS.h>
 #include "led_driver.h"
+#include "task_compat.h"
 
 // progEndBehavior values
 enum class PixEndBehavior : uint8_t {
@@ -28,7 +29,7 @@ public:
     bool update();
 
     // Run playback in a dedicated FreeRTOS task (blocking loop inside).
-    void startTask(uint8_t core = 1, uint32_t stackSize = 4096);
+    void startTask(uint8_t core = AURAX_LED_TASK_CORE, uint32_t stackSize = 4096);
     void stopTask();
 
     // After load(), delay actual playback start to an absolute esp_timer time.

@@ -1,12 +1,15 @@
 #include "wifi_control.h"
 #include "sync_control.h"
 #include "config.h"
+#include "version.h"
 #include <ArduinoJson.h>
 #include <WiFi.h>
+#include <HTTPClient.h>
 #include <ESPmDNS.h>
 #include <NetBIOS.h>
 #include <ArduinoOTA.h>
 #include <Update.h>
+#include <WiFiClientSecure.h>
 #include <esp_ota_ops.h>
 #include <esp_partition.h>
 #include <esp_wifi.h>
@@ -38,6 +41,9 @@ static String fallbackApSsid(const AppConfig& cfg) {
     return String(apSsid);
 }
 
+static constexpr uint32_t FW_AUTO_CHECK_INTERVAL_MS = 24UL * 60UL * 60UL * 1000UL;
+static constexpr uint32_t FW_HTTP_TIMEOUT_MS = 3500;
+
 static const esp_partition_t* findPartition(esp_partition_type_t type, esp_partition_subtype_t subtype, const char* label) {
     return esp_partition_find_first(type, subtype, label);
 }
@@ -62,6 +68,12 @@ static uint8_t wifiSignalPct(int32_t rssi) {
     if (rssi >= -50) return 100;
     if (rssi <= -100) return 0;
     return (uint8_t)((rssi + 100) * 2);
+}
+
+static void applyWifiStabilitySettings() {
+    WiFi.setSleep(false);
+    WiFi.setTxPower(WIFI_POWER_19_5dBm);
+    esp_wifi_set_ps(WIFI_PS_NONE);
 }
 
 static uint8_t auraBrightnessToWled(uint8_t pct) {
@@ -482,15 +494,11 @@ uint8_t WifiControl::apClientCount() const {
 }
 
 const char* WifiControl::staSsid() const {
-    return (_cfg.wifiMode == WIFI_MODE_GROUP_CLIENT) ? _cfg.groupSsid : _cfg.ssid;
+    return _cfg.ssid;
 }
 
 const char* WifiControl::staPassword() const {
-    return (_cfg.wifiMode == WIFI_MODE_GROUP_CLIENT) ? _cfg.groupPassword : _cfg.password;
-}
-
-const char* WifiControl::groupPassword() const {
-    return (strlen(_cfg.groupPassword) >= 8) ? _cfg.groupPassword : "";
+    return _cfg.password;
 }
 
 bool WifiControl::connectSta(uint32_t timeoutMs) {
@@ -505,10 +513,10 @@ bool WifiControl::connectSta(uint32_t timeoutMs) {
     WiFi.config(IPAddress((uint32_t)0), IPAddress((uint32_t)0), IPAddress((uint32_t)0));
     WiFi.softAPdisconnect(true);
     WiFi.mode(WIFI_STA);
-    esp_wifi_set_ps(WIFI_PS_NONE);
+    applyWifiStabilitySettings();
     delay(100);
     WiFi.begin(staSsid(), staPassword());
-    WiFi.setSleep(false);
+    applyWifiStabilitySettings();
     WiFi.setHostname(_cfg.hostname);
     _lastStaRetryMs = millis();
     _staDisconnectedSinceMs = _lastStaRetryMs;
@@ -537,7 +545,7 @@ void WifiControl::startFallbackAp() {
     _apHadClient = false;
     WiFi.setHostname(_cfg.hostname);
     WiFi.mode(strlen(staSsid()) ? WIFI_AP_STA : WIFI_AP);
-    WiFi.setSleep(false);
+    applyWifiStabilitySettings();
 
     char apSsid[32];
     snprintf(apSsid, sizeof(apSsid), "AuraX-%04X", (uint16_t)ESP.getEfuseMac());
@@ -552,33 +560,10 @@ void WifiControl::startFallbackAp() {
 
     if (strlen(staSsid())) {
         WiFi.begin(staSsid(), staPassword());
+        applyWifiStabilitySettings();
         _lastStaRetryMs = millis();
         LOGLN("[wifi] background STA retry enabled until AP client connects");
     }
-}
-
-void WifiControl::startGroupMasterAp() {
-    _dns.stop();
-    _apMode = true;
-    _apActive = true;
-    _apHadClient = false;
-    _staServicesStarted = false;
-
-    WiFi.disconnect(true);
-    WiFi.softAPdisconnect(true);
-    WiFi.setHostname(_cfg.hostname);
-    WiFi.mode(WIFI_AP_STA);
-    WiFi.setSleep(false);
-    esp_wifi_set_ps(WIFI_PS_NONE);
-
-    IPAddress apIP(192, 168, 4, 1);
-    WiFi.softAPConfig(apIP, apIP, IPAddress(255, 255, 255, 0));
-    WiFi.softAPsetHostname(_cfg.hostname);
-    bool ok = WiFi.softAP(_cfg.groupSsid, strlen(groupPassword()) ? groupPassword() : nullptr, GROUP_AP_CHANNEL);
-    _dns.setErrorReplyCode(DNSReplyCode::NoError);
-    _dns.start(53, "*", WiFi.softAPIP());
-    LOG("[wifi] group master: SSID=%s IP=%s %s\n",
-        _cfg.groupSsid, WiFi.softAPIP().toString().c_str(), ok ? "" : "(softAP failed)");
 }
 
 void WifiControl::stopFallbackAp() {
@@ -589,14 +574,12 @@ void WifiControl::stopFallbackAp() {
     _apMode = false;
     WiFi.setHostname(_cfg.hostname);
     WiFi.mode(WIFI_STA);
-    WiFi.setSleep(false);
-    esp_wifi_set_ps(WIFI_PS_NONE);
+    applyWifiStabilitySettings();
     LOG("[wifi] AP disabled, STA IP: %s\n", WiFi.localIP().toString().c_str());
 }
 
 void WifiControl::startStaServices() {
-    bool groupMaster = (_cfg.wifiMode == WIFI_MODE_GROUP_MASTER && _apActive);
-    if (_staServicesStarted || (!groupMaster && WiFi.status() != WL_CONNECTED)) return;
+    if (_staServicesStarted || WiFi.status() != WL_CONNECTED) return;
     MDNS.end();
     mdnsBegin(_cfg.hostname);
     NBNS.begin(_cfg.hostname);
@@ -612,10 +595,7 @@ bool WifiControl::begin(uint32_t timeoutMs) {
     WiFi.persistent(false);
     WiFi.softAPdisconnect(true);
 
-    if (_cfg.wifiMode == WIFI_MODE_GROUP_MASTER) {
-        LOGLN("[wifi] starting group master AP");
-        startGroupMasterAp();
-    } else if (strlen(staSsid()) == 0) {
+    if (strlen(staSsid()) == 0) {
         LOGLN("[wifi] no STA config, starting AP");
         startFallbackAp();
     } else if (!connectSta(timeoutMs)) {
@@ -648,6 +628,10 @@ bool WifiControl::begin(uint32_t timeoutMs) {
     _server.on("/json/palettes", HTTP_GET, [this]() { handleWledPalettes(); });
     _server.on("/config", HTTP_GET,  [this]() { handleConfigGet(); });
     _server.on("/config", HTTP_POST, [this]() { handleConfigPost(); });
+    _server.on("/fw/status", HTTP_OPTIONS, [this]() { handleCorsOptions(); });
+    _server.on("/fw/status", HTTP_GET, [this]() { handleFirmwareStatus(); });
+    _server.on("/fw/check", HTTP_OPTIONS, [this]() { handleCorsOptions(); });
+    _server.on("/fw/check", HTTP_POST, [this]() { handleFirmwareCheck(); });
     _server.on("/programs", HTTP_GET, [this]() { handlePrograms(); });
     _server.on("/program/select", HTTP_POST, [this]() { handleProgramSelect(); });
     _server.on("/program/delete", HTTP_POST, [this]() { handleProgramDelete(); });
@@ -840,9 +824,7 @@ bool WifiControl::begin(uint32_t timeoutMs) {
 
     strlcpy(_wantedHostname, _cfg.hostname, sizeof(_wantedHostname));
 
-    if (_cfg.wifiMode == WIFI_MODE_GROUP_MASTER) {
-        startStaServices();
-    } else if (_apMode) {
+    if (_apMode) {
         mdnsBegin(_cfg.hostname);
     } else {
         startStaServices();
@@ -852,11 +834,6 @@ bool WifiControl::begin(uint32_t timeoutMs) {
 }
 
 void WifiControl::maintainWifi() {
-    if (_cfg.wifiMode == WIFI_MODE_GROUP_MASTER) {
-        if (!_apActive) startGroupMasterAp();
-        startStaServices();
-        return;
-    }
     if (strlen(staSsid()) == 0) return;
 
     uint32_t now = millis();
@@ -896,6 +873,7 @@ void WifiControl::maintainWifi() {
             LOG("[wifi] AP fallback retry to %s\n", staSsid());
             WiFi.mode(WIFI_AP_STA);
             WiFi.begin(staSsid(), staPassword());
+            applyWifiStabilitySettings();
             _lastStaRetryMs = now;
         }
         return;
@@ -905,6 +883,7 @@ void WifiControl::maintainWifi() {
     if (now - _lastStaRetryMs > STA_RETRY_INTERVAL_MS) {
         LOG("[wifi] reconnecting to %s\n", staSsid());
         WiFi.begin(staSsid(), staPassword());
+        applyWifiStabilitySettings();
         _lastStaRetryMs = now;
     }
 
@@ -918,6 +897,7 @@ void WifiControl::handle() {
     _server.handleClient();
     if (_apActive) _dns.processNextRequest();
     maintainWifi();
+    if (_sync) _sync->refreshWifiPeer();
     if (_batMonitor.update()) {
         _effectPlayer.stop();
         _player.blackout();
@@ -952,6 +932,7 @@ void WifiControl::handleCaptivePortal() {
 }
 
 void WifiControl::handlePlay() {
+    int64_t requestUs = esp_timer_get_time();
     if (!_fsMounted) {
         _server.send(503, "text/plain", "Storage unavailable. Format storage or flash LittleFS first.");
         return;
@@ -960,15 +941,18 @@ void WifiControl::handlePlay() {
     _cfg.autoStart = 0;
     saveRuntimeConfig();
     if (_sync) {
-        int err = _sync->broadcastPlay(_cfg.pixFile, _cfg.endBehavior, 0, (uint8_t)slotForProgramPath(_cfg.pixFile));
+        uint32_t totalAgeMs = (uint32_t)((esp_timer_get_time() - requestUs) / 1000);
+        if (totalAgeMs > 30000) totalAgeMs = 30000;
+        int err = totalAgeMs > 0
+            ? _sync->broadcastPlayFromAge(_cfg.pixFile, _cfg.endBehavior, totalAgeMs, (uint8_t)slotForProgramPath(_cfg.pixFile))
+            : _sync->broadcastPlay(_cfg.pixFile, _cfg.endBehavior, 0, (uint8_t)slotForProgramPath(_cfg.pixFile));
         if (err) { _server.send(500, "text/plain", playerLoadErrorText(err)); return; }
     } else {
-        int64_t startUs = esp_timer_get_time();
         _player.stopTask();
         int err = _player.load(_cfg.pixFile);
         if (err) { _server.send(500, "text/plain", playerLoadErrorText(err)); return; }
-        _player.scheduleStart(startUs);
-        _player.startTask(1);
+        _player.scheduleStart(requestUs);
+        _player.startTask();
     }
     _server.send(200, "text/plain", "OK");
 }
@@ -1103,16 +1087,19 @@ void WifiControl::handleProgramReorder() {
 }
 
 void WifiControl::handleProgramStart() {
+    int64_t requestUs = esp_timer_get_time();
     if (!_fsMounted) {
         _server.send(503, "text/plain", "Storage unavailable");
         return;
     }
-    StaticJsonDocument<128> doc;
+    StaticJsonDocument<160> doc;
     if (deserializeJson(doc, _server.arg("plain")) != DeserializationError::Ok) {
         _server.send(400, "text/plain", "JSON error");
         return;
     }
     uint16_t slot = doc["slot"] | 0;
+    uint32_t ageMs = doc["ageMs"] | 0;
+    if (ageMs > 30000) ageMs = 30000;
     String path;
     if (!programPathForSlot(slot, path)) {
         _server.send(404, "text/plain", "Program slot not found");
@@ -1122,16 +1109,20 @@ void WifiControl::handleProgramStart() {
     _cfg.autoStart = 0;
     saveRuntimeConfig();
     if (_sync) {
-        int err = _sync->broadcastPlay(_cfg.pixFile, _cfg.endBehavior, 0, (uint8_t)slot);
+        uint32_t totalAgeMs = ageMs + (uint32_t)((esp_timer_get_time() - requestUs) / 1000);
+        if (totalAgeMs > 30000) totalAgeMs = 30000;
+        int err = totalAgeMs > 0
+            ? _sync->broadcastPlayFromAge(_cfg.pixFile, _cfg.endBehavior, totalAgeMs, (uint8_t)slot)
+            : _sync->broadcastPlay(_cfg.pixFile, _cfg.endBehavior, 0, (uint8_t)slot);
         if (err) { _server.send(500, "text/plain", playerLoadErrorText(err)); return; }
     } else {
-        int64_t startUs = esp_timer_get_time();
+        int64_t startUs = requestUs - (int64_t)ageMs * 1000;
         _effectPlayer.stop();
         _player.stopTask();
         int err = _player.load(_cfg.pixFile);
         if (err) { _server.send(500, "text/plain", playerLoadErrorText(err)); return; }
         _player.scheduleStart(startUs);
-        _player.startTask(1);
+        _player.startTask();
     }
     _server.send(200, "text/plain", "OK");
 }
@@ -1176,12 +1167,15 @@ void WifiControl::handleIdentify() {
 }
 
 void WifiControl::handlePower() {
-    StaticJsonDocument<64> doc;
+    int64_t requestUs = esp_timer_get_time();
+    StaticJsonDocument<96> doc;
     if (deserializeJson(doc, _server.arg("plain")) != DeserializationError::Ok) {
         _server.send(400, "text/plain", "JSON error");
         return;
     }
     bool on = doc["on"] | false;
+    uint32_t ageMs = doc["ageMs"] | 0;
+    if (ageMs > 30000) ageMs = 30000;
     if (!on) {
         if (_sync) {
             _sync->broadcastStop();
@@ -1200,16 +1194,20 @@ void WifiControl::handlePower() {
     } else {
         uint16_t slot = slotForProgramPath(_cfg.pixFile);
         if (_sync) {
-            int err = _sync->broadcastPlay(_cfg.pixFile, _cfg.endBehavior, 0, (uint8_t)slot);
+            uint32_t totalAgeMs = ageMs + (uint32_t)((esp_timer_get_time() - requestUs) / 1000);
+            if (totalAgeMs > 30000) totalAgeMs = 30000;
+            int err = totalAgeMs > 0
+                ? _sync->broadcastPlayFromAge(_cfg.pixFile, _cfg.endBehavior, totalAgeMs, (uint8_t)slot)
+                : _sync->broadcastPlay(_cfg.pixFile, _cfg.endBehavior, 0, (uint8_t)slot);
             if (err) { _server.send(500, "text/plain", playerLoadErrorText(err)); return; }
         } else {
-            int64_t startUs = esp_timer_get_time();
+            int64_t startUs = requestUs - (int64_t)ageMs * 1000;
             _effectPlayer.stop();
             _player.stopTask();
             int err = _player.load(_cfg.pixFile);
             if (err) { _server.send(500, "text/plain", playerLoadErrorText(err)); return; }
             _player.scheduleStart(startUs);
-            _player.startTask(1);
+            _player.startTask();
         }
     }
     _server.send(200, "text/plain", "OK");
@@ -1231,7 +1229,7 @@ void WifiControl::handleSyncNow() {
             int err = _player.load(_cfg.pixFile);
             if (err) { _server.send(500, "text/plain", playerLoadErrorText(err)); return; }
             _player.scheduleStart(startUs);
-            _player.startTask(1);
+            _player.startTask();
         }
     }
     _server.send(200, "text/plain", "OK");
@@ -1242,10 +1240,7 @@ void WifiControl::handleStatus() {
     auto st = _player.stats();
     String apSsid;
     if (_apActive) {
-        if (_cfg.wifiMode == WIFI_MODE_GROUP_MASTER)
-            apSsid = _cfg.groupSsid;
-        else
-            apSsid = fallbackApSsid(_cfg);
+        apSsid = fallbackApSsid(_cfg);
     }
     const esp_partition_t* running = esp_ota_get_running_partition();
     const esp_partition_t* next = esp_ota_get_next_update_partition(nullptr);
@@ -1262,11 +1257,16 @@ void WifiControl::handleStatus() {
     json += "\"ip\":\""             + (_apMode ? WiFi.softAPIP() : WiFi.localIP()).toString() + "\",";
     json += "\"hostname\":\""       + String(_cfg.hostname) + "\",";
     json += "\"device_name\":\""    + String(strlen(_wantedHostname) ? _wantedHostname : _cfg.hostname) + "\",";
-    json += "\"wifi_mode\":"        + String(_cfg.wifiMode) + ",";
+    uint8_t wifiChannel = WiFi.channel();
+    wifi_second_chan_t secondChannel = WIFI_SECOND_CHAN_NONE;
+    esp_wifi_get_channel(&wifiChannel, &secondChannel);
+    json += "\"wifi_channel\":"     + String(wifiChannel) + ",";
     json += "\"ap_ssid\":\""        + jsonEscape(apSsid) + "\",";
     json += "\"ap_mode\":"          + String(_apMode ? "true" : "false") + ",";
     json += "\"storage_mounted\":"  + String(_fsMounted ? "true" : "false") + ",";
     json += "\"partition_layout\":\"" + partitionLayoutName() + "\",";
+    json += "\"fw_version\":\""     + String(AURAX_FW_VERSION) + "\",";
+    json += "\"fw_build\":"         + String(AURAX_FW_BUILD) + ",";
     json += "\"running_app_size\":" + String(running ? (unsigned)running->size : 0) + ",";
     json += "\"next_ota_size\":"    + String(next ? (unsigned)next->size : 0) + ",";
     json += "\"fs_offset\":"        + String(fsPart ? (unsigned)fsPart->address : 0) + ",";
@@ -1276,6 +1276,8 @@ void WifiControl::handleStatus() {
     json += "\"sync_enabled\":"     + String(_cfg.syncEnabled ? "true" : "false") + ",";
     json += "\"sync_mask\":"        + String(_cfg.syncMask) + ",";
     json += "\"sync_channel\":"     + String(firstSyncChannel(_cfg.syncMask)) + ",";
+    json += "\"sync_ready\":"       + String((_sync && _sync->isReady()) ? "true" : "false") + ",";
+    json += "\"sync_if\":\""        + String(_sync ? _sync->wifiInterfaceName() : "-") + "\",";
     json += "\"rssi\":"             + String(_apMode ? 0 : WiFi.RSSI()) + ",";
     json += "\"fs\":{\"u\":" + String(_fsMounted ? (unsigned long)LittleFS.usedBytes() : 0);
     json += ",\"t\":" + String(_fsMounted ? (unsigned long)LittleFS.totalBytes() : 0);
@@ -1290,14 +1292,7 @@ String WifiControl::wledStateJson() {
     uint8_t fx = _effectPlayer.isRunning() ? _cfg.effectId : 0;
     if (fx > 25) fx = 0;
 
-    int sx = 128;
-    if (_cfg.effectSpeed <= 10) {
-        sx = 0;
-    } else if (_cfg.effectSpeed >= 1000) {
-        sx = 255;
-    } else {
-        sx = ((_cfg.effectSpeed - 10) * 255) / 990;
-    }
+    int sx = _cfg.effectSpeed > 255 ? 255 : _cfg.effectSpeed;
 
     String json;
     json.reserve(720);
@@ -1449,7 +1444,7 @@ void WifiControl::handleWledStatePost() {
                         return;
                     }
                     _player.scheduleStart(startUs);
-                    _player.startTask(1);
+                    _player.startTask();
                 }
             }
         }
@@ -1481,17 +1476,125 @@ void WifiControl::handleCorsOptions() {
     _server.send(204, "text/plain", "");
 }
 
+String WifiControl::firmwareStatusJson() const {
+    String json;
+    json.reserve(720);
+    json += "{";
+    json += "\"current_version\":\"" + String(AURAX_FW_VERSION) + "\",";
+    json += "\"current_build\":" + String(AURAX_FW_BUILD) + ",";
+    json += "\"manifest_url\":\"" + String(AURAX_UPDATE_MANIFEST_URL) + "\",";
+    json += "\"releases_url\":\"" + String(AURAX_RELEASES_URL) + "\",";
+    json += "\"checked\":" + String(_fwCheck.checked ? "true" : "false") + ",";
+    json += "\"update_available\":" + String(_fwCheck.updateAvailable ? "true" : "false") + ",";
+    json += "\"checked_at_ms\":" + String(_fwCheck.checkedAtMs) + ",";
+    json += "\"remote_build\":" + String(_fwCheck.remoteBuild) + ",";
+    json += "\"remote_size\":" + String(_fwCheck.remoteSize) + ",";
+    json += "\"remote_version\":\"" + jsonEscape(String(_fwCheck.remoteVersion)) + "\",";
+    json += "\"remote_url\":\"" + jsonEscape(String(_fwCheck.remoteUrl)) + "\",";
+    json += "\"remote_page\":\"" + jsonEscape(String(_fwCheck.remotePage)) + "\",";
+    json += "\"remote_notes\":\"" + jsonEscape(String(_fwCheck.remoteNotes)) + "\",";
+    json += "\"error\":\"" + jsonEscape(String(_fwCheck.error)) + "\"";
+    json += "}";
+    return json;
+}
+
+void WifiControl::handleFirmwareStatus() {
+    sendCorsHeaders();
+    _server.send(200, "application/json", firmwareStatusJson());
+}
+
+bool WifiControl::checkFirmwareManifest(bool force) {
+    uint32_t now = millis();
+    if (!force && _fwCheck.checked && _fwCheck.error[0] == 0 &&
+        now - _fwCheck.checkedAtMs < FW_AUTO_CHECK_INTERVAL_MS) {
+        return true;
+    }
+
+    _fwCheck.checked = true;
+    _fwCheck.checkedAtMs = now;
+    _fwCheck.updateAvailable = false;
+    _fwCheck.remoteBuild = 0;
+    _fwCheck.remoteSize = 0;
+    _fwCheck.remoteVersion[0] = 0;
+    _fwCheck.remoteUrl[0] = 0;
+    _fwCheck.remotePage[0] = 0;
+    _fwCheck.remoteNotes[0] = 0;
+    _fwCheck.error[0] = 0;
+
+    if (_apMode || WiFi.status() != WL_CONNECTED) {
+        strlcpy(_fwCheck.error, "Update check requires an internet WiFi connection.", sizeof(_fwCheck.error));
+        return false;
+    }
+
+    WiFiClientSecure client;
+    client.setInsecure();
+
+    HTTPClient http;
+    http.setTimeout(FW_HTTP_TIMEOUT_MS);
+    http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
+    if (!http.begin(client, AURAX_UPDATE_MANIFEST_URL)) {
+        strlcpy(_fwCheck.error, "Could not start update check.", sizeof(_fwCheck.error));
+        return false;
+    }
+
+    int code = http.GET();
+    if (code != HTTP_CODE_OK) {
+        String err = "Update manifest HTTP " + String(code);
+        strlcpy(_fwCheck.error, err.c_str(), sizeof(_fwCheck.error));
+        http.end();
+        return false;
+    }
+
+    String payload = http.getString();
+    http.end();
+
+    StaticJsonDocument<2048> doc;
+    DeserializationError err = deserializeJson(doc, payload);
+    if (err != DeserializationError::Ok) {
+        strlcpy(_fwCheck.error, "Update manifest is not valid JSON.", sizeof(_fwCheck.error));
+        return false;
+    }
+
+    JsonObject latest = doc["latest"].as<JsonObject>();
+    if (latest.isNull()) latest = doc.as<JsonObject>();
+
+    const char* version = latest["version"] | "";
+    const char* url = latest["url"] | "";
+    const char* page = latest["page"] | AURAX_RELEASES_URL;
+    const char* notes = latest["notes"] | "";
+    uint32_t build = latest["build"] | 0;
+    uint32_t size = latest["size"] | 0;
+
+    if (build == 0 || strlen(version) == 0) {
+        strlcpy(_fwCheck.error, "Update manifest is missing version/build.", sizeof(_fwCheck.error));
+        return false;
+    }
+
+    _fwCheck.remoteBuild = build;
+    _fwCheck.remoteSize = size;
+    _fwCheck.updateAvailable = build > AURAX_FW_BUILD;
+    strlcpy(_fwCheck.remoteVersion, version, sizeof(_fwCheck.remoteVersion));
+    strlcpy(_fwCheck.remoteUrl, url, sizeof(_fwCheck.remoteUrl));
+    strlcpy(_fwCheck.remotePage, page, sizeof(_fwCheck.remotePage));
+    strlcpy(_fwCheck.remoteNotes, notes, sizeof(_fwCheck.remoteNotes));
+    return true;
+}
+
+void WifiControl::handleFirmwareCheck() {
+    sendCorsHeaders();
+    bool force = _server.arg("force") == "1";
+    bool ok = checkFirmwareManifest(force);
+    _server.send(ok ? 200 : 503, "application/json", firmwareStatusJson());
+}
+
 void WifiControl::handleConfigGet() {
-    StaticJsonDocument<1536> doc;
+    StaticJsonDocument<2048> doc;
     doc["ledType"]  = _cfg.ledType;
     doc["numLeds"]  = _cfg.numLeds;
     doc["dataPin"]  = _cfg.dataPin;
     doc["clkPin"]   = _cfg.clkPin;
-    doc["wifiMode"] = _cfg.wifiMode;
     doc["ssid"]     = _cfg.ssid;
     doc["password"] = _cfg.password;
-    doc["groupSsid"] = _cfg.groupSsid;
-    doc["groupPassword"] = _cfg.groupPassword;
     doc["pixFile"]    = _cfg.pixFile;
     const char* deviceName = strlen(_wantedHostname) ? _wantedHostname : _cfg.hostname;
     doc["deviceName"] = deviceName;
@@ -1520,6 +1623,10 @@ void WifiControl::handleConfigGet() {
     doc["syncMask"]            = _cfg.syncMask;
     doc["syncChannel"]         = firstSyncChannel(_cfg.syncMask);
     doc["autoStart"]           = _cfg.autoStart;
+    doc["fwVersion"]           = AURAX_FW_VERSION;
+    doc["fwBuild"]             = AURAX_FW_BUILD;
+    doc["updateManifestUrl"]   = AURAX_UPDATE_MANIFEST_URL;
+    doc["releasesUrl"]         = AURAX_RELEASES_URL;
     JsonArray pR = doc.createNestedArray("paletteR");
     JsonArray pG = doc.createNestedArray("paletteG");
     JsonArray pB = doc.createNestedArray("paletteB");
@@ -1539,9 +1646,9 @@ void WifiControl::handleEffectStart() {
     int effectId = doc["id"] | 1;
     if (effectId != 1 && effectId != 2 && (effectId < 10 || effectId > 53)) effectId = 1;
     p.effectId = (uint8_t)effectId;
-    int speed = doc["speed"] | 100;
-    if (speed < 10) speed = 10;
-    if (speed > 1000) speed = 1000;
+    int speed = doc["speed"] | 128;
+    if (speed < 0) speed = 0;
+    if (speed > 255) speed = 255;
     p.speed = (uint16_t)speed;
     int intensity = doc["intensity"] | 128;
     if (intensity < 0) intensity = 0;
@@ -1629,15 +1736,6 @@ void WifiControl::handleConfigPost() {
     if (doc.containsKey("password") &&
         strcmp(doc["password"] | "", _cfg.password) != 0)
         wifiChanged = true;
-    if (doc.containsKey("wifiMode") &&
-        (uint8_t)(doc["wifiMode"] | _cfg.wifiMode) != _cfg.wifiMode)
-        wifiChanged = true;
-    if (doc.containsKey("groupSsid") &&
-        strcmp(doc["groupSsid"] | "", _cfg.groupSsid) != 0)
-        wifiChanged = true;
-    if (doc.containsKey("groupPassword") &&
-        strcmp(doc["groupPassword"] | "", _cfg.groupPassword) != 0)
-        wifiChanged = true;
 
     _cfg.ledType = doc["ledType"] | _cfg.ledType;
     {
@@ -1646,19 +1744,8 @@ void WifiControl::handleConfigPost() {
     }
     _cfg.dataPin = doc["dataPin"] | _cfg.dataPin;
     _cfg.clkPin  = doc["clkPin"]  | _cfg.clkPin;
-    if (doc.containsKey("wifiMode")) {
-        int mode = doc["wifiMode"] | _cfg.wifiMode;
-        if (mode < WIFI_MODE_NORMAL || mode > WIFI_MODE_GROUP_CLIENT) mode = WIFI_MODE_NORMAL;
-        _cfg.wifiMode = (uint8_t)mode;
-    }
     strlcpy(_cfg.ssid,     doc["ssid"]     | _cfg.ssid,     sizeof(_cfg.ssid));
     strlcpy(_cfg.password, doc["password"] | _cfg.password, sizeof(_cfg.password));
-    strlcpy(_cfg.groupSsid, doc["groupSsid"] | _cfg.groupSsid, sizeof(_cfg.groupSsid));
-    strlcpy(_cfg.groupPassword, doc["groupPassword"] | _cfg.groupPassword, sizeof(_cfg.groupPassword));
-    if (strlen(_cfg.groupSsid) == 0)
-        strlcpy(_cfg.groupSsid, GROUP_WIFI_SSID, sizeof(_cfg.groupSsid));
-    if (strlen(_cfg.groupPassword) > 0 && strlen(_cfg.groupPassword) < 8)
-        strlcpy(_cfg.groupPassword, GROUP_WIFI_PASSWORD, sizeof(_cfg.groupPassword));
     strlcpy(_cfg.pixFile,  doc["pixFile"]  | _cfg.pixFile,  sizeof(_cfg.pixFile));
     if (hostnameProvided) {
         strlcpy(_cfg.hostname, postedHostname, sizeof(_cfg.hostname));
@@ -1678,8 +1765,8 @@ void WifiControl::handleConfigPost() {
     }
     {
         int speed = doc["effectSpeed"] | _cfg.effectSpeed;
-        if (speed < 10) speed = 10;
-        if (speed > 1000) speed = 1000;
+        if (speed < 0) speed = 0;
+        if (speed > 255) speed = 255;
         _cfg.effectSpeed = (uint16_t)speed;
     }
     {
@@ -1723,7 +1810,9 @@ void WifiControl::handleConfigPost() {
     }
     {
         uint32_t iv = doc["batIntervalMs"] | _cfg.batIntervalMs;
-        if (iv >= 100) _cfg.batIntervalMs = iv;
+        if (iv >= 100) {
+            _cfg.batIntervalMs = iv < BATTERY_MIN_INTERVAL_MS ? BATTERY_MIN_INTERVAL_MS : iv;
+        }
     }
     if (doc.containsKey("batAutoOff")) _cfg.batAutoOff = doc["batAutoOff"] ? 1 : 0;
     _cfg.batAutoOffThreshold = doc["batAutoOffThreshold"] | _cfg.batAutoOffThreshold;

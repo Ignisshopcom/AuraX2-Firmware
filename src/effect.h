@@ -6,7 +6,7 @@ struct EffectColor { uint8_t r, g, b; };
 
 struct EffectParams {
     uint8_t     effectId;       // 1=solid, 2=android, 10+ = AuraX/WLED-like effects
-    uint16_t    speed;          // 10-1000, 100=normal
+    uint16_t    speed;          // 0-255 UI value, mapped internally to legacy 0-1000
     uint8_t     intensity;      // 0-255, effect-specific strength
     uint8_t     dotSize;        // effect-specific size/width
     uint8_t     paletteId;      // 0=custom color slots, 1+ = built-in palette

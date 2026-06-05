@@ -152,6 +152,7 @@ void APA102::setMirror(bool mirror) {
 void APA102::setCurrentLimit(uint16_t mALimit, uint16_t mAPerLed) {
     _mALimit  = mALimit;
     _mAPerLed = mAPerLed > 0 ? mAPerLed : 1;
+    _currentScale256 = 256;
 }
 
 static uint16_t mappedLedIndex(uint16_t outIndex, uint16_t count, bool reverse, bool mirror) {
@@ -175,8 +176,9 @@ void APA102::showColumnDirect(const uint8_t* pixData, uint16_t count) {
     uint8_t* dst = _txBuf[buf] + 4;  // skip start frame
     uint16_t n = (count < _numLeds) ? count : _numLeds;
 
-    // Current limiting: pre-pass to estimate draw, compute scale factor
-    uint16_t scale256 = 256;  // Q8: 256 = no scaling
+    // Current limiting: pre-pass to estimate draw, then smooth the scale so
+    // effects do not visibly pulse when their instantaneous power changes.
+    uint16_t targetScale256 = 256;  // Q8: 256 = no scaling
     if (_mALimit > 0) {
         uint32_t totalRGB = 0;
         for (uint16_t i = 0; i < n; i++) {
@@ -193,8 +195,23 @@ void APA102::showColumnDirect(const uint8_t* pixData, uint16_t count) {
         }
         uint32_t estMA = n + totalRGB * _mAPerLed / 765u;
         if (estMA > _mALimit) {
-            scale256 = (uint16_t)((uint32_t)_mALimit * 256u / estMA);
+            targetScale256 = (uint16_t)((uint32_t)_mALimit * 256u / estMA);
         }
+    }
+    uint16_t scale256 = targetScale256;
+    if (_mALimit > 0) {
+        constexpr uint16_t kScaleStepDown = 24;
+        constexpr uint16_t kScaleStepUp = 4;
+        if (targetScale256 < _currentScale256) {
+            uint16_t delta = _currentScale256 - targetScale256;
+            _currentScale256 -= delta > kScaleStepDown ? kScaleStepDown : delta;
+        } else if (targetScale256 > _currentScale256) {
+            uint16_t delta = targetScale256 - _currentScale256;
+            _currentScale256 += delta > kScaleStepUp ? kScaleStepUp : delta;
+        }
+        scale256 = _currentScale256;
+    } else {
+        _currentScale256 = 256;
     }
 
     for (uint16_t i = 0; i < n; i++, dst += 4) {

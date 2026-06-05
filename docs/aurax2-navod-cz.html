@@ -1,0 +1,1101 @@
+<!doctype html>
+<html lang="cs">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AuraX2 - rychlý návod</title>
+  <style>
+    :root {
+      --bg: #080a0c;
+      --panel: #11151a;
+      --panel-2: #171c22;
+      --line: #2b333d;
+      --text: #f4f7fb;
+      --muted: #aeb8c4;
+      --soft: #6f7b88;
+      --orange: #ff7a1a;
+      --orange-2: #ff9a3d;
+      --green: #35d07f;
+      --red: #e45858;
+      --blue: #55b7ff;
+      --radius: 16px;
+      --shadow: 0 20px 60px rgba(0, 0, 0, .35);
+      --inner: inset 0 1px 0 rgba(255, 255, 255, .04);
+      color-scheme: dark;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html {
+      scroll-behavior: smooth;
+    }
+
+    body {
+      margin: 0;
+      background:
+        radial-gradient(circle at 20% -10%, rgba(255, 122, 26, .22), transparent 30%),
+        radial-gradient(circle at 95% 10%, rgba(85, 183, 255, .14), transparent 28%),
+        linear-gradient(180deg, #0b0d10 0%, var(--bg) 36%, #050607 100%);
+      color: var(--text);
+      line-height: 1.55;
+    }
+
+    a {
+      color: inherit;
+    }
+
+    .page {
+      max-width: 1180px;
+      margin: 0 auto;
+      padding: 28px 20px 64px;
+    }
+
+    .topbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      margin-bottom: 26px;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      font-weight: 800;
+      letter-spacing: .2px;
+    }
+
+    .logo {
+      width: 42px;
+      height: 42px;
+      border-radius: 12px;
+      background: #050607;
+      border: 1px solid #26303a;
+      display: grid;
+      place-items: center;
+      box-shadow: 0 10px 28px rgba(255, 122, 26, .18);
+    }
+
+    .logo svg {
+      width: 26px;
+      height: 26px;
+    }
+
+    .print-button {
+      border: 1px solid #39434e;
+      background: #151a20;
+      color: var(--text);
+      border-radius: 10px;
+      padding: 10px 14px;
+      font-weight: 700;
+      cursor: pointer;
+      box-shadow: var(--inner);
+    }
+
+    .hero {
+      display: grid;
+      grid-template-columns: minmax(0, 1.05fr) minmax(300px, .95fr);
+      gap: 26px;
+      align-items: center;
+      padding: 34px;
+      border: 1px solid #27313b;
+      border-radius: 22px;
+      background:
+        linear-gradient(145deg, rgba(255, 122, 26, .13), transparent 42%),
+        linear-gradient(180deg, rgba(255, 255, 255, .04), rgba(255, 255, 255, .01)),
+        var(--panel);
+      box-shadow: var(--shadow), var(--inner);
+      overflow: hidden;
+    }
+
+    .eyebrow {
+      color: var(--orange-2);
+      font-weight: 800;
+      text-transform: uppercase;
+      letter-spacing: .12em;
+      font-size: 12px;
+      margin: 0 0 10px;
+    }
+
+    h1 {
+      font-size: clamp(34px, 6vw, 66px);
+      line-height: .96;
+      margin: 0 0 18px;
+      letter-spacing: 0;
+    }
+
+    .lead {
+      color: #d5dde7;
+      max-width: 680px;
+      margin: 0;
+      font-size: clamp(17px, 2vw, 21px);
+    }
+
+    .quick-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 26px;
+    }
+
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      text-decoration: none;
+      border: 1px solid #39434e;
+      background: #151a20;
+      border-radius: 999px;
+      padding: 10px 14px;
+      color: var(--text);
+      font-weight: 700;
+      box-shadow: var(--inner);
+    }
+
+    .pill.primary {
+      background: linear-gradient(180deg, #ff8a2f, #ef6410);
+      color: #140800;
+      border-color: #ff9a3d;
+    }
+
+    .hero-visual {
+      width: 100%;
+      min-height: 420px;
+    }
+
+    .nav {
+      position: sticky;
+      top: 0;
+      z-index: 3;
+      display: flex;
+      gap: 8px;
+      overflow-x: auto;
+      margin: 18px 0 26px;
+      padding: 10px;
+      border: 1px solid #26303a;
+      border-radius: 16px;
+      background: rgba(11, 14, 18, .88);
+      backdrop-filter: blur(14px);
+      box-shadow: 0 12px 36px rgba(0, 0, 0, .22);
+    }
+
+    .nav a {
+      flex: 0 0 auto;
+      text-decoration: none;
+      color: #dce5ef;
+      font-weight: 700;
+      padding: 9px 12px;
+      border-radius: 10px;
+      border: 1px solid transparent;
+    }
+
+    .nav a:hover {
+      border-color: #38434f;
+      background: #161b21;
+    }
+
+    section {
+      margin-top: 34px;
+    }
+
+    h2 {
+      margin: 0 0 14px;
+      font-size: clamp(25px, 3vw, 36px);
+      letter-spacing: 0;
+    }
+
+    h3 {
+      margin: 0 0 8px;
+      font-size: 19px;
+    }
+
+    p {
+      color: var(--muted);
+      margin: 0 0 12px;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 14px;
+    }
+
+    .grid.two {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .card {
+      border: 1px solid #27313b;
+      border-radius: var(--radius);
+      background: linear-gradient(180deg, rgba(255, 255, 255, .035), rgba(255, 255, 255, .01)), var(--panel);
+      padding: 18px;
+      box-shadow: 0 12px 34px rgba(0, 0, 0, .24), var(--inner);
+    }
+
+    .card strong {
+      color: var(--text);
+    }
+
+    .step {
+      display: grid;
+      grid-template-columns: 44px minmax(0, 1fr);
+      gap: 14px;
+      padding: 16px;
+      border: 1px solid #26303a;
+      border-radius: var(--radius);
+      background: #101419;
+      margin-bottom: 10px;
+    }
+
+    .num {
+      width: 38px;
+      height: 38px;
+      display: grid;
+      place-items: center;
+      border-radius: 12px;
+      background: linear-gradient(180deg, #ff8a2f, #e95f0c);
+      color: #120700;
+      font-weight: 900;
+      box-shadow: 0 10px 24px rgba(255, 122, 26, .22);
+    }
+
+    .callout {
+      border: 1px solid rgba(255, 122, 26, .45);
+      background: linear-gradient(135deg, rgba(255, 122, 26, .13), rgba(255, 122, 26, .04));
+      border-radius: var(--radius);
+      padding: 18px;
+      box-shadow: var(--inner);
+    }
+
+    .callout.good {
+      border-color: rgba(53, 208, 127, .45);
+      background: linear-gradient(135deg, rgba(53, 208, 127, .12), rgba(53, 208, 127, .035));
+    }
+
+    .callout.warn {
+      border-color: rgba(228, 88, 88, .45);
+      background: linear-gradient(135deg, rgba(228, 88, 88, .12), rgba(228, 88, 88, .035));
+    }
+
+    .code {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 8px;
+      background: #050708;
+      border: 1px solid #2a333e;
+      color: #f8fbff;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: .95em;
+    }
+
+    .screen {
+      border: 1px solid #2e3843;
+      border-radius: 20px;
+      background: #0c0f13;
+      box-shadow: 0 20px 44px rgba(0, 0, 0, .38), var(--inner);
+      overflow: hidden;
+    }
+
+    .screen-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 12px 14px;
+      background: #151a20;
+      border-bottom: 1px solid #28323c;
+      color: #dfe8f3;
+      font-weight: 800;
+    }
+
+    .dots {
+      display: flex;
+      gap: 6px;
+    }
+
+    .dots span {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: #586471;
+    }
+
+    .mock-ui {
+      padding: 15px;
+    }
+
+    .mock-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      border: 1px solid #27313b;
+      background: #151a20;
+      border-radius: 12px;
+      padding: 12px;
+      margin-bottom: 10px;
+    }
+
+    .mock-row.active {
+      border-color: var(--orange);
+      background: rgba(255, 122, 26, .14);
+    }
+
+    .mock-button {
+      border-radius: 10px;
+      background: var(--orange);
+      color: #160800;
+      padding: 9px 12px;
+      font-weight: 900;
+      min-width: 76px;
+      text-align: center;
+    }
+
+    .mock-tabbar {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 8px;
+      margin-top: 10px;
+    }
+
+    .mock-tabbar span {
+      background: #1b2128;
+      border: 1px solid #303a45;
+      border-radius: 10px;
+      padding: 9px 6px;
+      text-align: center;
+      color: #dfe8f3;
+      font-weight: 700;
+      font-size: 13px;
+    }
+
+    .mock-tabbar span:first-child {
+      border-color: var(--orange);
+      background: rgba(255, 122, 26, .17);
+    }
+
+    .list {
+      display: grid;
+      gap: 10px;
+      margin: 14px 0 0;
+      padding: 0;
+      list-style: none;
+    }
+
+    .list li {
+      position: relative;
+      padding-left: 24px;
+      color: var(--muted);
+    }
+
+    .list li::before {
+      content: "";
+      position: absolute;
+      left: 0;
+      top: .55em;
+      width: 9px;
+      height: 9px;
+      border-radius: 3px;
+      background: var(--orange);
+      box-shadow: 0 0 0 4px rgba(255, 122, 26, .12);
+    }
+
+    .table-wrap {
+      overflow-x: auto;
+      border: 1px solid #27313b;
+      border-radius: var(--radius);
+      background: #0f1318;
+      box-shadow: var(--inner);
+    }
+
+    table {
+      border-collapse: collapse;
+      width: 100%;
+      min-width: 720px;
+    }
+
+    th, td {
+      text-align: left;
+      padding: 14px 16px;
+      border-bottom: 1px solid #27313b;
+      vertical-align: top;
+    }
+
+    th {
+      color: #fff;
+      background: #161b21;
+      font-size: 13px;
+      text-transform: uppercase;
+      letter-spacing: .08em;
+    }
+
+    td {
+      color: var(--muted);
+    }
+
+    tr:last-child td {
+      border-bottom: 0;
+    }
+
+    .footer {
+      margin-top: 46px;
+      padding-top: 24px;
+      border-top: 1px solid #27313b;
+      color: var(--soft);
+      font-size: 14px;
+    }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      border: 1px solid #34404c;
+      border-radius: 999px;
+      padding: 7px 10px;
+      color: #dce5ef;
+      background: #12171d;
+      font-weight: 700;
+      font-size: 13px;
+    }
+
+    .badges {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 12px;
+    }
+
+    @media (max-width: 900px) {
+      .hero,
+      .grid,
+      .grid.two {
+        grid-template-columns: 1fr;
+      }
+
+      .hero {
+        padding: 24px;
+      }
+    }
+
+    @media print {
+      body {
+        background: #fff;
+        color: #111;
+      }
+
+      .nav,
+      .print-button {
+        display: none;
+      }
+
+      .hero,
+      .card,
+      .step,
+      .callout,
+      .screen,
+      .table-wrap {
+        box-shadow: none;
+        break-inside: avoid;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <header class="topbar">
+      <div class="brand">
+        <div class="logo" aria-hidden="true">
+          <svg viewBox="0 0 48 48" role="img">
+            <path fill="#ff7a1a" d="M24 2 38 24 24 46 10 24z"/>
+            <path fill="#ff9a3d" d="M24 2v44L10 24z"/>
+            <path fill="#171c22" d="M24 10 32 24 24 38 16 24z"/>
+            <path fill="#f6f7fb" d="M24 10v28l-8-14z" opacity=".92"/>
+          </svg>
+        </div>
+        <div>
+          <div>AuraX2</div>
+          <div style="color:var(--muted);font-size:13px;font-weight:700;">rychlý návod k připojení a ovládání</div>
+        </div>
+      </div>
+      <button class="print-button" onclick="window.print()">Vytisknout / uložit PDF</button>
+    </header>
+
+    <div class="hero">
+      <div>
+        <p class="eyebrow">Ignisshop kontroler</p>
+        <h1>První spuštění AuraX2 bez stresu</h1>
+        <p class="lead">
+          Tento návod vysvětluje, jak zařízení najít, připojit k domácí Wi-Fi a ovládat z telefonu,
+          počítače nebo notebooku s Ignis Studiem. Důležité je, aby byla AuraX zařízení, telefon
+          i počítač ve stejné síti. Tu může vytvořit router, hotspot telefonu nebo hotspot notebooku.
+        </p>
+        <div class="quick-actions">
+          <a class="pill primary" href="#rychly-start">Rychlý start</a>
+          <a class="pill" href="#ap-rezim">AuraX-XXXX Wi-Fi</a>
+          <a class="pill" href="#appka">Ignis.APP</a>
+          <a class="pill" href="#potize">Když něco nejde</a>
+        </div>
+      </div>
+
+      <svg class="hero-visual" viewBox="0 0 760 560" aria-label="Schéma společné Wi-Fi sítě AuraX2">
+        <defs>
+          <linearGradient id="orangeGlow" x1="0" x2="1">
+            <stop offset="0" stop-color="#ff7a1a"/>
+            <stop offset="1" stop-color="#ffbd73"/>
+          </linearGradient>
+          <linearGradient id="screenGlow" x1="0" x2="1">
+            <stop offset="0" stop-color="#55b7ff"/>
+            <stop offset="1" stop-color="#35d07f"/>
+          </linearGradient>
+          <filter id="glow">
+            <feGaussianBlur stdDeviation="5" result="blur"/>
+            <feMerge>
+              <feMergeNode in="blur"/>
+              <feMergeNode in="SourceGraphic"/>
+            </feMerge>
+          </filter>
+          <clipPath id="networkClip">
+            <rect x="24" y="24" width="712" height="500" rx="32"/>
+          </clipPath>
+        </defs>
+        <rect x="24" y="24" width="712" height="500" rx="32" fill="#0c1015" stroke="#2b333d"/>
+
+        <g clip-path="url(#networkClip)" opacity=".9">
+          <circle cx="380" cy="130" r="112" fill="none" stroke="#ff7a1a" stroke-width="2" opacity=".30"/>
+          <circle cx="380" cy="130" r="172" fill="none" stroke="#ff7a1a" stroke-width="2" opacity=".15"/>
+          <circle cx="160" cy="168" r="126" fill="none" stroke="#55b7ff" stroke-width="2" opacity=".30"/>
+          <circle cx="160" cy="168" r="188" fill="none" stroke="#55b7ff" stroke-width="2" opacity=".14"/>
+          <circle cx="170" cy="398" r="118" fill="none" stroke="#35d07f" stroke-width="2" opacity=".31"/>
+          <circle cx="170" cy="398" r="176" fill="none" stroke="#35d07f" stroke-width="2" opacity=".15"/>
+          <circle cx="610" cy="176" r="120" fill="none" stroke="#ff9a3d" stroke-width="2" opacity=".30"/>
+          <circle cx="610" cy="176" r="174" fill="none" stroke="#ff9a3d" stroke-width="2" opacity=".14"/>
+          <circle cx="610" cy="398" r="112" fill="none" stroke="#55b7ff" stroke-width="2" opacity=".30"/>
+          <circle cx="610" cy="398" r="164" fill="none" stroke="#55b7ff" stroke-width="2" opacity=".13"/>
+        </g>
+
+        <g transform="translate(260 248)">
+          <rect width="240" height="92" rx="24" fill="#111820" stroke="#ff7a1a"/>
+          <path d="M67 45c36-39 70-39 106 0" fill="none" stroke="#ff7a1a" stroke-width="8" stroke-linecap="round" filter="url(#glow)"/>
+          <path d="M90 26c18-14 42-14 60 0" fill="none" stroke="#ffbd73" stroke-width="7" stroke-linecap="round"/>
+          <circle cx="120" cy="60" r="7" fill="#ffbd73"/>
+          <text x="120" y="116" text-anchor="middle" fill="#f4f7fb" font-size="19" font-weight="900">Společná Wi-Fi síť</text>
+          <text x="120" y="138" text-anchor="middle" fill="#aeb8c4" font-size="13" font-weight="700">všechna zařízení se vidí navzájem</text>
+        </g>
+
+        <g transform="translate(304 62)">
+          <rect width="152" height="118" rx="22" fill="#151a20" stroke="#ff7a1a"/>
+          <path d="M36 60c27-29 53-29 80 0" fill="none" stroke="#ff7a1a" stroke-width="7" stroke-linecap="round"/>
+          <path d="M54 42c13-10 31-10 44 0" fill="none" stroke="#ffbd73" stroke-width="6" stroke-linecap="round"/>
+          <circle cx="76" cy="72" r="6" fill="#ffbd73"/>
+          <text x="76" y="96" text-anchor="middle" fill="#f4f7fb" font-size="16" font-weight="900">Router</text>
+          <text x="76" y="113" text-anchor="middle" fill="#35d07f" font-size="12" font-weight="800">nejstabilnější</text>
+        </g>
+
+        <g transform="translate(66 96)">
+          <rect width="196" height="136" rx="22" fill="#151a20" stroke="#34404c"/>
+          <rect x="22" y="22" width="152" height="70" rx="12" fill="#090c10" stroke="#26303a"/>
+          <rect x="36" y="38" width="120" height="10" rx="5" fill="#ff7a1a"/>
+          <rect x="36" y="60" width="82" height="10" rx="5" fill="#35d07f"/>
+          <text x="98" y="112" text-anchor="middle" fill="#f4f7fb" font-size="17" font-weight="800">Notebook</text>
+          <text x="98" y="130" text-anchor="middle" fill="#aeb8c4" font-size="12" font-weight="700">Ignis Studio</text>
+        </g>
+
+        <g transform="translate(90 330)">
+          <rect width="160" height="154" rx="28" fill="#151a20" stroke="#34404c"/>
+          <rect x="24" y="22" width="112" height="78" rx="13" fill="#090c10" stroke="#26303a"/>
+          <rect x="38" y="38" width="78" height="11" rx="6" fill="#ff7a1a"/>
+          <rect x="38" y="62" width="62" height="11" rx="6" fill="#2b333d"/>
+          <circle cx="80" cy="112" r="6" fill="#39434e"/>
+          <text x="80" y="130" text-anchor="middle" fill="#f4f7fb" font-size="17" font-weight="800">Telefon</text>
+          <text x="80" y="148" text-anchor="middle" fill="#aeb8c4" font-size="12" font-weight="700">prohlížeč / hotspot</text>
+        </g>
+
+        <g transform="translate(532 96)">
+          <rect width="156" height="134" rx="24" fill="#151a20" stroke="#34404c"/>
+          <rect x="24" y="30" width="108" height="18" rx="9" fill="#ff7a1a"/>
+          <rect x="24" y="62" width="108" height="18" rx="9" fill="#35d07f"/>
+          <circle cx="26" cy="17" r="8" fill="#55b7ff"/>
+          <text x="78" y="108" text-anchor="middle" fill="#f4f7fb" font-size="17" font-weight="800">AuraX2</text>
+          <text x="78" y="126" text-anchor="middle" fill="#aeb8c4" font-size="12" font-weight="700">aurax.local</text>
+        </g>
+
+        <g transform="translate(532 332)">
+          <rect width="156" height="120" rx="24" fill="#151a20" stroke="#34404c"/>
+          <rect x="26" y="28" width="104" height="15" rx="8" fill="#55b7ff"/>
+          <rect x="26" y="56" width="104" height="15" rx="8" fill="#ff7a1a"/>
+          <circle cx="116" cy="17" r="8" fill="#35d07f"/>
+          <text x="78" y="96" text-anchor="middle" fill="#f4f7fb" font-size="17" font-weight="800">AuraX2</text>
+          <text x="78" y="114" text-anchor="middle" fill="#aeb8c4" font-size="12" font-weight="700">IP z Ignis Studia</text>
+        </g>
+
+        <text x="380" y="508" text-anchor="middle" fill="#aeb8c4" font-size="16" font-weight="700">
+          Všechna zařízení jsou ve stejné síti a vidí se navzájem
+        </text>
+      </svg>
+    </div>
+
+    <nav class="nav" aria-label="Obsah">
+      <a href="#rychly-start">Rychlý start</a>
+      <a href="#router">Společná síť</a>
+      <a href="#ap-rezim">Vlastní Wi-Fi AuraX</a>
+      <a href="#appka">Ignis.APP</a>
+      <a href="#web-ui">Web ovládání</a>
+      <a href="#programy">Programy</a>
+      <a href="#sync">Sync</a>
+      <a href="#potize">Řešení potíží</a>
+    </nav>
+
+    <section id="rychly-start">
+      <h2>Rychlý start</h2>
+      <div class="grid">
+        <div class="card">
+          <h3>Nejlepší varianta</h3>
+          <p>
+            Připojte AuraX2, telefon i počítač s Ignis Studiem na stejnou Wi-Fi z routeru. Router je
+            nejstabilnější řešení pro více zařízení najednou. Pak můžete
+            ovládat zařízení z telefonu i PC přes <span class="code">http://aurax.local</span>, přes IP adresu,
+            nebo přes Ignis.APP.
+          </p>
+        </div>
+        <div class="card">
+          <h3>Záchranná síť AuraX-XXXX</h3>
+          <p>
+            Když se AuraX2 nemůže připojit k nastavené Wi-Fi, samo začne vysílat vlastní síť
+            <span class="code">AuraX-XXXX</span>. Díky tomu se k zařízení dá vždy připojit, změnit Wi-Fi
+            nebo ho dočasně ovládat přímo.
+          </p>
+        </div>
+        <div class="card">
+          <h3>Síť bez routeru</h3>
+          <p>
+            Společnou síť může vytvořit také telefon jako hotspot nebo notebook jako hotspot.
+            Do této sítě se připojí AuraX2 i zařízení, ze kterého ho chcete ovládat.
+          </p>
+        </div>
+        <div class="card">
+          <h3>Upozornění na novou verzi</h3>
+          <p>
+            Když má zařízení přístup k internetu, umí nenápadně zkontrolovat dostupnost nového firmware.
+            Pokud existuje novější verze, zobrazí upozornění v nastavení. Aktualizace se nespustí sama bez potvrzení.
+          </p>
+        </div>
+      </div>
+    </section>
+
+    <section id="router">
+      <h2>Společná Wi-Fi síť: router nebo hotspot</h2>
+      <div class="grid two">
+        <div>
+          <div class="step">
+            <div class="num">1</div>
+            <div>
+              <h3>Vyberte zdroj Wi-Fi</h3>
+              <p>Nejlepší je běžný Wi-Fi router. Když router není k dispozici, může síť vytvořit telefon přes hotspot nebo notebook přes hotspot.</p>
+            </div>
+          </div>
+          <div class="step">
+            <div class="num">2</div>
+            <div>
+              <h3>Všechno připojte do stejné sítě</h3>
+              <p>Do stejné Wi-Fi připojte AuraX2 zařízení, telefon a počítač s Ignis Studiem. Jakmile jsou ve stejné síti, mohou spolu komunikovat.</p>
+            </div>
+          </div>
+          <div class="step">
+            <div class="num">3</div>
+            <div>
+              <h3>Ovládání z telefonu i počítače</h3>
+              <p>V telefonu nebo v PC otevřete prohlížeč a zadejte <span class="code">http://aurax.local</span>. Tím otevřete webové ovládání AuraX2 bez nutnosti instalovat aplikaci.</p>
+            </div>
+          </div>
+          <div class="step">
+            <div class="num">4</div>
+            <div>
+              <h3>Ignis Studio ukáže IP adresy</h3>
+              <p>V Ignis Studiu použijte <strong>Scan</strong>. Studio vyhledá AuraX2 zařízení ve stejné síti a ukáže IP adresu každého z nich.</p>
+            </div>
+          </div>
+          <div class="step">
+            <div class="num">5</div>
+            <div>
+              <h3>Aplikace není nutná</h3>
+              <p>Jakmile znáte <span class="code">aurax.local</span> nebo IP adresu, stačí ji otevřít v prohlížeči v telefonu nebo PC. Ovládání se otevře přímo z webu zařízení.</p>
+            </div>
+          </div>
+          <div class="step">
+            <div class="num">6</div>
+            <div>
+              <h3>Když <span class="code">aurax.local</span> nejde</h3>
+              <p>Otevřete přímo IP adresu zařízení, například <span class="code">http://10.91.105.247</span>. IP adresu uvidíte v Ignis Studiu po stisknutí <strong>Scan</strong>.</p>
+            </div>
+          </div>
+        </div>
+        <div class="screen">
+          <div class="screen-head">
+            <span>Ignis Studio / prohlížeč</span>
+            <div class="dots"><span></span><span></span><span></span></div>
+          </div>
+          <div class="mock-ui">
+            <div class="mock-row active">
+              <div>
+                <strong>stage-left</strong><br>
+                <span style="color:var(--muted)">10.91.105.247 - otevřít v telefonu nebo PC</span>
+              </div>
+              <div class="mock-button">Open</div>
+            </div>
+            <div class="mock-row">
+              <span>stage-right - 10.91.105.248</span>
+              <span style="color:var(--green);font-weight:800;">online</span>
+            </div>
+            <div class="mock-row">
+              <span>Ignis Studio Scan ukáže IP adresy</span>
+              <span style="color:var(--blue);font-weight:800;">Scan</span>
+            </div>
+            <div class="mock-tabbar">
+              <span>Programs</span><span>Colors</span><span>Effects</span><span>Settings</span>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="callout good" style="margin-top:14px;">
+        <h3>Doporučení</h3>
+        <p>
+          Pokud chcete ovládat více tyčí nebo více zařízení najednou, používejte router. Hotspot z telefonu
+          nebo notebooku fungovat může, ale router je stabilnější. Ovládání funguje i bez aplikace:
+          stačí v Ignis Studiu dát <strong>Scan</strong>, zjistit IP adresu a tu otevřít v prohlížeči.
+        </p>
+      </div>
+    </section>
+
+    <section id="ap-rezim">
+      <h2>Když AuraX2 vysílá vlastní Wi-Fi AuraX-XXXX</h2>
+      <div class="callout good" style="margin-bottom:14px;">
+        <h3>Tohle je záchranný režim</h3>
+        <p>
+          Pokud se AuraX2 nepřipojí k nastavené Wi-Fi síti, automaticky spustí vlastní Wi-Fi
+          <span class="code">AuraX-XXXX</span>. Je to záměr: aby se k zařízení dalo dostat i ve chvíli,
+          kdy změnili heslo k routeru, vypnuli hotspot nebo je zařízení na novém místě.
+        </p>
+      </div>
+      <div class="grid two">
+        <div class="screen">
+          <div class="screen-head">
+            <span>Wi-Fi v telefonu</span>
+            <div class="dots"><span></span><span></span><span></span></div>
+          </div>
+          <div class="mock-ui">
+            <div class="mock-row active">
+              <div>
+                <strong>AuraX-7772</strong><br>
+                <span style="color:var(--muted)">bez internetu je to v pořádku</span>
+              </div>
+              <span style="color:var(--orange);font-weight:900;">připojit</span>
+            </div>
+            <div class="mock-row">
+              <div>
+                <strong>Domaci_WiFi</strong><br>
+                <span style="color:var(--muted)">uložená síť</span>
+              </div>
+              <span style="color:var(--soft)">router</span>
+            </div>
+          </div>
+        </div>
+        <div>
+          <div class="step">
+            <div class="num">1</div>
+            <div>
+              <h3>Najděte síť AuraX-XXXX</h3>
+              <p>V seznamu Wi-Fi vyberte např. <span class="code">AuraX-7772</span>. Čísla jsou u každého kusu jiná, aby se zařízení nepletla.</p>
+            </div>
+          </div>
+          <div class="step">
+            <div class="num">2</div>
+            <div>
+              <h3>Potvrďte připojení i bez internetu</h3>
+              <p>Telefon může napsat, že síť nemá internet. To je normální. Zvolte <strong>Zachovat připojení</strong> nebo <strong>Ano</strong>.</p>
+            </div>
+          </div>
+          <div class="step">
+            <div class="num">3</div>
+            <div>
+              <h3>Otevřete nastavení</h3>
+              <p>Pokud se stránka neotevře sama, zadejte <span class="code">http://aurax.local</span>. Když to nepomůže, zadejte <span class="code">http://192.168.4.1</span>.</p>
+            </div>
+          </div>
+          <div class="step">
+            <div class="num">4</div>
+            <div>
+              <h3>Nastavte Wi-Fi</h3>
+              <p>V záložce <strong>Settings</strong> vyplňte jméno Wi-Fi sítě a heslo. Po uložení se AuraX2 připojí k routeru a vlastní Wi-Fi vypne.</p>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="callout warn" style="margin-top:14px;">
+        <h3>Důležité pro Android</h3>
+        <p>
+          Pokud se telefon od <span class="code">AuraX-XXXX</span> pořád odpojuje, vypněte na chvíli mobilní data
+          nebo v upozornění telefonu potvrďte, že chcete zůstat připojení i bez internetu.
+        </p>
+      </div>
+    </section>
+
+    <section id="appka">
+      <h2>Ignis.APP</h2>
+      <div class="grid two">
+        <div>
+          <p>
+            Ignis.APP slouží hlavně k tomu, aby uživatel nemusel znát IP adresu. Aplikace vyhledá
+            AuraX2 zařízení v lokální síti a po kliknutí otevře jejich webové ovládání.
+          </p>
+          <div class="step">
+            <div class="num">1</div>
+            <div>
+              <h3>Telefon dejte na stejnou Wi-Fi</h3>
+              <p>Telefon a AuraX2 musí být ve stejné lokální síti. U domácího routeru je to nejspolehlivější.</p>
+            </div>
+          </div>
+          <div class="step">
+            <div class="num">2</div>
+            <div>
+              <h3>Stiskněte Scan</h3>
+              <p>Aplikace zobrazí nalezená zařízení s názvem, IP adresou, baterií, silou Wi-Fi a sync kanály.</p>
+            </div>
+          </div>
+          <div class="step">
+            <div class="num">3</div>
+            <div>
+              <h3>Klikněte na zařízení</h3>
+              <p>Otevře se ovládací obrazovka konkrétního AuraX2 zařízení.</p>
+            </div>
+          </div>
+        </div>
+        <div class="screen">
+          <div class="screen-head">
+            <span>Ignis.APP</span>
+            <div class="dots"><span></span><span></span><span></span></div>
+          </div>
+          <div class="mock-ui">
+            <div class="mock-row">
+              <strong>Local devices</strong>
+              <div class="mock-button">Scan</div>
+            </div>
+            <div class="mock-row active">
+              <div>
+                <strong>stage-left</strong><br>
+                <span style="color:var(--muted)">10.91.105.247</span>
+              </div>
+              <div style="text-align:right;color:#dbe5ef;">
+                Wi-Fi 98%<br>
+                Battery 95%
+              </div>
+            </div>
+            <div class="mock-row">
+              <div>
+                <strong>stage-right</strong><br>
+                <span style="color:var(--muted)">10.91.105.248</span>
+              </div>
+              <div style="text-align:right;color:#dbe5ef;">
+                Wi-Fi 84%<br>
+                Battery 72%
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="web-ui">
+      <h2>Webové ovládání AuraX2</h2>
+      <div class="grid">
+        <div class="card">
+          <h3>Programs</h3>
+          <p>Nahrání, mazání a spuštění programu. Podporované jsou programové soubory z Ignis Studia. Zařízení hlídá volné místo a správnost nahrání.</p>
+        </div>
+        <div class="card">
+          <h3>Colors</h3>
+          <p>Výběr barvy, jasu a hotových barevných kombinací pro efekty, které pracují s barvou.</p>
+        </div>
+        <div class="card">
+          <h3>Effects</h3>
+          <p>Okamžité efekty bez nahraného programu. U každého efektu se zobrazují jen parametry, které pro něj dávají smysl.</p>
+        </div>
+        <div class="card">
+          <h3>Settings</h3>
+          <p>Název zařízení, Wi-Fi, stav firmware, upozornění na novou verzi, firmware update a restart. Advanced nastavení neměňte bez konzultace nebo bez přesné znalosti zařízení.</p>
+        </div>
+        <div class="card">
+          <h3>ON / OFF</h3>
+          <p>OFF zhasne LED. ON vrátí poslední běžící program nebo efekt.</p>
+        </div>
+        <div class="card">
+          <h3>Stav zařízení</h3>
+          <p>V rozhraní vidíte IP adresu, Wi-Fi signál, baterii a další důležité údaje pro kontrolu.</p>
+        </div>
+      </div>
+    </section>
+
+    <section id="programy">
+      <h2>Nahrávání programu z Ignis Studia</h2>
+      <div class="grid two">
+        <div>
+          <div class="step">
+            <div class="num">1</div>
+            <div>
+              <h3>V Ignis Studiu připravte program</h3>
+              <p>Program připravte v Ignis Studiu a exportujte ho pro AuraX2. Pokud si nejste jistí nastavením projektu, raději ho před nahráním ověřte.</p>
+            </div>
+          </div>
+          <div class="step">
+            <div class="num">2</div>
+            <div>
+              <h3>Nahrání přímo do zařízení</h3>
+              <p>V AuraX2 otevřete <strong>Programs</strong>, vyberte soubor a nahrajte ho. Při nahrávání se zobrazí stav.</p>
+            </div>
+          </div>
+          <div class="step">
+            <div class="num">3</div>
+            <div>
+              <h3>Spuštění programu</h3>
+              <p>Vyberte slot nebo program a stiskněte <strong>START</strong>. STOP program zastaví.</p>
+            </div>
+          </div>
+        </div>
+        <div class="callout">
+          <h3>Co AuraX2 kontroluje</h3>
+          <ul class="list">
+            <li>Jestli je v zařízení dost volného místa.</li>
+            <li>Jestli se soubor nahrál korektně.</li>
+            <li>Jestli běží program, efekt, nebo je zařízení zhasnuté.</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <section id="sync">
+      <h2>Synchronizace více zařízení</h2>
+      <div class="grid two">
+        <div class="card">
+          <h3>Kdy použít Sync</h3>
+          <p>
+            Sync zapnete, když chcete jedním ovládáním měnit programy, barvy, efekty nebo jas na více zařízeních najednou.
+            Zařízení musí být ve stejné síti a ve stejném sync kanálu.
+          </p>
+          <div class="badges">
+            <span class="badge">kanály 1-10</span>
+            <span class="badge">více zařízení</span>
+            <span class="badge">společné START</span>
+          </div>
+        </div>
+        <div class="card">
+          <h3>Kdy Sync vypnout</h3>
+          <p>
+            Pokud chcete ovládat jen jednu konkrétní tyč nebo jedno zařízení, Sync vypněte.
+            Pak se příkazy posílají pouze do zařízení, které máte právě otevřené.
+          </p>
+          <div class="badges">
+            <span class="badge">jedno zařízení</span>
+            <span class="badge">lokální ovládání</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="settings">
+      <h2>Běžné nastavení</h2>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Nastavení</th>
+              <th>K čemu slouží</th>
+              <th>Doporučení</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><strong>Device name</strong></td>
+              <td>Jméno zařízení v aplikaci, v seznamu zařízení a v síti.</td>
+              <td>Dejte praktický název, např. <span class="code">stage-left</span> nebo <span class="code">staff-01</span>.</td>
+            </tr>
+            <tr>
+              <td><strong>Wi-Fi SSID / Password</strong></td>
+              <td>Síť, ke které se má AuraX2 připojit.</td>
+              <td>Pro více zařízení používejte jednu stabilní Wi-Fi síť.</td>
+            </tr>
+            <tr>
+              <td><strong>Advanced settings</strong></td>
+              <td>Servisní část pro nastavení konkrétního hardwaru.</td>
+              <td>Neměnit bez konzultace nebo bez přesné znalosti daného zařízení.</td>
+            </tr>
+            <tr>
+              <td><strong>Firmware update</strong></td>
+              <td>Aktuální verze firmware, kontrola novější verze a ruční aktualizace softwaru v zařízení.</td>
+              <td>Zařízení může upozornit, že je dostupná nová verze. Aktualizaci spouštějte jen při stabilním napájení a nepřerušujte nahrávání.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="potize">
+      <h2>Když něco nejde</h2>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Problém</th>
+              <th>Co zkusit</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Nejde otevřít <span class="code">aurax.local</span></td>
+              <td>Zkontrolujte, že jste na stejné Wi-Fi. V Ignis Studiu dejte <strong>Scan</strong> a otevřete IP adresu zařízení. U vlastní AuraX Wi-Fi zkuste <span class="code">192.168.4.1</span>.</td>
+            </tr>
+            <tr>
+              <td>Telefon se odpojuje od <span class="code">AuraX-XXXX</span></td>
+              <td>Potvrďte, že chcete zůstat na síti bez internetu. Případně dočasně vypněte mobilní data nebo automatické přepínání Wi-Fi.</td>
+            </tr>
+            <tr>
+              <td>Ignis.APP nic nenajde</td>
+              <td>Telefon, počítač a AuraX2 dejte na stejnou Wi-Fi. Zkuste Scan znovu v Ignis Studiu. Pokud je telefon hotspotem, některé telefony omezují vyhledávání klientů; pak použijte IP adresu nebo router.</td>
+            </tr>
+            <tr>
+              <td>Po nastavení Wi-Fi zmizela síť <span class="code">AuraX-XXXX</span></td>
+              <td>To je správně. Zařízení se úspěšně připojilo k routeru a vlastní servisní Wi-Fi vypnulo.</td>
+            </tr>
+            <tr>
+              <td>Program nejde nahrát</td>
+              <td>Zkontrolujte volné místo a soubor exportovaný z Ignis Studia. Pokud nahráváte přes aplikaci a telefon blokuje soubor, zkuste běžný prohlížeč.</td>
+            </tr>
+            <tr>
+              <td>Zařízení nereaguje</td>
+              <td>Odpojte a znovu připojte napájení. Počkejte až 60 sekund. Pokud se nepřipojí k uložené Wi-Fi, mělo by začít vysílat <span class="code">AuraX-XXXX</span>.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section>
+      <h2>Jednoduché pravidlo pro uživatele</h2>
+      <div class="callout good">
+        <h3>Router je základ, hotspot je záloha</h3>
+        <p>
+          Pokud je to možné, připojte všechna AuraX2 zařízení, telefon i počítač na jednu Wi-Fi síť z routeru.
+          Když router není po ruce, může síť vytvořit telefon nebo notebook přes hotspot. Pak funguje
+          <span class="code">aurax.local</span>, IP adresa z Ignis Studia, seznam zařízení i synchronizace nejlépe podle kvality dané sítě.
+        </p>
+      </div>
+    </section>
+
+    <footer class="footer">
+      <strong>AuraX2 návod - česká verze.</strong>
+      <span>Připraveno pro rychlé předání zákazníkovi. Text lze dál upravit podle finální verze aplikace a firmware.</span>
+    </footer>
+  </div>
+</body>
+</html>

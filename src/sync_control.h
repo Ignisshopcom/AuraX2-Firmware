@@ -3,6 +3,7 @@
 #include <stdint.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/queue.h>
+#include <esp_wifi.h>
 #include "pix_player.h"
 #include "effect_player.h"
 #include "led_driver.h"
@@ -14,14 +15,19 @@ public:
 
     // syncMask: bit 0 = class 1, bit 9 = class 10.
     bool begin(uint16_t syncMask = 1, bool syncEnabled = true);
+    bool refreshWifiPeer();
     void setSyncMask(uint16_t syncMask);
     void setSyncEnabled(bool enabled);
     bool isSyncActive() const { return _syncEnabled && _syncMask != 0; }
+    bool isReady() const { return _espNowReady; }
+    uint8_t wifiChannel() const { return _peerChannel; }
+    const char* wifiInterfaceName() const;
 
     // Call from the wifi_ctrl task loop. Processes received packets.
     void process();
 
     int broadcastPlay(const char* file, uint8_t endBehavior = 255, uint32_t delayMs = 200, uint8_t programSlot = 0);
+    int broadcastPlayFromAge(const char* file, uint8_t endBehavior, uint32_t ageMs, uint8_t programSlot = 0);
     void broadcastStop();
     void broadcastEffect(const EffectParams& p);
     void broadcastBrightness(uint8_t brightness);
@@ -61,6 +67,7 @@ private:
     struct __attribute__((packed)) Packet {
         uint8_t  cmd;
         uint16_t channelMask;
+        uint32_t nonce;
         union {
             PlayData   play;
             EffectData effect;
@@ -75,6 +82,9 @@ private:
 
     static void recvCb(const uint8_t* mac, const uint8_t* data, int len);
     void handlePacket(const Packet& pkt, int64_t rxUs);
+    bool sendPacket(const Packet& pkt, const char* label, uint8_t repeats = 3);
+    bool sendTimedPlayPacket(Packet& pkt, int64_t triggerUs, const char* label, uint8_t repeats = 3);
+    uint32_t nextNonce() const;
 
     PixPlayer&    _player;
     EffectPlayer& _effectPlayer;
@@ -82,4 +92,9 @@ private:
     QueueHandle_t _queue    = nullptr;
     uint16_t      _syncMask = 1;
     bool          _syncEnabled = true;
+    bool          _espNowReady = false;
+    bool          _peerConfigured = false;
+    wifi_interface_t _peerIfidx = WIFI_IF_STA;
+    uint8_t       _peerChannel = 0;
+    uint32_t      _lastRxNonce = 0;
 };

@@ -39,7 +39,14 @@ bool WS281x::begin() {
     config.channel              = _channel;
     config.gpio_num             = (gpio_num_t)_dataPin;
     config.clk_div              = 2;    // 80 MHz / 2 = 40 MHz (25 ns/tick)
+    // Use the full legacy RMT memory bank for this single LED output. With one
+    // block the driver refills the FIFO every ~2 LEDs; WiFi/HTTP interrupts can
+    // then create tiny gaps that WS281x strips interpret as a reset pulse.
+#if defined(ARDUINO_ARCH_ESP32C3) || defined(CONFIG_IDF_TARGET_ESP32C3)
     config.mem_block_num        = 1;
+#else
+    config.mem_block_num        = 8;
+#endif
     config.tx_config.carrier_en       = false;
     config.tx_config.idle_output_en   = true;
     config.tx_config.idle_level       = RMT_IDLE_LEVEL_LOW;
@@ -80,6 +87,7 @@ void WS281x::setMirror(bool mirror) {
 void WS281x::setCurrentLimit(uint16_t mALimit, uint16_t mAPerLed) {
     _mALimit  = mALimit;
     _mAPerLed = mAPerLed > 0 ? mAPerLed : 1;
+    _currentScale256 = 256;
 }
 
 uint16_t WS281x::maxRefreshHz() const {
@@ -153,8 +161,9 @@ void WS281x::showColumnDirect(const uint8_t* pixData, uint16_t count) {
     int buf = _curBuf;
     uint16_t n = count < _numLeds ? count : _numLeds;
 
-    // Current limiting: pre-pass to estimate draw, compute scale factor
-    uint16_t scale256 = 256;
+    // Current limiting: pre-pass to estimate draw, then smooth the scale so
+    // effects do not visibly pulse when their instantaneous power changes.
+    uint16_t targetScale256 = 256;
     if (_mALimit > 0) {
         uint32_t totalRGB = 0;
         for (uint16_t i = 0; i < n; i++) {
@@ -175,8 +184,23 @@ void WS281x::showColumnDirect(const uint8_t* pixData, uint16_t count) {
         }
         uint32_t estMA = n + totalRGB * _mAPerLed / 765u;
         if (estMA > _mALimit) {
-            scale256 = (uint16_t)((uint32_t)_mALimit * 256u / estMA);
+            targetScale256 = (uint16_t)((uint32_t)_mALimit * 256u / estMA);
         }
+    }
+    uint16_t scale256 = targetScale256;
+    if (_mALimit > 0) {
+        constexpr uint16_t kScaleStepDown = 24;
+        constexpr uint16_t kScaleStepUp = 4;
+        if (targetScale256 < _currentScale256) {
+            uint16_t delta = _currentScale256 - targetScale256;
+            _currentScale256 -= delta > kScaleStepDown ? kScaleStepDown : delta;
+        } else if (targetScale256 > _currentScale256) {
+            uint16_t delta = targetScale256 - _currentScale256;
+            _currentScale256 += delta > kScaleStepUp ? kScaleStepUp : delta;
+        }
+        scale256 = _currentScale256;
+    } else {
+        _currentScale256 = 256;
     }
 
     encodePixels(_rmtBuf[buf], pixData, n, scale256);

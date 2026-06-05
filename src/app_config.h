@@ -4,20 +4,15 @@
 
 #define CFG_FILE "/config.json"
 
-static constexpr uint8_t WIFI_MODE_NORMAL       = 0;
-static constexpr uint8_t WIFI_MODE_GROUP_MASTER = 1;
-static constexpr uint8_t WIFI_MODE_GROUP_CLIENT = 2;
+static constexpr uint32_t BATTERY_MIN_INTERVAL_MS = 10000;
 
 struct AppConfig {
     uint8_t  ledType;       // 1=APA102, 0=WS281x  (LED_TYPE_APA102 / LED_TYPE_WS281X)
     uint16_t numLeds;
     uint8_t  dataPin;       // MOSI for APA102, DATA for WS281x
     uint8_t  clkPin;        // CLK for APA102
-    uint8_t  wifiMode;      // 0=normal STA+fallback AP, 1=group AP, 2=group client
     char     ssid[64];
     char     password[64];
-    char     groupSsid[32];
-    char     groupPassword[64];
     char     apCode[8];      // fallback AP suffix, e.g. AuraX_AB12
     char     pixFile[64];
     char     hostname[32];  // device name / mDNS hostname without .local
@@ -26,7 +21,7 @@ struct AppConfig {
     uint8_t  endBehavior;   // 255 = from .pix file, 0 = off, 1 = loop, 2 = keep
     // Effect settings
     uint8_t  effectId;        // 1=solid, 2=android, 10+ = AuraX/WLED-like effects
-    uint16_t effectSpeed;     // 10-1000, 100=normal
+    uint16_t effectSpeed;     // 0-255 UI value, mapped internally to legacy 0-1000
     uint8_t  effectIntensity; // 0-255, effect-specific strength
     uint8_t  effectDotSize;   // effect-specific size/width
     uint8_t  effectPaletteId; // 0=custom color slots, 1+ = built-in palette

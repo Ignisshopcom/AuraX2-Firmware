@@ -1,19 +1,27 @@
 package com.aurax.finder;
 
 import android.app.Activity;
+import android.app.DownloadManager;
 import android.content.Context;
+import android.content.Intent;
 import android.graphics.Color;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
+import android.net.Uri;
 import android.net.wifi.WifiManager;
 import android.os.Build;
 import android.os.Bundle;
+import android.os.Environment;
 import android.os.Handler;
 import android.os.Looper;
 import android.text.TextUtils;
 import android.view.Gravity;
 import android.view.View;
 import android.view.Window;
+import android.webkit.URLUtil;
+import android.webkit.ValueCallback;
+import android.webkit.WebChromeClient;
+import android.webkit.WebResourceRequest;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
@@ -22,6 +30,7 @@ import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
+import android.widget.Toast;
 
 import org.json.JSONObject;
 
@@ -50,6 +59,7 @@ import java.util.concurrent.TimeUnit;
 
 public class MainActivity extends Activity {
     private static final int DISCOVERY_PORT = 4210;
+    private static final int FILE_CHOOSER_REQUEST = 1001;
     private static final int BG = Color.rgb(14, 15, 18);
     private static final int PANEL = Color.rgb(25, 27, 32);
     private static final int PANEL_2 = Color.rgb(34, 37, 43);
@@ -65,6 +75,7 @@ public class MainActivity extends Activity {
     private TextView status;
     private DatagramSocket udpSocket;
     private WifiManager.MulticastLock multicastLock;
+    private ValueCallback<Uri[]> fileChooserCallback;
     private boolean showingWebView = false;
     private boolean scanActive = false;
 
@@ -259,7 +270,13 @@ public class MainActivity extends Activity {
         Device d = new Device(host, ip);
         if (p.length > 4) d.battery = p[4];
         if (p.length > 5) d.rssi = p[5];
-        if (p.length > 6) d.sync = p[6];
+        if (p.length > 7) {
+            d.syncEnabled = p[6];
+            d.syncMask = p[7];
+        } else if (p.length > 6) {
+            d.syncMask = p[6];
+            d.syncEnabled = "0".equals(p[6]) ? "0" : "1";
+        }
         addDevice(d);
     }
 
@@ -280,7 +297,13 @@ public class MainActivity extends Activity {
             String host = json.optString("hostname", "aurax");
             Device d = new Device(host, ip);
             d.battery = json.has("battery_pct") ? String.valueOf(json.optInt("battery_pct")) : "";
-            d.sync = json.has("sync_channel") ? String.valueOf(json.optInt("sync_channel")) : "";
+            d.syncEnabled = json.has("sync_enabled") ? (json.optBoolean("sync_enabled") ? "1" : "0") : "";
+            if (json.has("sync_mask")) {
+                d.syncMask = String.valueOf(json.optInt("sync_mask"));
+            } else if (json.has("sync_channel")) {
+                int channel = json.optInt("sync_channel");
+                d.syncMask = channel >= 1 && channel <= 10 ? String.valueOf(1 << (channel - 1)) : "0";
+            }
             d.rssi = json.has("rssi") ? String.valueOf(json.optInt("rssi")) : "";
             addDevice(d);
         } catch (Exception ignored) {
@@ -350,9 +373,14 @@ public class MainActivity extends Activity {
         meta.setGravity(Gravity.CENTER_VERTICAL);
         meta.setPadding(0, dp(11), 0, 0);
         meta.addView(chip("Battery " + valueOrDash(d.battery, "%")), chipParams(true));
-        meta.addView(chip(syncText(d.sync)), chipParams(true));
         meta.addView(chip(wifiText(d.rssi)), chipParams(false));
         card.addView(meta);
+
+        TextView sync = chip(syncText(d.syncEnabled, d.syncMask));
+        sync.setSingleLine(false);
+        LinearLayout.LayoutParams syncLp = new LinearLayout.LayoutParams(-1, -2);
+        syncLp.setMargins(0, dp(8), 0, 0);
+        card.addView(sync, syncLp);
 
         return card;
     }
@@ -385,9 +413,23 @@ public class MainActivity extends Activity {
         return value + suffix;
     }
 
-    private String syncText(String value) {
-        if (TextUtils.isEmpty(value) || "0".equals(value)) return "Sync off";
-        return "Sync " + value;
+    private String syncText(String enabled, String maskValue) {
+        if ("0".equals(enabled)) return "Sync off";
+        int mask = 0;
+        try {
+            if (!TextUtils.isEmpty(maskValue)) mask = Integer.parseInt(maskValue);
+        } catch (NumberFormatException ignored) {
+        }
+        mask &= 0x03FF;
+        if (mask == 0) return "Sync off";
+
+        StringBuilder channels = new StringBuilder();
+        for (int ch = 1; ch <= 10; ch++) {
+            if ((mask & (1 << (ch - 1))) == 0) continue;
+            if (channels.length() > 0) channels.append(", ");
+            channels.append(ch);
+        }
+        return "Sync channels " + channels;
     }
 
     private String wifiText(String value) {
@@ -434,10 +476,112 @@ public class MainActivity extends Activity {
         settings.setDomStorageEnabled(true);
         settings.setLoadWithOverviewMode(true);
         settings.setUseWideViewPort(true);
-        web.setWebViewClient(new WebViewClient());
+        settings.setAllowFileAccess(true);
+        settings.setAllowContentAccess(true);
+        web.setWebViewClient(new WebViewClient() {
+            @Override
+            public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
+                String url = request.getUrl().toString();
+                if (isFirmwareDownloadUrl(url)) {
+                    downloadFromWebView(url, null, null, "application/octet-stream");
+                    return true;
+                }
+                return false;
+            }
+
+            @Override
+            public boolean shouldOverrideUrlLoading(WebView view, String url) {
+                if (isFirmwareDownloadUrl(url)) {
+                    downloadFromWebView(url, null, null, "application/octet-stream");
+                    return true;
+                }
+                return false;
+            }
+        });
+        web.setWebChromeClient(new WebChromeClient() {
+            @Override
+            public boolean onShowFileChooser(WebView webView, ValueCallback<Uri[]> filePathCallback,
+                                             WebChromeClient.FileChooserParams fileChooserParams) {
+                if (fileChooserCallback != null) {
+                    fileChooserCallback.onReceiveValue(null);
+                }
+                fileChooserCallback = filePathCallback;
+
+                Intent intent;
+                try {
+                    intent = fileChooserParams.createIntent();
+                } catch (Exception ignored) {
+                    intent = new Intent(Intent.ACTION_GET_CONTENT);
+                    intent.addCategory(Intent.CATEGORY_OPENABLE);
+                    intent.setType("*/*");
+                }
+
+                try {
+                    startActivityForResult(intent, FILE_CHOOSER_REQUEST);
+                } catch (Exception e) {
+                    fileChooserCallback = null;
+                    filePathCallback.onReceiveValue(null);
+                    Toast.makeText(MainActivity.this, "File picker unavailable", Toast.LENGTH_SHORT).show();
+                }
+                return true;
+            }
+        });
+        web.setDownloadListener((url, userAgent, contentDisposition, mimeType, contentLength) ->
+                downloadFromWebView(url, userAgent, contentDisposition, mimeType));
         root.addView(web, new LinearLayout.LayoutParams(-1, 0, 1));
         setContentView(root);
         web.loadUrl("http://" + d.ip + "/");
+    }
+
+    private void downloadFromWebView(String url, String userAgent, String contentDisposition, String mimeType) {
+        try {
+            String filename = URLUtil.guessFileName(url, contentDisposition, mimeType);
+            DownloadManager.Request request = new DownloadManager.Request(Uri.parse(url));
+            request.setTitle(filename);
+            request.setDescription("Downloading firmware");
+            if (!TextUtils.isEmpty(userAgent)) {
+                request.addRequestHeader("User-Agent", userAgent);
+            }
+            if (!TextUtils.isEmpty(mimeType)) {
+                request.setMimeType(mimeType);
+            }
+            request.setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED);
+            request.setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, filename);
+
+            DownloadManager manager = (DownloadManager) getSystemService(Context.DOWNLOAD_SERVICE);
+            if (manager == null) {
+                throw new IllegalStateException("Download manager unavailable");
+            }
+            manager.enqueue(request);
+            Toast.makeText(this, "Downloading " + filename, Toast.LENGTH_SHORT).show();
+        } catch (Exception e) {
+            try {
+                startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(url)));
+            } catch (Exception ignored) {
+                Toast.makeText(this, "Download failed", Toast.LENGTH_SHORT).show();
+            }
+        }
+    }
+
+    private boolean isFirmwareDownloadUrl(String url) {
+        if (TextUtils.isEmpty(url)) return false;
+        try {
+            String path = Uri.parse(url).getPath();
+            return path != null && path.toLowerCase().endsWith(".bin");
+        } catch (Exception ignored) {
+            return false;
+        }
+    }
+
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode != FILE_CHOOSER_REQUEST || fileChooserCallback == null) {
+            return;
+        }
+        Uri[] result = WebChromeClient.FileChooserParams.parseResult(resultCode, data);
+        fileChooserCallback.onReceiveValue(result);
+        fileChooserCallback = null;
     }
 
     @Override
@@ -552,7 +696,8 @@ public class MainActivity extends Activity {
         final String hostname;
         final String ip;
         String battery = "";
-        String sync = "";
+        String syncEnabled = "";
+        String syncMask = "";
         String rssi = "";
 
         Device(String hostname, String ip) {

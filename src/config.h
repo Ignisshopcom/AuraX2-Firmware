@@ -2,8 +2,6 @@
 
 #define WIFI_SSID     ""
 #define WIFI_PASSWORD ""
-#define GROUP_WIFI_SSID     "AuraX-GROUP"
-#define GROUP_WIFI_PASSWORD "aurax1234"
 
 // LED strip type — change to LED_TYPE_WS281X for WS2812B/WS2811 strips
 #define LED_TYPE_APA102  1

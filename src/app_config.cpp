@@ -131,7 +131,9 @@ static void applyBatteryUsermod(JsonObject battery, AppConfig& cfg) {
     cfg.batCalibration = battery["calibration"] | cfg.batCalibration;
 
     uint32_t interval = battery["interval"] | cfg.batIntervalMs;
-    if (interval >= 100) cfg.batIntervalMs = interval;
+    if (interval >= 100) {
+        cfg.batIntervalMs = interval < BATTERY_MIN_INTERVAL_MS ? BATTERY_MIN_INTERVAL_MS : interval;
+    }
 
     JsonObject autoOff = battery["auto-off"];
     if (!autoOff.isNull()) {
@@ -150,8 +152,7 @@ static void normalizeEffectConfig(AppConfig& cfg) {
     if (cfg.numLeds > 2048) cfg.numLeds = 2048;
     if (cfg.dataPin > 48) cfg.dataPin = (cfg.ledType == LED_TYPE_APA102) ? LED_DATA_PIN : WS_DATA_PIN;
     if (cfg.clkPin > 48) cfg.clkPin = LED_CLK_PIN;
-    if (cfg.effectSpeed < 10) cfg.effectSpeed = 10;
-    if (cfg.effectSpeed > 1000) cfg.effectSpeed = 1000;
+    if (cfg.effectSpeed > 255) cfg.effectSpeed = 255;
     if (cfg.effectDotSize < 1) cfg.effectDotSize = 1;
     if (cfg.effectDotSize > cfg.numLeds) {
         cfg.effectDotSize = cfg.numLeds > 255 ? 255 : (uint8_t)cfg.numLeds;
@@ -159,14 +160,13 @@ static void normalizeEffectConfig(AppConfig& cfg) {
     if (cfg.paletteSize < 1 || cfg.paletteSize > 4) cfg.paletteSize = 1;
     cfg.effectReverse = cfg.effectReverse ? 1 : 0;
     cfg.renderMirror = cfg.renderMirror ? 1 : 0;
-    cfg.wifiMode = WIFI_MODE_NORMAL;
     cfg.syncEnabled = cfg.syncEnabled ? 1 : 0;
     cfg.syncMask &= 0x03FF;
     if (cfg.batMaxMv <= cfg.batMinMv) {
         cfg.batMinMv = 3000;
         cfg.batMaxMv = 4200;
     }
-    if (cfg.batIntervalMs < 100) cfg.batIntervalMs = 30000;
+    if (cfg.batIntervalMs < BATTERY_MIN_INTERVAL_MS) cfg.batIntervalMs = BATTERY_MIN_INTERVAL_MS;
     normalizeHostname(cfg.hostname, sizeof(cfg.hostname));
 }
 
@@ -322,7 +322,7 @@ static AppConfig defaults() {
     cfg.tempo        = 100;
     cfg.endBehavior  = 255;
     cfg.effectId        = 1;
-    cfg.effectSpeed     = 100;
+    cfg.effectSpeed     = 128;
     cfg.effectIntensity = 128;
     cfg.effectDotSize   = 3;
     cfg.effectPaletteId = 0;
@@ -338,18 +338,15 @@ static AppConfig defaults() {
     cfg.batIntervalMs       = 30000;
     cfg.batAutoOff          = 0;
     cfg.batAutoOffThreshold = 10;
-    cfg.syncEnabled         = 0;
-    cfg.syncMask            = 0;
+    cfg.syncEnabled         = 1;
+    cfg.syncMask            = 1;
     cfg.wledImportHash      = 0;
     cfg.ledType = LED_TYPE;
     cfg.numLeds = NUM_LEDS;
     cfg.dataPin = (LED_TYPE == LED_TYPE_APA102) ? LED_DATA_PIN : WS_DATA_PIN;
     cfg.clkPin  = LED_CLK_PIN;
-    cfg.wifiMode = WIFI_MODE_NORMAL;
     strncpy(cfg.ssid,     WIFI_SSID,     sizeof(cfg.ssid)     - 1);
     strncpy(cfg.password, WIFI_PASSWORD, sizeof(cfg.password) - 1);
-    strncpy(cfg.groupSsid, GROUP_WIFI_SSID, sizeof(cfg.groupSsid) - 1);
-    strncpy(cfg.groupPassword, GROUP_WIFI_PASSWORD, sizeof(cfg.groupPassword) - 1);
     strncpy(cfg.pixFile,  PIX_FILE,      sizeof(cfg.pixFile)  - 1);
     ensureApCode(cfg);
     return cfg;
@@ -399,12 +396,8 @@ AppConfig loadConfig() {
         cfg.numLeds = doc["numLeds"] | cfg.numLeds;
         cfg.dataPin = doc["dataPin"] | cfg.dataPin;
         cfg.clkPin  = doc["clkPin"]  | cfg.clkPin;
-        cfg.wifiMode = doc["wifiMode"] | cfg.wifiMode;
-        if (cfg.wifiMode > WIFI_MODE_GROUP_CLIENT) cfg.wifiMode = WIFI_MODE_NORMAL;
         strlcpy(cfg.ssid,     doc["ssid"]     | cfg.ssid,     sizeof(cfg.ssid));
         strlcpy(cfg.password, doc["password"] | cfg.password, sizeof(cfg.password));
-        strlcpy(cfg.groupSsid, doc["groupSsid"] | cfg.groupSsid, sizeof(cfg.groupSsid));
-        strlcpy(cfg.groupPassword, doc["groupPassword"] | cfg.groupPassword, sizeof(cfg.groupPassword));
         strlcpy(cfg.apCode, doc["apCode"] | cfg.apCode, sizeof(cfg.apCode));
         strlcpy(cfg.pixFile,  doc["pixFile"]  | cfg.pixFile,  sizeof(cfg.pixFile));
         const char* host = doc["deviceName"] | "";
@@ -466,10 +459,6 @@ AppConfig loadConfig() {
         if (cfg.batAutoOff) cfg.batAutoOff = 0;
         shouldSave = true;
     }
-    if (strlen(cfg.groupSsid) == 0)
-        strlcpy(cfg.groupSsid, GROUP_WIFI_SSID, sizeof(cfg.groupSsid));
-    if (strlen(cfg.groupPassword) > 0 && strlen(cfg.groupPassword) < 8)
-        strlcpy(cfg.groupPassword, GROUP_WIFI_PASSWORD, sizeof(cfg.groupPassword));
     shouldSave = sanitizeWifiCredentials(cfg) || shouldSave;
     shouldSave = ensureApCode(cfg) || shouldSave;
     normalizeEffectConfig(cfg);
@@ -495,11 +484,8 @@ bool saveConfig(const AppConfig& cfg) {
     doc["numLeds"]  = cfg.numLeds;
     doc["dataPin"]  = cfg.dataPin;
     doc["clkPin"]   = cfg.clkPin;
-    doc["wifiMode"] = cfg.wifiMode;
     doc["ssid"]     = cfg.ssid;
     doc["password"] = cfg.password;
-    doc["groupSsid"] = cfg.groupSsid;
-    doc["groupPassword"] = cfg.groupPassword;
     doc["apCode"]   = cfg.apCode;
     doc["pixFile"]  = cfg.pixFile;
     doc["deviceName"] = cfg.hostname;

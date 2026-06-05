@@ -71,8 +71,11 @@ private:
     void setPixel(uint16_t i, const EffectColor& c, uint8_t scale = 255);
     void addPixel(uint16_t i, const EffectColor& c, uint8_t scale = 255);
     void drawBlob(uint16_t center, uint16_t width, const EffectColor& c, uint8_t scale = 255);
+    void drawSoftBlob(uint32_t centerQ8, uint16_t width, const EffectColor& c, uint8_t scale = 255);
+    void drawSoftTrail(uint32_t headQ8, uint16_t tail, const EffectColor& c, uint8_t scale = 255, bool reverse = false);
     void show(ILedDriver& leds);
 
+    uint16_t scaledSpeed(const EffectParams& p) const;
     uint16_t speedStep(const EffectParams& p) const;
     uint8_t  intensity(const EffectParams& p) const;
     uint16_t sizeParam(const EffectParams& p, uint16_t fallback) const;

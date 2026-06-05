@@ -20,6 +20,7 @@ const EFFECTS = [
   [11, 'Flow'],
   [12, 'Gravcenter'],
   [13, 'Gravfreq'],
+  [52, 'Chase'],
   [14, 'Chase 2'],
   [15, 'Chase 3'],
   [16, 'Chunchun'],
@@ -68,7 +69,7 @@ export function EffectPanel({ effectId, effectSpeed, effectIntensity, effectDotS
             onInput={(e) => onChange({ effectDotSize: +(e.currentTarget as HTMLInputElement).value })} />
         </label>
         <label style="grid-column:1/-1">Speed
-          <input type="range" value={effectSpeed} min={10} max={1000}
+          <input type="range" value={effectSpeed} min={0} max={255}
             onInput={(e) => onChange({ effectSpeed: +(e.currentTarget as HTMLInputElement).value })} />
         </label>
         <label style="grid-column:1/-1">Intensity

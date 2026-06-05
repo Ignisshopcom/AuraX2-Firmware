@@ -110,10 +110,8 @@ void setup() {
                 bool saved = saveConfig(cfg);
                 LOG("[cfg] delayed config save: %s\n", saved ? "OK" : "FAILED");
             }
-            if (cfg.syncEnabled && cfg.syncMask) {
-                syncCtrl->begin(cfg.syncMask, cfg.syncEnabled);
-            } else {
-                LOGLN("[sync] disabled");
+            if (!syncCtrl->begin(cfg.syncMask, cfg.syncEnabled)) {
+                LOGLN("[sync] init failed");
             }
             while (true) { syncCtrl->process(); wifi->handle(); vTaskDelay(1); }
         },
@@ -145,7 +143,7 @@ void setup() {
     } else if (fsMounted && LittleFS.exists(cfg.pixFile)) {
         int err = player->load(cfg.pixFile);
         if (err) { LOG("[pix] load failed: %d\n", err); }
-        else player->startTask(1);
+        else player->startTask();
     } else if (!fsMounted) {
         LOGLN("[pix] storage unavailable, autoplay skipped");
     } else {

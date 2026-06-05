@@ -75,7 +75,7 @@ void WledFxEffect::update(ILedDriver& leds, const EffectParams& p) {
 }
 
 uint32_t WledFxEffect::intervalUs(const EffectParams&) const {
-    return 25000;  // 40 FPS: smooth enough, still safe for WS281x on typical strip lengths.
+    return 12500;  // 80 FPS target; still below the WS281x protocol ceiling on typical AuraX strips.
 }
 
 void WledFxEffect::clear() {
@@ -120,11 +120,37 @@ void WledFxEffect::addPixel(uint16_t i, const EffectColor& c, uint8_t scale) {
 }
 
 void WledFxEffect::drawBlob(uint16_t center, uint16_t width, const EffectColor& c, uint8_t scale) {
+    drawSoftBlob((uint32_t)center << 8, width, c, scale);
+}
+
+void WledFxEffect::drawSoftBlob(uint32_t centerQ8, uint16_t width, const EffectColor& c, uint8_t scale) {
     if (width < 1) width = 1;
+    uint32_t spanQ8 = (uint32_t)_numLeds << 8;
+    if (spanQ8 == 0) return;
+    centerQ8 %= spanQ8;
+    uint32_t limitQ8 = ((uint32_t)width << 8) + 255;
     for (uint16_t i = 0; i < _numLeds; i++) {
-        uint16_t d = circularDistance(i, center);
-        if (d > width) continue;
-        uint8_t v = (uint8_t)((uint32_t)(width - d + 1) * scale / (width + 1));
+        uint32_t pixelQ8 = (uint32_t)i << 8;
+        uint32_t d = pixelQ8 > centerQ8 ? pixelQ8 - centerQ8 : centerQ8 - pixelQ8;
+        if (d > spanQ8 / 2) d = spanQ8 - d;
+        if (d > limitQ8) continue;
+        uint8_t v = (uint8_t)((uint64_t)(limitQ8 - d) * scale / limitQ8);
+        addPixel(i, c, v);
+    }
+}
+
+void WledFxEffect::drawSoftTrail(uint32_t headQ8, uint16_t tail, const EffectColor& c, uint8_t scale, bool reverse) {
+    if (tail < 1) tail = 1;
+    uint32_t spanQ8 = (uint32_t)_numLeds << 8;
+    if (spanQ8 == 0) return;
+    headQ8 %= spanQ8;
+    uint32_t limitQ8 = ((uint32_t)tail << 8) + 255;
+    for (uint16_t i = 0; i < _numLeds; i++) {
+        uint32_t pixelQ8 = (uint32_t)i << 8;
+        uint32_t dist = reverse ? (pixelQ8 + spanQ8 - headQ8) % spanQ8
+                                : (headQ8 + spanQ8 - pixelQ8) % spanQ8;
+        if (dist > limitQ8) continue;
+        uint8_t v = (uint8_t)((uint64_t)(limitQ8 - dist) * scale / limitQ8);
         addPixel(i, c, v);
     }
 }
@@ -133,9 +159,62 @@ void WledFxEffect::show(ILedDriver& leds) {
     leds.showColumnDirect(_buf, _numLeds);
 }
 
+uint16_t WledFxEffect::scaledSpeed(const EffectParams& p) const {
+    uint16_t s = p.speed > 255 ? 255 : p.speed;
+    return (uint16_t)(((uint32_t)s * 1000u + 127u) / 255u);
+}
+
 uint16_t WledFxEffect::speedStep(const EffectParams& p) const {
-    uint16_t s = p.speed < 10 ? 10 : (p.speed > 1000 ? 1000 : p.speed);
-    return 1 + s / 7;
+    uint16_t s = scaledSpeed(p);
+    uint8_t divisor = 26;
+    switch (p.effectId) {
+        case EFFECT_CHASE2:
+        case EFFECT_CHASE3:
+        case EFFECT_CHUNCHUN:
+        case EFFECT_METEOR:
+        case EFFECT_DOTS:
+        case EFFECT_COUNTER_CHASE:
+        case EFFECT_SPLIT_CHASE:
+        case EFFECT_PULSE_TRAIN:
+        case EFFECT_SCAN_BARS:
+        case EFFECT_SPIN:
+        case EFFECT_CHASE:
+            divisor = 36;
+            break;
+
+        case EFFECT_RIPPLE:
+        case EFFECT_RUNNING:
+        case EFFECT_THEATER:
+        case EFFECT_COLOR_WIPE:
+        case EFFECT_SAW:
+        case EFFECT_CHEVRON:
+        case EFFECT_CROSS_WAVES:
+        case EFFECT_BARBER_POLE:
+        case EFFECT_PRISM:
+        case EFFECT_TWIST:
+            divisor = 30;
+            break;
+
+        case EFFECT_FIREWORKS:
+        case EFFECT_SCANNER:
+        case EFFECT_SCANNER_DUAL:
+        case EFFECT_JUGGLE:
+        case EFFECT_SINELON:
+        case EFFECT_COLLIDE:
+            divisor = 24;
+            break;
+
+        case EFFECT_TWINKLE:
+        case EFFECT_SPARKLE:
+        case EFFECT_STROBE:
+            divisor = 40;
+            break;
+
+        default:
+            divisor = 26;
+            break;
+    }
+    return 1 + s / divisor;
 }
 
 uint8_t WledFxEffect::intensity(const EffectParams& p) const {
@@ -427,28 +506,34 @@ void WledFxEffect::renderGravfreq(const EffectParams& p) {
 
 void WledFxEffect::renderChase(const EffectParams& p, uint8_t count) {
     clear();
-    uint16_t tail = sizeParam(p, count == 2 ? 8 : 6);
-    uint16_t base = (uint16_t)((_phase >> 3) % _numLeds);
+    uint16_t span = _numLeds ? _numLeds : 1;
+    uint32_t spanQ8 = (uint32_t)span << 8;
+    uint32_t baseQ8 = ((uint64_t)_phase << 5) % spanQ8;
+    if (count == 2) {
+        uint16_t tail = sizeParam(p, 8);
+        uint32_t mirrorQ8 = (spanQ8 + spanQ8 - 256 - baseQ8) % spanQ8;
+        drawSoftTrail(baseQ8, tail, paletteAt(p, (uint8_t)_phase), 255);
+        drawSoftTrail(mirrorQ8, tail, paletteAt(p, (uint8_t)(_phase + 128)), 255, true);
+        return;
+    }
+
+    uint16_t tail = sizeParam(p, 5);
     for (uint8_t h = 0; h < count; h++) {
-        uint16_t head = (base + (uint32_t)h * _numLeds / count) % _numLeds;
-        EffectColor c = paletteAt(p, (uint8_t)(h * 255 / count + _phase));
-        for (uint16_t i = 0; i < _numLeds; i++) {
-            uint16_t dist = (head + _numLeds - i) % _numLeds;
-            if (dist > tail) continue;
-            uint8_t bri = (uint8_t)((uint32_t)(tail - dist + 1) * 255 / (tail + 1));
-            addPixel(i, c, bri);
-        }
+        uint32_t headQ8 = (baseQ8 + (uint32_t)h * spanQ8 / count) % spanQ8;
+        EffectColor c = paletteAt(p, (uint8_t)(h * 85 + _phase));
+        drawSoftTrail(headQ8, tail, c, 255);
     }
 }
 
 void WledFxEffect::renderChunchun(const EffectParams& p) {
     clear();
     uint16_t width = sizeParam(p, 4);
-    uint16_t spacing = width * 3 + 2;
-    uint16_t base = (uint16_t)((_phase >> 3) % (_numLeds ? _numLeds : 1));
+    uint32_t spanQ8 = (uint32_t)_numLeds << 8;
+    uint32_t spacingQ8 = ((uint32_t)width * 3 + 2) << 8;
+    uint32_t baseQ8 = ((uint64_t)_phase << 5) % spanQ8;
     for (uint8_t i = 0; i < 4; i++) {
-        uint16_t center = (base + (uint32_t)i * spacing) % _numLeds;
-        drawBlob(center, width, paletteAt(p, (uint8_t)(i * 64 + _phase)), 235);
+        uint32_t centerQ8 = (baseQ8 + (uint32_t)i * spacingQ8) % spanQ8;
+        drawSoftBlob(centerQ8, width, paletteAt(p, (uint8_t)(i * 64 + _phase)), 235);
     }
 }
 
@@ -466,13 +551,10 @@ void WledFxEffect::renderMeteor(const EffectParams& p) {
     uint8_t keep = 165 + intensity(p) / 4;
     fade(keep);
     uint16_t tail = sizeParam(p, 10);
-    uint16_t head = (uint16_t)((_phase >> 4) % _numLeds);
+    uint32_t spanQ8 = (uint32_t)_numLeds << 8;
+    uint32_t headQ8 = ((uint64_t)_phase << 4) % spanQ8;
     EffectColor c = paletteAt(p, (uint8_t)(_phase >> 1));
-    for (uint16_t d = 0; d <= tail; d++) {
-        uint16_t idx = (head + _numLeds - d) % _numLeds;
-        uint8_t bri = (uint8_t)((uint32_t)(tail - d + 1) * 255 / (tail + 1));
-        addPixel(idx, c, bri);
-    }
+    drawSoftTrail(headQ8, tail, c, 255);
 }
 
 void WledFxEffect::renderNoise3(const EffectParams& p) {
@@ -492,8 +574,8 @@ void WledFxEffect::renderOscillate(const EffectParams& p) {
     uint16_t span = _numLeds > 1 ? _numLeds - 1 : 1;
     for (uint8_t i = 0; i < 3; i++) {
         uint8_t w = wave8((_phase >> (i == 0 ? 1 : 2)) + i * 85);
-        uint16_t center = (uint32_t)w * span / 255;
-        drawBlob(center, width, paletteAt(p, (uint8_t)(i * 85 + _phase)), 240);
+        uint32_t centerQ8 = ((uint32_t)w * span << 8) / 255;
+        drawSoftBlob(centerQ8, width, paletteAt(p, (uint8_t)(i * 85 + _phase)), 240);
     }
 }
 
@@ -513,7 +595,7 @@ void WledFxEffect::renderRipple(const EffectParams& p) {
         uint8_t bri = (uint8_t)((uint32_t)(width - diff + 1) * 255 / (width + 1));
         addPixel(i, c, bri);
     }
-    _rippleRadius += 1 + (p.speed > 500 ? 1 : 0);
+    _rippleRadius += 1 + (scaledSpeed(p) > 650 ? 1 : 0);
 }
 
 void WledFxEffect::renderRunning(const EffectParams& p) {
@@ -527,8 +609,9 @@ void WledFxEffect::renderRunning(const EffectParams& p) {
 }
 
 void WledFxEffect::renderStrobe(const EffectParams& p) {
-    uint16_t cycle = 24 + (uint16_t)(1010 - (p.speed < 10 ? 10 : (p.speed > 1000 ? 1000 : p.speed))) / 18;
-    uint16_t onTime = 2 + (uint16_t)intensity(p) * (cycle / 2 + 1) / 255;
+    uint16_t speed = scaledSpeed(p);
+    uint16_t cycle = 8 + (uint16_t)(1000 - speed) / 16;
+    uint16_t onTime = 1 + (uint16_t)intensity(p) * (cycle / 2 + 1) / 255;
     bool on = (_frame % cycle) < onTime;
     if (!on) {
         clear();
@@ -581,16 +664,18 @@ void WledFxEffect::renderFireworks(const EffectParams& p) {
     fade(170);
     uint8_t bursts = 2 + intensity(p) / 70;
     uint16_t span = _numLeds ? _numLeds : 1;
+    uint32_t spanQ8 = (uint32_t)span << 8;
     uint16_t width = sizeParam(p, 4);
     for (uint8_t b = 0; b < bursts; b++) {
         uint16_t local = (_phase >> 2) + b * 73;
         uint16_t origin = (uint16_t)((uint32_t)hash8(b * 41, local >> 6) * span / 255);
         uint8_t radius = wave8(local);
-        uint16_t centerA = (origin + (uint32_t)radius * span / 510) % span;
-        uint16_t centerB = (origin + span - (uint32_t)radius * span / 510) % span;
+        uint32_t offsetQ8 = ((uint32_t)radius * spanQ8 / 510);
+        uint32_t centerA = (((uint32_t)origin << 8) + offsetQ8) % spanQ8;
+        uint32_t centerB = (((uint32_t)origin << 8) + spanQ8 - offsetQ8) % spanQ8;
         EffectColor c = paletteAt(p, (uint8_t)(b * 70 + _phase));
-        drawBlob(centerA, width, c, 210);
-        drawBlob(centerB, width, c, 210);
+        drawSoftBlob(centerA, width, c, 210);
+        drawSoftBlob(centerB, width, c, 210);
     }
 }
 
@@ -598,10 +683,10 @@ void WledFxEffect::renderScanner(const EffectParams& p, bool dual) {
     fade(110 + intensity(p) / 3);
     uint16_t width = sizeParam(p, 4);
     uint16_t span = _numLeds > 1 ? _numLeds - 1 : 1;
-    uint16_t center = (uint32_t)wave8(_phase >> 1) * span / 255;
+    uint32_t centerQ8 = ((uint32_t)wave8(_phase >> 1) * span << 8) / 255;
     EffectColor c = paletteAt(p, (uint8_t)(_phase >> 1));
-    drawBlob(center, width, c, 255);
-    if (dual) drawBlob(span - center, width, paletteAt(p, (uint8_t)(_phase + 128)), 255);
+    drawSoftBlob(centerQ8, width, c, 255);
+    if (dual) drawSoftBlob(((uint32_t)span << 8) - centerQ8, width, paletteAt(p, (uint8_t)(_phase + 128)), 255);
 }
 
 void WledFxEffect::renderTheater(const EffectParams& p) {
@@ -628,8 +713,8 @@ void WledFxEffect::renderJuggle(const EffectParams& p) {
     uint8_t dots = 3 + intensity(p) / 43;
     uint16_t span = _numLeds > 1 ? _numLeds - 1 : 1;
     for (uint8_t d = 0; d < dots; d++) {
-        uint16_t pos = (uint32_t)wave8((_phase >> 1) + d * 37) * span / 255;
-        addPixel(pos, paletteAt(p, (uint8_t)(d * 255 / dots + _phase)), 230);
+        uint32_t posQ8 = ((uint32_t)wave8((_phase >> 1) + d * 37) * span << 8) / 255;
+        drawSoftBlob(posQ8, 1, paletteAt(p, (uint8_t)(d * 255 / dots + _phase)), 230);
     }
 }
 
@@ -637,8 +722,8 @@ void WledFxEffect::renderSinelon(const EffectParams& p) {
     fade(135 + intensity(p) / 4);
     uint16_t width = sizeParam(p, 3);
     uint16_t span = _numLeds > 1 ? _numLeds - 1 : 1;
-    uint16_t pos = (uint32_t)wave8(_phase >> 1) * span / 255;
-    drawBlob(pos, width, paletteAt(p, (uint8_t)(_phase >> 1)), 255);
+    uint32_t posQ8 = ((uint32_t)wave8(_phase >> 1) * span << 8) / 255;
+    drawSoftBlob(posQ8, width, paletteAt(p, (uint8_t)(_phase >> 1)), 255);
 }
 
 void WledFxEffect::renderFire(const EffectParams& p) {
@@ -685,9 +770,10 @@ void WledFxEffect::renderDots(const EffectParams& p) {
     uint8_t count = 2 + intensity(p) / 28;
     uint16_t width = sizeParam(p, 2);
     uint16_t span = _numLeds ? _numLeds : 1;
+    uint32_t spanQ8 = (uint32_t)span << 8;
     for (uint8_t d = 0; d < count; d++) {
-        uint16_t pos = ((uint32_t)(_phase >> 3) * (d + 1) + (uint32_t)d * span / count) % span;
-        drawBlob(pos, width, paletteAt(p, (uint8_t)(d * 255 / count + _phase)), 230);
+        uint32_t posQ8 = ((((uint64_t)_phase << 5) * (d + 1)) + (uint32_t)d * spanQ8 / count) % spanQ8;
+        drawSoftBlob(posQ8, width, paletteAt(p, (uint8_t)(d * 255 / count + _phase)), 230);
     }
 }
 
@@ -695,13 +781,11 @@ void WledFxEffect::renderCounterChase(const EffectParams& p) {
     clear();
     uint16_t tail = sizeParam(p, 8);
     uint16_t span = _numLeds ? _numLeds : 1;
-    uint16_t a = (_phase >> 3) % span;
-    uint16_t b = (span - 1) - a;
-    for (uint16_t d = 0; d <= tail; d++) {
-        uint8_t bri = (uint8_t)((uint32_t)(tail - d + 1) * 255 / (tail + 1));
-        addPixel((a + span - d) % span, paletteAt(p, (uint8_t)(_phase)), bri);
-        addPixel((b + d) % span, paletteAt(p, (uint8_t)(_phase + 128)), bri);
-    }
+    uint32_t spanQ8 = (uint32_t)span << 8;
+    uint32_t aQ8 = ((uint64_t)_phase << 5) % spanQ8;
+    uint32_t bQ8 = (spanQ8 + spanQ8 - 256 - aQ8) % spanQ8;
+    drawSoftTrail(aQ8, tail, paletteAt(p, (uint8_t)(_phase)), 255);
+    drawSoftTrail(bQ8, tail, paletteAt(p, (uint8_t)(_phase + 128)), 255, true);
 }
 
 void WledFxEffect::renderSplitChase(const EffectParams& p) {
@@ -709,11 +793,19 @@ void WledFxEffect::renderSplitChase(const EffectParams& p) {
     uint16_t tail = sizeParam(p, 6);
     uint16_t half = _numLeds / 2;
     uint16_t span = half ? half : 1;
-    uint16_t p0 = (_phase >> 3) % span;
-    for (uint16_t d = 0; d <= tail; d++) {
-        uint8_t bri = (uint8_t)((uint32_t)(tail - d + 1) * 255 / (tail + 1));
-        addPixel((p0 + span - d) % span, paletteAt(p, (uint8_t)(_phase)), bri);
-        addPixel(half + ((span - 1 - p0 + d) % span), paletteAt(p, (uint8_t)(_phase + 96)), bri);
+    uint32_t spanQ8 = (uint32_t)span << 8;
+    uint32_t p0Q8 = ((uint64_t)_phase << 5) % spanQ8;
+    for (uint16_t i = 0; i < _numLeds; i++) {
+        bool right = i >= half;
+        uint32_t localQ8 = (uint32_t)(right ? (i - half) : i) << 8;
+        uint32_t headQ8 =
+            right ? (spanQ8 + spanQ8 - 256 - p0Q8) % spanQ8 : p0Q8;
+        uint32_t dist = right ? (localQ8 + spanQ8 - headQ8) % spanQ8
+                              : (headQ8 + spanQ8 - localQ8) % spanQ8;
+        uint32_t limitQ8 = ((uint32_t)tail << 8) + 255;
+        if (dist > limitQ8) continue;
+        uint8_t bri = (uint8_t)((uint64_t)(limitQ8 - dist) * 255 / limitQ8);
+        addPixel(i, paletteAt(p, (uint8_t)(_phase + (right ? 96 : 0))), bri);
     }
 }
 
@@ -721,9 +813,9 @@ void WledFxEffect::renderCollide(const EffectParams& p) {
     clear();
     uint16_t width = sizeParam(p, 4);
     uint16_t span = _numLeds > 1 ? _numLeds - 1 : 1;
-    uint16_t pos = (uint32_t)wave8(_phase >> 1) * span / 255;
-    drawBlob(pos, width, paletteAt(p, (uint8_t)(_phase)), 255);
-    drawBlob(span - pos, width, paletteAt(p, (uint8_t)(_phase + 128)), 255);
+    uint32_t posQ8 = ((uint32_t)wave8(_phase >> 1) * span << 8) / 255;
+    drawSoftBlob(posQ8, width, paletteAt(p, (uint8_t)(_phase)), 255);
+    drawSoftBlob(((uint32_t)span << 8) - posQ8, width, paletteAt(p, (uint8_t)(_phase + 128)), 255);
 }
 
 void WledFxEffect::renderSaw(const EffectParams& p) {
@@ -751,9 +843,10 @@ void WledFxEffect::renderPulseTrain(const EffectParams& p) {
     uint16_t width = sizeParam(p, 3);
     uint8_t count = 2 + intensity(p) / 40;
     uint16_t span = _numLeds ? _numLeds : 1;
+    uint32_t spanQ8 = (uint32_t)span << 8;
     for (uint8_t k = 0; k < count; k++) {
-        uint16_t pos = ((uint32_t)(_phase >> 3) + (uint32_t)k * span / count) % span;
-        drawBlob(pos, width, paletteAt(p, (uint8_t)(k * 255 / count + _phase)), 255);
+        uint32_t posQ8 = (((uint64_t)_phase << 5) + (uint32_t)k * spanQ8 / count) % spanQ8;
+        drawSoftBlob(posQ8, width, paletteAt(p, (uint8_t)(k * 255 / count + _phase)), 255);
     }
 }
 
@@ -783,9 +876,10 @@ void WledFxEffect::renderScanBars(const EffectParams& p) {
     uint16_t width = sizeParam(p, 2);
     uint8_t bars = 2 + intensity(p) / 64;
     uint16_t span = _numLeds ? _numLeds : 1;
+    uint32_t spanQ8 = (uint32_t)span << 8;
     for (uint8_t b = 0; b < bars; b++) {
-        uint16_t pos = ((uint32_t)(_phase >> 2) * (b + 1) + (uint32_t)b * span / bars) % span;
-        drawBlob(pos, width, paletteAt(p, (uint8_t)(_phase + b * 70)), 255);
+        uint32_t posQ8 = ((((uint64_t)_phase << 6) * (b + 1)) + (uint32_t)b * spanQ8 / bars) % spanQ8;
+        drawSoftBlob(posQ8, width, paletteAt(p, (uint8_t)(_phase + b * 70)), 255);
     }
 }
 
@@ -803,10 +897,11 @@ void WledFxEffect::renderSpin(const EffectParams& p) {
     clear();
     uint16_t width = sizeParam(p, 5);
     uint16_t span = _numLeds ? _numLeds : 1;
-    uint16_t pos = (_phase >> 2) % span;
-    drawBlob(pos, width, paletteAt(p, (uint8_t)(_phase)), 255);
-    drawBlob((pos + span / 3) % span, width, paletteAt(p, (uint8_t)(_phase + 85)), 220);
-    drawBlob((pos + (2 * span) / 3) % span, width, paletteAt(p, (uint8_t)(_phase + 170)), 220);
+    uint32_t spanQ8 = (uint32_t)span << 8;
+    uint32_t posQ8 = ((uint64_t)_phase << 6) % spanQ8;
+    drawSoftBlob(posQ8, width, paletteAt(p, (uint8_t)(_phase)), 255);
+    drawSoftBlob((posQ8 + spanQ8 / 3) % spanQ8, width, paletteAt(p, (uint8_t)(_phase + 85)), 220);
+    drawSoftBlob((posQ8 + (2 * spanQ8) / 3) % spanQ8, width, paletteAt(p, (uint8_t)(_phase + 170)), 220);
 }
 
 void WledFxEffect::renderTwist(const EffectParams& p) {
@@ -824,17 +919,15 @@ void WledFxEffect::renderChaseSingle(const EffectParams& p) {
     clear();
     uint16_t tail = sizeParam(p, 10);
     uint16_t span = _numLeds ? _numLeds : 1;
-    uint16_t head = (_phase >> 3) % span;
+    uint32_t spanQ8 = (uint32_t)span << 8;
+    uint32_t headQ8 = ((uint64_t)_phase << 5) % spanQ8;
     EffectColor c = paletteAt(p, (uint8_t)(_phase >> 1));
-    for (uint16_t d = 0; d <= tail; d++) {
-        uint16_t idx = (head + span - d) % span;
-        uint8_t bri = (uint8_t)((uint32_t)(tail - d + 1) * 255 / (tail + 1));
-        addPixel(idx, c, bri);
-    }
+    drawSoftTrail(headQ8, tail, c, 255);
     uint8_t sparks = intensity(p) / 64;
     for (uint8_t s = 0; s < sparks; s++) {
-        uint16_t idx = (head + span / 2 + s * 7) % span;
-        setPixel(idx, paletteAt(p, (uint8_t)(_phase + 96 + s * 53)), 120);
+        uint32_t offsetQ8 = (spanQ8 / 2 + ((uint32_t)s * 7 << 8));
+        uint32_t sparkQ8 = (headQ8 + offsetQ8) % spanQ8;
+        drawSoftBlob(sparkQ8, 1, paletteAt(p, (uint8_t)(_phase + 96 + s * 53)), 120);
     }
 }
 
