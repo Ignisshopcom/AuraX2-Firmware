@@ -15,7 +15,13 @@ static constexpr uint32_t SYNC_IMMEDIATE_FLAG = 0x80000000UL;
 static constexpr uint32_t SYNC_VALUE_MASK = 0x7FFFFFFFUL;
 static constexpr uint32_t MAX_SYNC_DELAY_MS = 30000;
 static constexpr uint32_t MAX_SYNC_AGE_MS = 30000;
+#if defined(ARDUINO_ARCH_ESP32C3)
 static constexpr uint32_t SYNC_REPEAT_SPACING_MS = 8;
+static constexpr uint8_t SYNC_QUEUE_LEN = 8;
+#else
+static constexpr uint32_t SYNC_REPEAT_SPACING_MS = 12;
+static constexpr uint8_t SYNC_QUEUE_LEN = 16;
+#endif
 
 struct SyncProgramEntry {
     char path[64];
@@ -45,7 +51,7 @@ static int collectSyncPrograms(SyncProgramEntry* entries, int maxEntries) {
             if (!name.startsWith("/")) name = "/" + name;
             String lower = name;
             lower.toLowerCase();
-            if (lower.endsWith(".pix") || lower.endsWith(".axp")) {
+            if (lower.endsWith(".pix") || lower.endsWith(".axp") || lower.endsWith(".apx")) {
                 strlcpy(entries[count].path, name.c_str(), sizeof(entries[count].path));
                 entries[count].storedSlot = storedSlotFromPath(name);
                 count++;
@@ -95,7 +101,7 @@ bool SyncControl::begin(uint16_t syncMask, bool syncEnabled) {
     if (!isSyncActive()) {
         LOGLN("[sync] disabled until SYNC is enabled and a class is selected");
     }
-    _queue = xQueueCreate(4, sizeof(QueuedPacket));
+    _queue = xQueueCreate(SYNC_QUEUE_LEN, sizeof(QueuedPacket));
     if (!_queue) {
         LOGLN("[sync] queue alloc failed");
         return false;

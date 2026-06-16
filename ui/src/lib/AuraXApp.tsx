@@ -14,6 +14,14 @@ type EffectState = {
   colors: Color[]
 }
 
+type DeviceRow = {
+  key: string
+  hostname: string
+  ip: string
+  batteryPct: number
+  rssi?: number
+}
+
 type EffectMeta = {
   id: number
   name: string
@@ -74,24 +82,59 @@ const EFFECTS: EffectMeta[] = [
 
 const PALETTES = [
   { id: 0, name: 'Custom', colors: [{ r: 255, g: 96, b: 0 }, { r: 0, g: 180, b: 255 }, { r: 255, g: 255, b: 255 }] },
-  { id: 1, name: 'Rainbow', colors: [{ r: 255, g: 0, b: 0 }, { r: 0, g: 255, b: 0 }, { r: 0, g: 0, b: 255 }] },
-  { id: 2, name: 'Fire', colors: [{ r: 0, g: 0, b: 0 }, { r: 255, g: 72, b: 0 }, { r: 255, g: 230, b: 120 }] },
-  { id: 3, name: 'Ocean', colors: [{ r: 0, g: 12, b: 80 }, { r: 0, g: 170, b: 255 }, { r: 120, g: 255, b: 220 }] },
-  { id: 4, name: 'Forest', colors: [{ r: 0, g: 30, b: 0 }, { r: 0, g: 140, b: 36 }, { r: 220, g: 255, b: 80 }] },
-  { id: 5, name: 'Party', colors: [{ r: 255, g: 0, b: 80 }, { r: 0, g: 220, b: 255 }, { r: 255, g: 220, b: 0 }] },
+  {
+    id: 1,
+    name: 'Rainbow',
+    colors: [
+      { r: 255, g: 0, b: 0 },
+      { r: 255, g: 255, b: 0 },
+      { r: 0, g: 255, b: 0 },
+      { r: 0, g: 255, b: 255 },
+      { r: 0, g: 0, b: 255 },
+      { r: 255, g: 0, b: 255 },
+      { r: 255, g: 0, b: 0 },
+    ],
+  },
+  { id: 2, name: 'Fire', colors: [{ r: 0, g: 0, b: 0 }, { r: 180, g: 16, b: 0 }, { r: 255, g: 120, b: 0 }, { r: 255, g: 240, b: 160 }] },
+  { id: 3, name: 'Ocean', colors: [{ r: 0, g: 8, b: 60 }, { r: 0, g: 130, b: 210 }, { r: 120, g: 255, b: 220 }] },
+  { id: 4, name: 'Forest', colors: [{ r: 0, g: 24, b: 0 }, { r: 0, g: 140, b: 36 }, { r: 220, g: 255, b: 80 }] },
+  { id: 5, name: 'Party', colors: [{ r: 255, g: 0, b: 80 }, { r: 0, g: 220, b: 255 }, { r: 255, g: 220, b: 0 }, { r: 110, g: 0, b: 255 }] },
   { id: 6, name: 'Sunset', colors: [{ r: 60, g: 0, b: 80 }, { r: 255, g: 72, b: 0 }, { r: 255, g: 190, b: 70 }] },
   { id: 7, name: 'Ice', colors: [{ r: 0, g: 40, b: 120 }, { r: 120, g: 230, b: 255 }, { r: 255, g: 255, b: 255 }] },
-  { id: 8, name: 'Lava', colors: [{ r: 0, g: 0, b: 0 }, { r: 160, g: 0, b: 0 }, { r: 255, g: 220, b: 120 }] },
-  { id: 9, name: 'Cloud', colors: [{ r: 15, g: 28, b: 70 }, { r: 90, g: 145, b: 220 }, { r: 240, g: 248, b: 255 }] },
-  { id: 10, name: 'Pastel', colors: [{ r: 255, g: 132, b: 192 }, { r: 124, g: 255, b: 190 }, { r: 132, g: 190, b: 255 }] },
-  { id: 11, name: 'Neon', colors: [{ r: 255, g: 0, b: 220 }, { r: 0, g: 255, b: 255 }, { r: 130, g: 255, b: 0 }] },
-  { id: 12, name: 'Red White', colors: [{ r: 255, g: 0, b: 0 }, { r: 255, g: 255, b: 255 }, { r: 255, g: 0, b: 0 }] },
-  { id: 13, name: 'Blue White', colors: [{ r: 0, g: 70, b: 255 }, { r: 255, g: 255, b: 255 }, { r: 0, g: 70, b: 255 }] },
-  { id: 14, name: 'Magenta Orange', colors: [{ r: 255, g: 0, b: 180 }, { r: 255, g: 110, b: 0 }, { r: 255, g: 0, b: 180 }] },
-  { id: 15, name: 'Green Blue', colors: [{ r: 0, g: 255, b: 70 }, { r: 0, g: 80, b: 255 }, { r: 0, g: 255, b: 70 }] },
-  { id: 16, name: 'Candy', colors: [{ r: 255, g: 40, b: 110 }, { r: 255, g: 255, b: 255 }, { r: 80, g: 210, b: 255 }] },
-  { id: 17, name: 'Aurora', colors: [{ r: 24, g: 16, b: 100 }, { r: 0, g: 220, b: 170 }, { r: 160, g: 80, b: 255 }] },
-  { id: 18, name: 'Vintage', colors: [{ r: 80, g: 20, b: 10 }, { r: 220, g: 120, b: 36 }, { r: 20, g: 90, b: 95 }] },
+  { id: 8, name: 'Lava', colors: [{ r: 0, g: 0, b: 0 }, { r: 160, g: 0, b: 0 }, { r: 255, g: 70, b: 0 }, { r: 255, g: 220, b: 120 }] },
+  { id: 9, name: 'Pastel', colors: [{ r: 255, g: 132, b: 192 }, { r: 124, g: 255, b: 190 }, { r: 132, g: 190, b: 255 }, { r: 255, g: 232, b: 120 }] },
+  { id: 10, name: 'Neon', colors: [{ r: 255, g: 0, b: 220 }, { r: 0, g: 255, b: 255 }, { r: 130, g: 255, b: 0 }, { r: 255, g: 60, b: 0 }] },
+  { id: 11, name: 'Candy', colors: [{ r: 255, g: 40, b: 110 }, { r: 255, g: 255, b: 255 }, { r: 80, g: 210, b: 255 }, { r: 255, g: 240, b: 110 }] },
+  { id: 12, name: 'Aurora', colors: [{ r: 24, g: 16, b: 100 }, { r: 0, g: 220, b: 170 }, { r: 160, g: 80, b: 255 }, { r: 20, g: 255, b: 80 }] },
+  { id: 13, name: 'Vintage', colors: [{ r: 80, g: 20, b: 10 }, { r: 220, g: 120, b: 36 }, { r: 255, g: 218, b: 150 }, { r: 20, g: 90, b: 95 }] },
+  {
+    id: 14,
+    name: 'Rainbow Stripe',
+    colors: [
+      { r: 255, g: 0, b: 0 },
+      { r: 255, g: 160, b: 0 },
+      { r: 255, g: 255, b: 0 },
+      { r: 0, g: 255, b: 0 },
+      { r: 0, g: 255, b: 255 },
+      { r: 0, g: 0, b: 255 },
+      { r: 255, g: 0, b: 255 },
+    ],
+  },
+  { id: 15, name: 'Blue Purple', colors: [{ r: 0, g: 12, b: 80 }, { r: 0, g: 120, b: 255 }, { r: 150, g: 0, b: 255 }, { r: 255, g: 40, b: 210 }] },
+  { id: 16, name: 'Pink Candy', colors: [{ r: 255, g: 0, b: 92 }, { r: 255, g: 180, b: 220 }, { r: 255, g: 255, b: 255 }, { r: 120, g: 220, b: 255 }] },
+  { id: 17, name: 'C9', colors: [{ r: 255, g: 0, b: 0 }, { r: 255, g: 160, b: 0 }, { r: 0, g: 180, b: 70 }, { r: 0, g: 80, b: 255 }] },
+  { id: 18, name: 'Tiamat', colors: [{ r: 18, g: 0, b: 70 }, { r: 0, g: 180, b: 190 }, { r: 255, g: 40, b: 120 }, { r: 255, g: 180, b: 40 }] },
+  { id: 19, name: 'Dry Wet', colors: [{ r: 255, g: 160, b: 70 }, { r: 255, g: 230, b: 150 }, { r: 40, g: 180, b: 255 }, { r: 0, g: 30, b: 120 }] },
+  { id: 20, name: 'Red Blue', colors: [{ r: 255, g: 0, b: 0 }, { r: 0, g: 70, b: 255 }, { r: 255, g: 0, b: 0 }] },
+  { id: 21, name: 'Yellow Green', colors: [{ r: 255, g: 220, b: 0 }, { r: 0, g: 255, b: 70 }, { r: 255, g: 220, b: 0 }] },
+  { id: 22, name: 'Purple Green', colors: [{ r: 120, g: 0, b: 255 }, { r: 0, g: 255, b: 100 }, { r: 120, g: 0, b: 255 }] },
+  { id: 23, name: 'Warm White', colors: [{ r: 255, g: 120, b: 40 }, { r: 255, g: 235, b: 180 }, { r: 255, g: 120, b: 40 }] },
+  { id: 24, name: 'Aqua Magenta', colors: [{ r: 0, g: 255, b: 210 }, { r: 0, g: 80, b: 255 }, { r: 255, g: 0, b: 220 }, { r: 255, g: 255, b: 255 }] },
+  { id: 25, name: 'Police', colors: [{ r: 255, g: 0, b: 0 }, { r: 255, g: 255, b: 255 }, { r: 0, g: 80, b: 255 }] },
+  { id: 26, name: 'Matrix', colors: [{ r: 0, g: 20, b: 0 }, { r: 0, g: 255, b: 70 }, { r: 186, g: 255, b: 128 }, { r: 0, g: 80, b: 20 }] },
+  { id: 27, name: 'Sakura', colors: [{ r: 255, g: 45, b: 133 }, { r: 255, g: 210, b: 232 }, { r: 255, g: 255, b: 255 }, { r: 180, g: 20, b: 90 }] },
+  { id: 28, name: 'Electric', colors: [{ r: 0, g: 20, b: 255 }, { r: 0, g: 240, b: 255 }, { r: 255, g: 255, b: 255 }, { r: 0, g: 90, b: 180 }] },
+  { id: 29, name: 'Amber Teal', colors: [{ r: 255, g: 138, b: 0 }, { r: 255, g: 224, b: 110 }, { r: 0, g: 180, b: 170 }, { r: 0, g: 55, b: 80 }] },
 ]
 
 const DEFAULT_EFFECT: EffectState = {
@@ -139,6 +182,10 @@ function colorSlotsForEffect(effectId: number): number {
   if (effectId === 1 || effectId === 23) return 1
   if (effectId === 2) return 1
   return 3
+}
+
+function effectSizeMax(meta: EffectMeta): number {
+  return Math.max(1, (meta.sizeMax ?? 40) * 5)
 }
 
 function chunkEffects(effects: EffectMeta[], perRow = 2): EffectMeta[][] {
@@ -205,6 +252,17 @@ export function AuraXApp() {
         setMessage('')
       }, clearAfterMs)
     }
+  }
+
+  async function postJsonChecked(url: string, body: unknown): Promise<string> {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    })
+    const text = await res.text()
+    if (!res.ok) throw new Error(text || 'Request failed')
+    return text
   }
 
   function markPressed(action: 'start' | 'stop' | 'power') {
@@ -326,7 +384,9 @@ export function AuraXApp() {
   function startProgram() {
     const pressedAt = performance.now()
     markPressed('start')
-    postJson('/program/start', { slot: selectedSlot, ageMs: startAgeMs(pressedAt) }).then(() => refresh(false))
+    postJsonChecked('/program/start', { slot: selectedSlot, ageMs: startAgeMs(pressedAt) })
+      .then(() => refresh(false))
+      .catch((err) => showMessage(err.message || 'Start failed'))
   }
 
   function stopProgram() {
@@ -346,7 +406,9 @@ export function AuraXApp() {
     const pressedAt = performance.now()
     const on = !(status?.power_on ?? status?.playing ?? false)
     markPressed('power')
-    postJson('/power', { on, ageMs: on ? startAgeMs(pressedAt) : 0 }).then(() => refresh(false))
+    postJsonChecked('/power', { on, ageMs: on ? startAgeMs(pressedAt) : 0 })
+      .then(() => refresh(false))
+      .catch((err) => showMessage(err.message || 'Power failed'))
   }
 
   function saveSettings(patch: Partial<Config>) {
@@ -365,7 +427,7 @@ export function AuraXApp() {
   }
 
   const meta = EFFECTS.find((e) => e.id === effect.effectId) ?? EFFECTS[0]
-  const sizeMax = meta.sizeMax ?? 32
+  const sizeMax = effectSizeMax(meta)
   const syncMask = config?.syncMask ?? status?.sync_mask ?? 0
   const syncEnabled = config?.syncEnabled ?? status?.sync_enabled ?? false
   const powerOn = status?.power_on ?? status?.playing ?? false
@@ -375,6 +437,25 @@ export function AuraXApp() {
   const activeHsv = colorToHsv(activeColorValue)
   const brightnessValue = (config?.brightness ?? 100) > 0 ? (config?.brightness ?? 100) : 100
   const effectRows = chunkEffects(EFFECTS, 2)
+  const deviceRows: DeviceRow[] = [
+    {
+      key: `local-${status?.ip ?? 'pending'}`,
+      hostname: status?.device_name ?? status?.hostname ?? config?.deviceName ?? config?.hostname ?? 'Local',
+      ip: status?.ip ?? '',
+      batteryPct: status?.battery_pct ?? 0,
+      rssi: status?.rssi,
+    },
+    ...peers.map((peer) => ({
+      key: `${peer.hostname}-${peer.ip}`,
+      hostname: peer.hostname,
+      ip: peer.ip,
+      batteryPct: peer.bat_pct,
+      rssi: peer.rssi,
+    })),
+  ].sort((a, b) => (
+    a.hostname.localeCompare(b.hostname, undefined, { numeric: true, sensitivity: 'base' }) ||
+    a.ip.localeCompare(b.ip, undefined, { numeric: true })
+  ))
   const hasEffectControls = !!(meta.speed || meta.intensity || meta.size)
   const effectControls = hasEffectControls && (
     <div class="effect-controls-inline">
@@ -547,22 +628,14 @@ export function AuraXApp() {
 
       <footer class="device-list">
         <h3>Devices</h3>
-        <a class="device-row" href={`http://${status?.ip ?? ''}/`}>
-          <div>
-            <b>{status?.device_name ?? status?.hostname ?? 'Local'}</b>
-            <span>{status?.ip ?? '-'}</span>
-          </div>
-          <i><BatteryIcon /> {status?.battery_pct ?? 0}%</i>
-          <i><WifiIcon /> {rssiPercent(status?.rssi) !== null ? `${rssiPercent(status?.rssi)}%` : '-'}</i>
-        </a>
-        {peers.map((peer) => (
-          <a class="device-row" href={`http://${peer.ip}/`}>
+        {deviceRows.map((device) => (
+          <a class="device-row" href={device.ip ? `http://${device.ip}/` : '#'} key={device.key}>
             <div>
-              <b>{peer.hostname}</b>
-              <span>{peer.ip}</span>
+              <b>{device.hostname}</b>
+              <span>{device.ip || '-'}</span>
             </div>
-            <i><BatteryIcon /> {peer.bat_pct}%</i>
-            <i><WifiIcon /> {rssiPercent(peer.rssi) !== null ? `${rssiPercent(peer.rssi)}%` : '-'}</i>
+            <i><BatteryIcon /> {device.batteryPct}%</i>
+            <i><WifiIcon /> {rssiPercent(device.rssi) !== null ? `${rssiPercent(device.rssi)}%` : '-'}</i>
           </a>
         ))}
       </footer>
@@ -699,6 +772,7 @@ function SettingsPanel({
     mALimit: config.mALimit ?? 0,
     effectReverse: config.effectReverse ?? false,
     renderMirror: config.renderMirror ?? false,
+    contactPoi: config.contactPoi ?? false,
     syncEnabled,
     syncMask,
     batPin: config.batPin ?? 8,
@@ -851,6 +925,7 @@ function SettingsPanel({
             <label>Clock pin<input type="number" value={form.clkPin} min={0} max={48} onInput={(e) => set({ clkPin: +(e.currentTarget as HTMLInputElement).value })} /></label>
           )}
           <label>Current limit mA<input type="number" value={form.mALimit} min={0} max={65000} step={100} onInput={(e) => set({ mALimit: +(e.currentTarget as HTMLInputElement).value })} /></label>
+          <label class="check"><input type="checkbox" checked={form.contactPoi} onChange={(e) => set({ contactPoi: (e.currentTarget as HTMLInputElement).checked })} /> CONTACT POI</label>
         </div>
 
         <h3>Battery</h3>

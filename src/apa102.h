@@ -36,9 +36,12 @@ public:
     void setBrightness(uint8_t pct) override;
     void setReverse(bool reverse) override;
     void setMirror(bool mirror) override;
+    void setContactPoi(bool enabled) override;
     void setCurrentLimit(uint16_t mALimit, uint16_t mAPerLed) override;
 
     uint16_t numLeds() const override { return _numLeds; }
+    uint16_t physicalNumLeds() const override { return _numLeds; }
+    uint16_t logicalNumLeds() const override;
 
 private:
     void buildTxBuffer(uint8_t* dst);
@@ -51,7 +54,8 @@ private:
     uint8_t  _globalBrightness = 0; // 0 = from .pix file, 1–100 = override %
     bool     _reverse = false;
     bool     _mirror = false;
-    uint16_t _mALimit  = 0;         // 0 = no limit
+    bool     _contactPoi = false;
+    uint16_t _mALimit  = 0;         // runtime 0 maps to APA102_AUTO_CURRENT_LIMIT_MA
     uint16_t _mAPerLed = 60;
     uint16_t _currentScale256 = 256; // smoothed current limiter scale
     uint8_t* _pixels  = nullptr;   // [r, g, b, brightness] per pixel, internal DRAM

@@ -75,7 +75,7 @@ void WledFxEffect::update(ILedDriver& leds, const EffectParams& p) {
 }
 
 uint32_t WledFxEffect::intervalUs(const EffectParams&) const {
-    return 12500;  // 80 FPS target; still below the WS281x protocol ceiling on typical AuraX strips.
+    return 2000;  // 500 FPS target; EffectPlayer clamps to the LED driver's safe rate.
 }
 
 void WledFxEffect::clear() {
@@ -119,6 +119,16 @@ void WledFxEffect::addPixel(uint16_t i, const EffectColor& c, uint8_t scale) {
     p[0] = (p[1] || p[2] || p[3]) ? 0xFF : 0xE0;
 }
 
+void WledFxEffect::blendPixel(uint16_t i, const EffectColor& c, uint8_t scale) {
+    if (i >= _numLeds) return;
+    uint8_t* p = _buf + (size_t)i * 4;
+    uint16_t inv = 255 - scale;
+    p[1] = (uint8_t)(((uint16_t)p[1] * inv + (uint16_t)c.b * scale) / 255);
+    p[2] = (uint8_t)(((uint16_t)p[2] * inv + (uint16_t)c.g * scale) / 255);
+    p[3] = (uint8_t)(((uint16_t)p[3] * inv + (uint16_t)c.r * scale) / 255);
+    p[0] = (p[1] || p[2] || p[3]) ? 0xFF : 0xE0;
+}
+
 void WledFxEffect::drawBlob(uint16_t center, uint16_t width, const EffectColor& c, uint8_t scale) {
     drawSoftBlob((uint32_t)center << 8, width, c, scale);
 }
@@ -155,6 +165,25 @@ void WledFxEffect::drawSoftTrail(uint32_t headQ8, uint16_t tail, const EffectCol
     }
 }
 
+void WledFxEffect::drawSoftSegment(uint32_t startQ8, uint16_t width, const EffectColor& c, uint8_t scale) {
+    if (width < 1) width = 1;
+    uint32_t spanQ8 = (uint32_t)_numLeds << 8;
+    if (spanQ8 == 0) return;
+    startQ8 %= spanQ8;
+    uint32_t lenQ8 = (uint32_t)width << 8;
+    uint32_t edgeQ8 = lenQ8 / 3;
+    if (edgeQ8 < 128) edgeQ8 = 128;
+    if (edgeQ8 > 512) edgeQ8 = 512;
+    for (uint16_t i = 0; i < _numLeds; i++) {
+        uint32_t pixelQ8 = (uint32_t)i << 8;
+        uint32_t dist = (pixelQ8 + spanQ8 - startQ8) % spanQ8;
+        if (dist > lenQ8) continue;
+        uint32_t edge = dist < (lenQ8 - dist) ? dist : (lenQ8 - dist);
+        uint8_t alpha = edge >= edgeQ8 ? scale : (uint8_t)((uint64_t)scale * edge / edgeQ8);
+        blendPixel(i, c, alpha);
+    }
+}
+
 void WledFxEffect::show(ILedDriver& leds) {
     leds.showColumnDirect(_buf, _numLeds);
 }
@@ -166,7 +195,8 @@ uint16_t WledFxEffect::scaledSpeed(const EffectParams& p) const {
 
 uint16_t WledFxEffect::speedStep(const EffectParams& p) const {
     uint16_t s = scaledSpeed(p);
-    uint8_t divisor = 26;
+    if (s == 0) return 0;
+    uint16_t divisor = 104;
     switch (p.effectId) {
         case EFFECT_CHASE2:
         case EFFECT_CHASE3:
@@ -179,7 +209,7 @@ uint16_t WledFxEffect::speedStep(const EffectParams& p) const {
         case EFFECT_SCAN_BARS:
         case EFFECT_SPIN:
         case EFFECT_CHASE:
-            divisor = 36;
+            divisor = 144;
             break;
 
         case EFFECT_RIPPLE:
@@ -192,7 +222,7 @@ uint16_t WledFxEffect::speedStep(const EffectParams& p) const {
         case EFFECT_BARBER_POLE:
         case EFFECT_PRISM:
         case EFFECT_TWIST:
-            divisor = 30;
+            divisor = 120;
             break;
 
         case EFFECT_FIREWORKS:
@@ -201,20 +231,21 @@ uint16_t WledFxEffect::speedStep(const EffectParams& p) const {
         case EFFECT_JUGGLE:
         case EFFECT_SINELON:
         case EFFECT_COLLIDE:
-            divisor = 24;
+            divisor = 96;
             break;
 
         case EFFECT_TWINKLE:
         case EFFECT_SPARKLE:
         case EFFECT_STROBE:
-            divisor = 40;
+            divisor = 160;
             break;
 
         default:
-            divisor = 26;
+            divisor = 104;
             break;
     }
-    return 1 + s / divisor;
+    uint32_t motion = ((uint32_t)s * (uint32_t)s + 500u) / 1000u;
+    return 1 + motion / divisor;
 }
 
 uint8_t WledFxEffect::intensity(const EffectParams& p) const {
@@ -703,9 +734,13 @@ void WledFxEffect::renderTheater(const EffectParams& p) {
 void WledFxEffect::renderColorWipe(const EffectParams& p) {
     clear();
     uint16_t span = _numLeds ? _numLeds : 1;
-    uint16_t head = (_phase >> 4) % (span + 1);
+    uint32_t cycleQ8 = (uint32_t)(span + 1) << 8;
+    uint32_t headQ8 = ((uint64_t)_phase << 4) % cycleQ8;
+    uint16_t head = headQ8 >> 8;
+    uint8_t frac = (uint8_t)(headQ8 & 0xFF);
     EffectColor c = paletteAt(p, (uint8_t)(_phase >> 2));
     for (uint16_t i = 0; i < head && i < _numLeds; i++) setPixel(i, c, 255);
+    if (head < _numLeds && frac > 0) blendPixel(head, c, frac);
 }
 
 void WledFxEffect::renderJuggle(const EffectParams& p) {

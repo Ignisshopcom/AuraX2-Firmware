@@ -154,6 +154,33 @@ static uint32_t clampFrequencyForDriver(ILedDriver& leds, uint32_t requested) {
     return maxHz;
 }
 
+static uint8_t* allocDecodedProgramBuffer(size_t bytes) {
+    if (bytes == 0) return nullptr;
+
+    uint8_t* buf = (uint8_t*)heap_caps_malloc(bytes, MALLOC_CAP_SPIRAM);
+    if (buf) return buf;
+
+#if defined(ARDUINO_ARCH_ESP32C3)
+    static constexpr size_t INTERNAL_HEAP_RESERVE = 96 * 1024;
+#else
+    static constexpr size_t INTERNAL_HEAP_RESERVE = 32 * 1024;
+#endif
+    // ESP32-C3 has no PSRAM. Small/medium compressed AXP programs can still
+    // run from internal DRAM if we leave enough room for WiFi and HTTP.
+    size_t largestInternal = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL);
+    if (largestInternal > bytes + INTERNAL_HEAP_RESERVE) {
+        buf = (uint8_t*)heap_caps_malloc(bytes, MALLOC_CAP_INTERNAL);
+        if (buf) {
+            LOG("[axp] decoded buffer in internal DRAM: %u bytes\n", (unsigned)bytes);
+            return buf;
+        }
+    }
+
+    LOG("[axp] not enough memory for decoded buffer: need %u, largest internal %u\n",
+        (unsigned)bytes, (unsigned)largestInternal);
+    return nullptr;
+}
+
 // ── PixPlayer ─────────────────────────────────────────────────────────────────
 
 PixPlayer::PixPlayer(ILedDriver& leds) : _leds(leds) {}
@@ -276,7 +303,8 @@ int PixPlayer::loadAxp(File& f) {
     _numCmds = (int)commandCount;
     _endBehavior = (PixEndBehavior)(endBehavior & 0xFF);
     if (_endBehavior > PixEndBehavior::PingPong) _endBehavior = PixEndBehavior::Repeat;
-    if (numLeds != 0 && numLeds != _leds.numLeds()) return PIX_ERR_LED_COUNT_MISMATCH;
+    uint16_t expectedWidth = _leds.logicalNumLeds();
+    if (numLeds != 0 && numLeds != expectedWidth) return PIX_ERR_LED_COUNT_MISMATCH;
 
     for (int i = 0; i < _numCmds; i++) {
         Command& cmd = _cmds[i];
@@ -294,7 +322,7 @@ int PixPlayer::loadAxp(File& f) {
 
         if (cmd.width == 0 || cmd.height == 0 || cmd.frequency == 0) return 2;
         cmd.frequency = clampFrequencyForDriver(_leds, cmd.frequency);
-        if (cmd.width != _leds.numLeds()) return PIX_ERR_LED_COUNT_MISMATCH;
+        if (cmd.width != expectedWidth) return PIX_ERR_LED_COUNT_MISMATCH;
         if ((uint64_t)cmd.offset + (uint64_t)cmd.width * (uint64_t)cmd.height * 4ULL > decodedBytes) return 2;
         if (meta[i].codec != AXP_CODEC_RAW && meta[i].codec != AXP_CODEC_COLUMNS &&
             meta[i].codec != AXP_CODEC_LZSS) return 2;
@@ -302,7 +330,7 @@ int PixPlayer::loadAxp(File& f) {
         (void)numLeds;
     }
 
-    _preloadBuf = (uint8_t*)heap_caps_malloc(decodedBytes, MALLOC_CAP_SPIRAM);
+    _preloadBuf = allocDecodedProgramBuffer(decodedBytes);
     if (!_preloadBuf) return 6;
     memset(_preloadBuf, 0, decodedBytes);
 
@@ -445,7 +473,7 @@ int PixPlayer::load(const char* path) {
     // Validate
     for (int i = 0; i < _numCmds; i++) {
         if (_cmds[i].width == 0 || _cmds[i].height == 0 || _cmds[i].frequency == 0) return 2;
-        if (_cmds[i].width != _leds.numLeds()) return PIX_ERR_LED_COUNT_MISMATCH;
+        if (_cmds[i].width != _leds.logicalNumLeds()) return PIX_ERR_LED_COUNT_MISMATCH;
         LOG("[pix] cmd %d: %dx%d @ %d Hz, t=%u-%u ms\n",
             i, _cmds[i].width, _cmds[i].height, _cmds[i].frequency,
             _cmds[i].startTime, _cmds[i].endTime);

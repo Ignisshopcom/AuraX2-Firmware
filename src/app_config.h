@@ -27,6 +27,7 @@ struct AppConfig {
     uint8_t  effectPaletteId; // 0=custom color slots, 1+ = built-in palette
     uint8_t  effectReverse;   // 1 = render from the opposite LED end
     uint8_t  renderMirror;    // 1 = mirror rendering from the strip center
+    uint8_t  contactPoi;      // 1 = first 20 physical LEDs render as logical pixel 1
     uint8_t  paletteSize;     // 1-4
     uint8_t  paletteR[4];
     uint8_t  paletteG[4];

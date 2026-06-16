@@ -19,6 +19,10 @@
 
 #define PIX_FILE      "/show.pix"
 
+// APA102 safety guard used when runtime current limit is 0.
+// Keeps full SPI speed, but clamps sudden all-white current spikes.
+#define APA102_AUTO_CURRENT_LIMIT_MA 3500
+
 // Odkomentuj pro debug výpisy na sériový port
 #define PIX_DEBUG
 

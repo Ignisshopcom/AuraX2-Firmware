@@ -12,7 +12,7 @@
 class SyncControl;  // forward declaration
 
 static constexpr uint16_t DISCOVERY_PORT   = 4210;
-static constexpr int      MAX_PEERS        = 8;
+static constexpr int      MAX_PEERS        = 32;
 static constexpr uint32_t PEER_EXPIRE_MS   = 90000;
 static constexpr uint32_t ANNOUNCE_INTERVAL_MS = 10000;
 static constexpr uint32_t STA_CONNECT_TIMEOUT_MS = 12000;
@@ -30,6 +30,8 @@ public:
     void handle();
 
 private:
+    struct Peer;
+
     void handleRoot();
     void handleUpload();
     void handlePlay();
@@ -69,6 +71,14 @@ private:
     uint8_t apClientCount() const;
     const char* staSsid() const;
     const char* staPassword() const;
+    bool validateProgramForPlay(const String& path);
+    bool requestAllowsRelay();
+    bool shouldFanoutToPeer(const Peer& peer) const;
+    void fanoutHttpGet(const char* pathAndQuery);
+    void fanoutHttpPost(const char* path, const String& body);
+    void fanoutStop();
+    void fanoutProgramStart(uint8_t slot, int64_t startUs);
+    void fanoutEffect(const EffectParams& p);
     bool connectSta(uint32_t timeoutMs);
     void startFallbackAp();
     void stopFallbackAp();
@@ -77,6 +87,7 @@ private:
     void announce();
     void receivePeers();
     void expirePeers();
+    void sortPeers();
     bool saveRuntimeConfig();
     bool storageReady();
     bool checkFirmwareManifest(bool force);
@@ -90,6 +101,7 @@ private:
         char      hostname[32];
         IPAddress ip;
         uint32_t  lastSeenMs;
+        uint16_t  chipId;
         uint8_t   batPct;
         int8_t    rssi;
         uint8_t   syncEnabled;

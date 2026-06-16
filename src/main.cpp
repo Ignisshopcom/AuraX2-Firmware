@@ -89,7 +89,14 @@ void setup() {
     leds->setBrightness(cfg.brightness);
     leds->setReverse(cfg.effectReverse != 0);
     leds->setMirror(cfg.renderMirror != 0);
+    leds->setContactPoi(cfg.contactPoi != 0);
     leds->setCurrentLimit(cfg.mALimit, 60);
+    uint16_t effectiveMALimit = cfg.mALimit;
+    if (cfg.ledType == LED_TYPE_APA102 && effectiveMALimit == 0) {
+        effectiveMALimit = APA102_AUTO_CURRENT_LIMIT_MA;
+    }
+    LOG("[led] current limit configured=%u effective=%u\n",
+        (unsigned)cfg.mALimit, (unsigned)effectiveMALimit);
 
     player       = new PixPlayer(*leds);
     player->setTempo(cfg.tempo);

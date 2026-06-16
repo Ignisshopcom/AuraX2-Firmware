@@ -10,7 +10,7 @@
 static bool gImportedFromWled = false;
 static bool gConfigNeedsSave  = false;
 
-static constexpr uint16_t AURAX_CONFIG_VERSION = 2;
+static constexpr uint16_t AURAX_CONFIG_VERSION = 3;
 
 void normalizeHostname(char* hostname, size_t len) {
     if (!hostname || len == 0) return;
@@ -146,16 +146,25 @@ static void applyBatteryUsermod(JsonObject battery, AppConfig& cfg) {
     }
 }
 
+static uint16_t effectiveLedCount(uint16_t physicalCount, uint8_t contactPoi) {
+    if (!contactPoi) return physicalCount;
+    return physicalCount <= 20 ? 1 : (uint16_t)(physicalCount - 19);
+}
+
 static void normalizeEffectConfig(AppConfig& cfg) {
     if (cfg.ledType != LED_TYPE_APA102 && cfg.ledType != LED_TYPE_WS281X) cfg.ledType = LED_TYPE_WS281X;
     if (cfg.numLeds < 1) cfg.numLeds = 1;
     if (cfg.numLeds > 2048) cfg.numLeds = 2048;
     if (cfg.dataPin > 48) cfg.dataPin = (cfg.ledType == LED_TYPE_APA102) ? LED_DATA_PIN : WS_DATA_PIN;
     if (cfg.clkPin > 48) cfg.clkPin = LED_CLK_PIN;
-    if (cfg.effectSpeed > 255) cfg.effectSpeed = 255;
+    if (cfg.effectSpeed > 255) {
+        cfg.effectSpeed = cfg.effectSpeed > 1000 ? 255 : (uint16_t)(((uint32_t)cfg.effectSpeed * 255u + 500u) / 1000u);
+    }
+    cfg.contactPoi = cfg.contactPoi ? 1 : 0;
     if (cfg.effectDotSize < 1) cfg.effectDotSize = 1;
-    if (cfg.effectDotSize > cfg.numLeds) {
-        cfg.effectDotSize = cfg.numLeds > 255 ? 255 : (uint8_t)cfg.numLeds;
+    uint16_t logicalCount = effectiveLedCount(cfg.numLeds, cfg.contactPoi);
+    if (cfg.effectDotSize > logicalCount) {
+        cfg.effectDotSize = logicalCount > 255 ? 255 : (uint8_t)logicalCount;
     }
     if (cfg.paletteSize < 1 || cfg.paletteSize > 4) cfg.paletteSize = 1;
     cfg.effectReverse = cfg.effectReverse ? 1 : 0;
@@ -328,6 +337,7 @@ static AppConfig defaults() {
     cfg.effectPaletteId = 0;
     cfg.effectReverse   = 0;
     cfg.renderMirror    = 0;
+    cfg.contactPoi      = 0;
     cfg.paletteSize   = 1;
     cfg.paletteR[0]   = 255;
     cfg.batPin              = 8;
@@ -413,6 +423,7 @@ AppConfig loadConfig() {
         cfg.effectPaletteId = doc["effectPaletteId"] | cfg.effectPaletteId;
         cfg.effectReverse   = doc["effectReverse"]   | cfg.effectReverse;
         cfg.renderMirror    = doc["renderMirror"]    | cfg.renderMirror;
+        cfg.contactPoi      = doc["contactPoi"]      | cfg.contactPoi;
         cfg.paletteSize     = doc["paletteSize"]     | cfg.paletteSize;
         cfg.mALimit   = doc["mALimit"]   | cfg.mALimit;
         cfg.batPin              = doc["batPin"]              | cfg.batPin;
@@ -452,6 +463,7 @@ AppConfig loadConfig() {
         shouldSave = true;
         LOGLN("[cfg] older AuraX config marked as migrated");
     }
+    if (savedConfigVersion < AURAX_CONFIG_VERSION) shouldSave = true;
     if (strlen(cfg.hostname) == 0)
         strlcpy(cfg.hostname, "aurax", sizeof(cfg.hostname));
     if (strcasecmp(cfg.hostname, "wled") == 0) {
@@ -500,6 +512,7 @@ bool saveConfig(const AppConfig& cfg) {
     doc["effectPaletteId"] = cfg.effectPaletteId;
     doc["effectReverse"]   = cfg.effectReverse;
     doc["renderMirror"]    = cfg.renderMirror;
+    doc["contactPoi"]      = cfg.contactPoi;
     doc["paletteSize"]     = cfg.paletteSize;
     doc["mALimit"]  = cfg.mALimit;
     doc["batPin"]              = cfg.batPin;

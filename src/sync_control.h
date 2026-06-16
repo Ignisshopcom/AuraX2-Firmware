@@ -35,6 +35,12 @@ public:
     static SyncControl* _instance;  // for C callback
 
 private:
+    #if defined(ARDUINO_ARCH_ESP32C3)
+    static constexpr uint8_t DEFAULT_SEND_REPEATS = 3;
+    #else
+    static constexpr uint8_t DEFAULT_SEND_REPEATS = 8;
+    #endif
+
     static constexpr uint8_t CMD_PLAY   = 1;
     static constexpr uint8_t CMD_STOP   = 2;
     static constexpr uint8_t CMD_EFFECT = 3;
@@ -82,8 +88,8 @@ private:
 
     static void recvCb(const uint8_t* mac, const uint8_t* data, int len);
     void handlePacket(const Packet& pkt, int64_t rxUs);
-    bool sendPacket(const Packet& pkt, const char* label, uint8_t repeats = 3);
-    bool sendTimedPlayPacket(Packet& pkt, int64_t triggerUs, const char* label, uint8_t repeats = 3);
+    bool sendPacket(const Packet& pkt, const char* label, uint8_t repeats = DEFAULT_SEND_REPEATS);
+    bool sendTimedPlayPacket(Packet& pkt, int64_t triggerUs, const char* label, uint8_t repeats = DEFAULT_SEND_REPEATS);
     uint32_t nextNonce() const;
 
     PixPlayer&    _player;

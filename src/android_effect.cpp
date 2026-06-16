@@ -82,5 +82,5 @@ void AndroidEffect::update(ILedDriver& leds, const EffectParams& p) {
 }
 
 uint32_t AndroidEffect::intervalUs(const EffectParams&) const {
-    return 12500;
+    return 2000;
 }

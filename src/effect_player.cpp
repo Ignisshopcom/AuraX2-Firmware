@@ -28,7 +28,7 @@ void EffectPlayer::start(const EffectParams& p) {
         default:             _effect = new WledFxEffect();  break;
     }
     if (!_effect) return;  // OOM — better than crashing in reset()
-    _effect->reset(p, _leds.numLeds());
+    _effect->reset(p, _leds.logicalNumLeds());
     _fpsWindowFrames = 0;
     _fpsWindowStartUs = esp_timer_get_time();
     _currentFpsX10 = 0;
@@ -92,14 +92,19 @@ void EffectPlayer::runTask() {
         }
 
         int64_t intervalUs = (int64_t)_effect->intervalUs(p);
+        uint16_t maxHz = _leds.maxRefreshHz();
+        if (maxHz > 0) {
+            int64_t minIntervalUs = 1000000LL / (int64_t)maxHz;
+            if (intervalUs < minIntervalUs) intervalUs = minIntervalUs;
+        }
         nextUs += intervalUs;
         if (nextUs < afterUpdateUs) {
             nextUs = afterUpdateUs + intervalUs;
         }
 
         int64_t remaining = nextUs - esp_timer_get_time();
-        if (remaining > 10000) {
-            vTaskDelay(pdMS_TO_TICKS(remaining / 1000 - 5));
+        if (remaining > 3000) {
+            vTaskDelay(pdMS_TO_TICKS((remaining - 1500) / 1000));
         } else {
             while (_taskRunning && esp_timer_get_time() < nextUs) {
                 taskYIELD();

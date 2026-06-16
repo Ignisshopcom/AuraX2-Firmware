@@ -84,6 +84,10 @@ void WS281x::setMirror(bool mirror) {
     _mirror = mirror;
 }
 
+void WS281x::setContactPoi(bool enabled) {
+    _contactPoi = enabled;
+}
+
 void WS281x::setCurrentLimit(uint16_t mALimit, uint16_t mAPerLed) {
     _mALimit  = mALimit;
     _mAPerLed = mAPerLed > 0 ? mAPerLed : 1;
@@ -99,6 +103,20 @@ uint16_t WS281x::maxRefreshHz() const {
     if (hz < 1) hz = 1;
     if (hz > 2500) hz = 2500;
     return (uint16_t)hz;
+}
+
+static uint16_t contactPoiLogicalCount(uint16_t physicalCount, bool contactPoi) {
+    if (!contactPoi) return physicalCount;
+    return physicalCount <= 20 ? 1 : (uint16_t)(physicalCount - 19);
+}
+
+uint16_t WS281x::logicalNumLeds() const {
+    return contactPoiLogicalCount(_numLeds, _contactPoi);
+}
+
+static uint16_t contactPoiLogicalIndex(uint16_t physicalIndex, bool contactPoi) {
+    if (!contactPoi) return physicalIndex;
+    return physicalIndex < 20 ? 0 : (uint16_t)(physicalIndex - 19);
 }
 
 static uint16_t mappedLedIndex(uint16_t outIndex, uint16_t count, bool reverse, bool mirror) {
@@ -119,13 +137,14 @@ static uint16_t mappedLedIndex(uint16_t outIndex, uint16_t count, bool reverse, 
 // Output: GRB bit stream, MSB first (WS2812B wire order).
 // scale256: Q8 current-limit scale factor (256 = no limiting).
 void WS281x::encodePixels(rmt_item32_t* dst, const uint8_t* pixData, uint16_t count, uint16_t scale256) {
-    for (uint16_t i = 0; i < count; i++) {
-        const uint16_t srcIndex = mappedLedIndex(i, count, _reverse, _mirror);
+    for (uint16_t i = 0; i < _numLeds; i++) {
+        const uint16_t logicalIndex = contactPoiLogicalIndex(i, _contactPoi);
+        const uint16_t srcIndex = logicalIndex < count ? mappedLedIndex(logicalIndex, count, _reverse, _mirror) : 0;
         const uint8_t* p = pixData + (size_t)srcIndex * 4;
-        uint8_t bri = p[0] & 0x1F;
-        uint8_t b   = p[1];
-        uint8_t g   = p[2];
-        uint8_t r   = p[3];
+        uint8_t bri = logicalIndex < count ? (p[0] & 0x1F) : 0;
+        uint8_t b   = logicalIndex < count ? p[1] : 0;
+        uint8_t g   = logicalIndex < count ? p[2] : 0;
+        uint8_t r   = logicalIndex < count ? p[3] : 0;
 
         if (_globalBrightness > 0) {
             // Global override: scale RGB by percentage, ignore per-pixel bri
@@ -159,15 +178,19 @@ void WS281x::showColumnDirect(const uint8_t* pixData, uint16_t count) {
     waitForShow();
 
     int buf = _curBuf;
-    uint16_t n = count < _numLeds ? count : _numLeds;
+    uint16_t logicalCount = logicalNumLeds();
+    uint16_t n = count < logicalCount ? count : logicalCount;
 
     // Current limiting: pre-pass to estimate draw, then smooth the scale so
     // effects do not visibly pulse when their instantaneous power changes.
     uint16_t targetScale256 = 256;
     if (_mALimit > 0) {
         uint32_t totalRGB = 0;
-        for (uint16_t i = 0; i < n; i++) {
-            const uint16_t srcIndex = mappedLedIndex(i, n, _reverse, _mirror);
+        uint16_t activeLeds = 0;
+        for (uint16_t i = 0; i < _numLeds; i++) {
+            const uint16_t logicalIndex = contactPoiLogicalIndex(i, _contactPoi);
+            if (logicalIndex >= n) continue;
+            const uint16_t srcIndex = mappedLedIndex(logicalIndex, n, _reverse, _mirror);
             const uint8_t* p = pixData + (size_t)srcIndex * 4;
             uint8_t bri = p[0] & 0x1F;
             uint32_t r = p[3], g = p[2], b = p[1];
@@ -181,8 +204,9 @@ void WS281x::showColumnDirect(const uint8_t* pixData, uint16_t count) {
                 b = b * bri / 31u;
             }
             totalRGB += r + g + b;
+            activeLeds++;
         }
-        uint32_t estMA = n + totalRGB * _mAPerLed / 765u;
+        uint32_t estMA = activeLeds + totalRGB * _mAPerLed / 765u;
         if (estMA > _mALimit) {
             targetScale256 = (uint16_t)((uint32_t)_mALimit * 256u / estMA);
         }
@@ -204,15 +228,6 @@ void WS281x::showColumnDirect(const uint8_t* pixData, uint16_t count) {
     }
 
     encodePixels(_rmtBuf[buf], pixData, n, scale256);
-
-    // Fill remaining LEDs with off (all-zero bits)
-    if (n < _numLeds) {
-        rmt_item32_t* dst = _rmtBuf[buf] + (size_t)n * 24;
-        uint16_t remaining = _numLeds - n;
-        for (uint16_t j = 0; j < remaining * 24; j++) {
-            dst[j] = WS_BIT_0;
-        }
-    }
     // _rmtBuf[buf][_itemCount-1] is the pre-filled WS_RESET
 
     rmt_write_items(_channel, _rmtBuf[buf], (int)_itemCount, false);

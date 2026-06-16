@@ -7,6 +7,8 @@ class ILedDriver {
 public:
     virtual ~ILedDriver() = default;
     virtual uint16_t numLeds() const = 0;
+    virtual uint16_t physicalNumLeds() const { return numLeds(); }
+    virtual uint16_t logicalNumLeds() const { return numLeds(); }
     virtual uint16_t maxRefreshHz() const { return 2500; }
     // pixData: [0xE0|brightness, B, G, R] per LED — .pix wire format.
     // count: number of LEDs in pixData (clamped to numLeds internally).
@@ -18,6 +20,7 @@ public:
     virtual void setBrightness(uint8_t pct) { (void)pct; }
     virtual void setReverse(bool reverse) { (void)reverse; }
     virtual void setMirror(bool mirror) { (void)mirror; }
+    virtual void setContactPoi(bool enabled) { (void)enabled; }
 
     // Current limit: mALimit = max total draw in mA (0 = disabled).
     // mAPerLed = estimated mA per LED at full white (R=G=B=255); typical 60 mA.

@@ -20,6 +20,9 @@ export interface StatusResponse {
   rssi?: number
   fw_version?: string
   fw_build?: number
+  led_count?: number
+  logical_led_count?: number
+  contact_poi?: boolean
 }
 
 export interface PeerInfo {
@@ -59,6 +62,7 @@ export interface Config {
   effectPaletteId?: number
   effectReverse?: boolean
   renderMirror?: boolean
+  contactPoi?: boolean
   mALimit?: number
   batPin?: number
   batMultiplier?: number
