@@ -181,6 +181,23 @@ static uint8_t* allocDecodedProgramBuffer(size_t bytes) {
     return nullptr;
 }
 
+static uint8_t* allocAxpCommandCache(size_t bytes) {
+    if (bytes == 0) return nullptr;
+
+    size_t largestInternal = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL);
+#if defined(ARDUINO_ARCH_ESP32C3)
+    static constexpr size_t INTERNAL_HEAP_RESERVE = 64 * 1024;
+#else
+    static constexpr size_t INTERNAL_HEAP_RESERVE = 32 * 1024;
+#endif
+    if (largestInternal <= bytes + INTERNAL_HEAP_RESERVE) {
+        LOG("[axp] not enough memory for command cache: need %u, largest internal %u\n",
+            (unsigned)bytes, (unsigned)largestInternal);
+        return nullptr;
+    }
+    return (uint8_t*)heap_caps_malloc(bytes, MALLOC_CAP_INTERNAL);
+}
+
 // ── PixPlayer ─────────────────────────────────────────────────────────────────
 
 PixPlayer::PixPlayer(ILedDriver& leds) : _leds(leds) {}
@@ -193,8 +210,14 @@ PixPlayer::~PixPlayer() {
 void PixPlayer::unload() {
     if (_file) _file.close();
     heap_caps_free(_preloadBuf); _preloadBuf = nullptr;
+#if !defined(ARDUINO_ARCH_ESP32C3)
+    heap_caps_free(_axpCmdCache); _axpCmdCache = nullptr;
+    _axpCmdCacheSize = 0;
+#endif
     free(_colBuf);               _colBuf     = nullptr;
     _preloaded = false;
+    _axpStreaming = false;
+    _axpCachedCmd = -1;
     _loaded    = false;
     _format    = ProgramFormat::Pix;
     _numCmds   = 0;
@@ -293,136 +316,147 @@ int PixPlayer::loadAxp(File& f) {
     }
     if ((version < AXP_VERSION || version > 2) || commandCount == 0 || commandCount > MAX_CMDS || decodedBytes == 0) return 2;
 
-    struct AxpMeta {
-        uint32_t dataOffset;
-        uint32_t dataSize;
-        uint32_t codec;
-    };
-    AxpMeta meta[MAX_CMDS] = {};
-
     _numCmds = (int)commandCount;
     _endBehavior = (PixEndBehavior)(endBehavior & 0xFF);
     if (_endBehavior > PixEndBehavior::PingPong) _endBehavior = PixEndBehavior::Repeat;
     uint16_t expectedWidth = _leds.logicalNumLeds();
     if (numLeds != 0 && numLeds != expectedWidth) return PIX_ERR_LED_COUNT_MISMATCH;
+    size_t maxCommandBytes = 0;
 
     for (int i = 0; i < _numCmds; i++) {
         Command& cmd = _cmds[i];
         memset(&cmd, 0, sizeof(cmd));
 
+        uint32_t dataOffset = 0;
+        uint32_t dataSize = 0;
+        uint32_t codec = 0;
         uint32_t isLast = 0;
         if (!readDW(f, cmd.startTime) || !readDW(f, cmd.endTime) || !readDW(f, cmd.width) ||
-            !readDW(f, cmd.height) || !readDW(f, cmd.frequency) || !readDW(f, meta[i].dataOffset) ||
-            !readDW(f, meta[i].dataSize) || !readDW(f, cmd.offset) || !readDW(f, meta[i].codec) ||
+            !readDW(f, cmd.height) || !readDW(f, cmd.frequency) || !readDW(f, dataOffset) ||
+            !readDW(f, dataSize) || !readDW(f, cmd.offset) || !readDW(f, codec) ||
             !readDW(f, isLast)) {
             return 2;
         }
         cmd.isLast = (isLast != 0);
         _cmdBufOffset[i] = cmd.offset;
+        _axpDataOffset[i] = dataOffset;
+        _axpDataSize[i] = dataSize;
+        _axpCodec[i] = codec;
 
         if (cmd.width == 0 || cmd.height == 0 || cmd.frequency == 0) return 2;
         cmd.frequency = clampFrequencyForDriver(_leds, cmd.frequency);
         if (cmd.width != expectedWidth) return PIX_ERR_LED_COUNT_MISMATCH;
-        if ((uint64_t)cmd.offset + (uint64_t)cmd.width * (uint64_t)cmd.height * 4ULL > decodedBytes) return 2;
-        if (meta[i].codec != AXP_CODEC_RAW && meta[i].codec != AXP_CODEC_COLUMNS &&
-            meta[i].codec != AXP_CODEC_LZSS) return 2;
-        if (meta[i].codec == AXP_CODEC_LZSS && version < 2) return 2;
+        size_t rawBytes = (size_t)cmd.width * cmd.height * 4;
+        if (rawBytes > maxCommandBytes) maxCommandBytes = rawBytes;
+        if ((uint64_t)cmd.offset + (uint64_t)rawBytes > decodedBytes) return 2;
+        if (codec != AXP_CODEC_RAW && codec != AXP_CODEC_COLUMNS && codec != AXP_CODEC_LZSS) return 2;
+        if (codec == AXP_CODEC_LZSS && version < 2) return 2;
         (void)numLeds;
     }
 
     _preloadBuf = allocDecodedProgramBuffer(decodedBytes);
-    if (!_preloadBuf) return 6;
+    if (!_preloadBuf) {
+        if (!_axpCmdCache || _axpCmdCacheSize < maxCommandBytes) {
+            heap_caps_free(_axpCmdCache);
+            _axpCmdCache = nullptr;
+            _axpCmdCacheSize = 0;
+            _axpCmdCache = allocAxpCommandCache(maxCommandBytes);
+            if (!_axpCmdCache) return 6;
+            _axpCmdCacheSize = maxCommandBytes;
+        }
+        _file = LittleFS.open(_path, "r");
+        if (!_file) return 4;
+        _format = ProgramFormat::Axp;
+        _preloaded = false;
+        _axpStreaming = true;
+        _axpCachedCmd = -1;
+        if (!decodeAxpCommand(_file, 0, _axpCmdCache)) return 2;
+        _axpCachedCmd = 0;
+        LOG("[axp] streaming command cache: %u bytes, %d commands\n", (unsigned)maxCommandBytes, _numCmds);
+        return 0;
+    }
     memset(_preloadBuf, 0, decodedBytes);
 
-    bool decoded[MAX_CMDS] = {};
     for (int i = 0; i < _numCmds; i++) {
         const Command& cmd = _cmds[i];
-        const AxpMeta& m = meta[i];
         uint8_t* dst = _preloadBuf + _cmdBufOffset[i];
-        size_t rawBytes = (size_t)cmd.width * cmd.height * 4;
-
-        bool alreadyDecoded = false;
-        for (int j = 0; j < i; j++) {
-            if (!decoded[j]) continue;
-            if (_cmdBufOffset[j] == _cmdBufOffset[i] &&
-                meta[j].dataOffset == m.dataOffset &&
-                meta[j].dataSize == m.dataSize &&
-                meta[j].codec == m.codec &&
-                _cmds[j].width == cmd.width &&
-                _cmds[j].height == cmd.height) {
-                alreadyDecoded = true;
-                break;
-            }
-        }
-        if (alreadyDecoded) {
-            decoded[i] = true;
-            continue;
-        }
-
-        if (!f.seek(m.dataOffset)) return 2;
-
-        if (m.codec == AXP_CODEC_RAW) {
-            if (m.dataSize != rawBytes) return 2;
-            if (f.read(dst, rawBytes) != (int)rawBytes) return 2;
-            decoded[i] = true;
-            continue;
-        }
-        if (m.codec == AXP_CODEC_LZSS) {
-            if (m.dataSize == 0) return 2;
-            bool ok = false;
-            uint8_t* encoded = (uint8_t*)heap_caps_malloc(m.dataSize, MALLOC_CAP_SPIRAM);
-            if (!encoded && m.dataSize <= 96 * 1024) {
-                encoded = (uint8_t*)heap_caps_malloc(m.dataSize, MALLOC_CAP_INTERNAL);
-            }
-            if (encoded) {
-                ok = (f.read(encoded, m.dataSize) == m.dataSize) &&
-                     decodeLzssBuffer(encoded, m.dataSize, dst, rawBytes);
-                heap_caps_free(encoded);
-            } else {
-                ok = decodeLzss(f, m.dataSize, dst, rawBytes);
-            }
-            if (!ok) return 2;
-            decoded[i] = true;
-            continue;
-        }
-
-        for (uint32_t col = 0; col < cmd.height; col++) {
-            uint8_t* colDst = dst + (size_t)col * cmd.width * 4;
-            uint8_t method = 0;
-            if (!readByte(f, method)) return 2;
-
-            if (method == AXP_COLUMN_RAW) {
-                size_t colBytes = (size_t)cmd.width * 4;
-                if (f.read(colDst, colBytes) != (int)colBytes) return 2;
-            } else if (method == AXP_COLUMN_REPEAT) {
-                if (col == 0) return 2;
-                memcpy(colDst, colDst - (size_t)cmd.width * 4, (size_t)cmd.width * 4);
-            } else if (method == AXP_COLUMN_RLE) {
-                uint16_t runs = 0;
-                if (!readU16(f, runs)) return 2;
-                uint32_t written = 0;
-                for (uint16_t r = 0; r < runs; r++) {
-                    uint16_t count = 0;
-                    uint32_t pixel = 0;
-                    if (!readU16(f, count) || !readDW(f, pixel)) return 2;
-                    if (count == 0 || written + count > cmd.width) return 2;
-                    for (uint16_t n = 0; n < count; n++) {
-                        memcpy(colDst + (size_t)(written + n) * 4, &pixel, 4);
-                    }
-                    written += count;
-                }
-                if (written != cmd.width) return 2;
-            } else {
-                return 2;
-            }
-        }
-        decoded[i] = true;
+        (void)cmd;
+        if (!decodeAxpCommand(f, i, dst)) return 2;
     }
 
     _format = ProgramFormat::Axp;
     _preloaded = true;
+    _axpStreaming = false;
     LOG("[axp] decoded %u bytes into PSRAM, %d commands\n", (unsigned)decodedBytes, _numCmds);
     return 0;
+}
+
+bool PixPlayer::decodeAxpCommand(File& f, int cmdIdx, uint8_t* dst) {
+    if (cmdIdx < 0 || cmdIdx >= _numCmds || !dst) return false;
+    const Command& cmd = _cmds[cmdIdx];
+    size_t rawBytes = (size_t)cmd.width * cmd.height * 4;
+    uint32_t dataOffset = _axpDataOffset[cmdIdx];
+    uint32_t dataSize = _axpDataSize[cmdIdx];
+    uint32_t codec = _axpCodec[cmdIdx];
+
+    if (!f.seek(dataOffset)) return false;
+
+    if (codec == AXP_CODEC_RAW) {
+        if (dataSize != rawBytes) return false;
+        return f.read(dst, rawBytes) == (int)rawBytes;
+    }
+
+    if (codec == AXP_CODEC_LZSS) {
+        if (dataSize == 0) return false;
+        bool ok = false;
+        uint8_t* encoded = (uint8_t*)heap_caps_malloc(dataSize, MALLOC_CAP_SPIRAM);
+        if (!encoded && dataSize <= 96 * 1024) {
+            encoded = (uint8_t*)heap_caps_malloc(dataSize, MALLOC_CAP_INTERNAL);
+        }
+        if (encoded) {
+            ok = (f.read(encoded, dataSize) == (int)dataSize) &&
+                 decodeLzssBuffer(encoded, dataSize, dst, rawBytes);
+            heap_caps_free(encoded);
+        } else {
+            ok = decodeLzss(f, dataSize, dst, rawBytes);
+        }
+        return ok;
+    }
+
+    if (codec != AXP_CODEC_COLUMNS) return false;
+
+    for (uint32_t col = 0; col < cmd.height; col++) {
+        uint8_t* colDst = dst + (size_t)col * cmd.width * 4;
+        uint8_t method = 0;
+        if (!readByte(f, method)) return false;
+
+        if (method == AXP_COLUMN_RAW) {
+            size_t colBytes = (size_t)cmd.width * 4;
+            if (f.read(colDst, colBytes) != (int)colBytes) return false;
+        } else if (method == AXP_COLUMN_REPEAT) {
+            if (col == 0) return false;
+            memcpy(colDst, colDst - (size_t)cmd.width * 4, (size_t)cmd.width * 4);
+        } else if (method == AXP_COLUMN_RLE) {
+            uint16_t runs = 0;
+            if (!readU16(f, runs)) return false;
+            uint32_t written = 0;
+            for (uint16_t r = 0; r < runs; r++) {
+                uint16_t count = 0;
+                uint32_t pixel = 0;
+                if (!readU16(f, count) || !readDW(f, pixel)) return false;
+                if (count == 0 || written + count > cmd.width) return false;
+                for (uint16_t n = 0; n < count; n++) {
+                    memcpy(colDst + (size_t)(written + n) * 4, &pixel, 4);
+                }
+                written += count;
+            }
+            if (written != cmd.width) return false;
+        } else {
+            return false;
+        }
+    }
+
+    return true;
 }
 
 // ── load ──────────────────────────────────────────────────────────────────────
@@ -575,6 +609,19 @@ const uint8_t* PixPlayer::fetchColumn(int cmdIdx, int col) {
     if (_preloaded) {
         return _preloadBuf + _cmdBufOffset[cmdIdx] + (size_t)col * cmd.width * 4;
     }
+    if (_format == ProgramFormat::Axp && _axpStreaming) {
+        if (!_axpCmdCache || !_file) return nullptr;
+        size_t rawBytes = (size_t)cmd.width * cmd.height * 4;
+        if (rawBytes > _axpCmdCacheSize) return nullptr;
+        if (_axpCachedCmd != cmdIdx) {
+            if (!decodeAxpCommand(_file, cmdIdx, _axpCmdCache)) {
+                LOG("[axp] command decode failed: %d\n", cmdIdx);
+                return nullptr;
+            }
+            _axpCachedCmd = cmdIdx;
+        }
+        return _axpCmdCache + (size_t)col * cmd.width * 4;
+    }
     // Streaming
     uint32_t byteOffset = cmd.offset + (uint32_t)col * cmd.width * 4;
     if (!_file.seek(byteOffset)) return nullptr;
@@ -702,7 +749,13 @@ void PixPlayer::runTask() {
         } else {
             // < 10 ms: spinovat s přesností esp_timer, ne vTaskDelay
             while (_taskRunning && esp_timer_get_time() < _nextFrameUs) {
+#if defined(ARDUINO_ARCH_ESP32C3) || defined(CONFIG_IDF_TARGET_ESP32C3) || defined(CONFIG_FREERTOS_UNICORE)
+                int64_t c3Remaining = _nextFrameUs - esp_timer_get_time();
+                if (c3Remaining > 1500) vTaskDelay(1);
+                else taskYIELD();
+#else
                 taskYIELD();
+#endif
             }
         }
     }
@@ -712,7 +765,7 @@ void PixPlayer::runTask() {
 void PixPlayer::startTask(uint8_t core, uint32_t stackSize) {
     if (_taskHandle) return;
     _taskRunning = true;
-    xTaskCreatePinnedToCore(taskEntry, "pix_player", stackSize, this, 5, &_taskHandle, core);
+    xTaskCreatePinnedToCore(taskEntry, "pix_player", stackSize, this, AURAX_PIX_TASK_PRIORITY, &_taskHandle, core);
 }
 
 void PixPlayer::stopTask() {

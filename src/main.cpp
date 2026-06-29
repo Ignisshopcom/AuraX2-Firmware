@@ -8,6 +8,7 @@
 #include "effect_player.h"
 #include "wifi_control.h"
 #include "sync_control.h"
+#include "task_compat.h"
 
 #include "apa102.h"
 #include "ws281x.h"
@@ -19,6 +20,7 @@ static EffectPlayer* effectPlayer = nullptr;
 static SyncControl*  syncCtrl     = nullptr;
 static WifiControl*  wifi         = nullptr;
 static bool          fsMounted    = false;
+static bool          crashAutoplayDisabled = false;
 
 class NullLedDriver : public ILedDriver {
 public:
@@ -33,7 +35,8 @@ private:
 static ILedDriver* createLedDriver(AppConfig& cfg) {
     if (cfg.ledType == LED_TYPE_APA102) {
         auto* d = new APA102(cfg.dataPin, cfg.clkPin, cfg.numLeds);
-        if (d->begin(20000000)) {
+        uint32_t spiHz = (uint32_t)cfg.spiFrequencyMhz * 1000000UL;
+        if (d->begin(spiHz)) {
             d->clear();
             d->show();
             return d;
@@ -59,6 +62,36 @@ static ILedDriver* createLedDriver(AppConfig& cfg) {
     return new NullLedDriver(cfg.numLeds);
 }
 
+static void startSavedOutput() {
+    if (crashAutoplayDisabled) {
+        return;
+    }
+
+    if (cfg.autoStart == 1) {
+        EffectParams p = {};
+        p.effectId    = cfg.effectId;
+        p.speed       = cfg.effectSpeed;
+        p.intensity   = cfg.effectIntensity;
+        p.dotSize     = cfg.effectDotSize;
+        p.paletteId   = cfg.effectPaletteId;
+        p.paletteSize = cfg.paletteSize;
+        p.reverse     = cfg.effectReverse;
+        for (int i = 0; i < cfg.paletteSize && i < 4; i++)
+            p.palette[i] = { cfg.paletteR[i], cfg.paletteG[i], cfg.paletteB[i] };
+        if (p.paletteSize == 0) { p.palette[0] = {255, 0, 0}; p.paletteSize = 1; }
+        effectPlayer->start(p);
+        LOG("[sys] restored effect id=%d\n", p.effectId);
+    } else if (fsMounted && LittleFS.exists(cfg.pixFile)) {
+        int err = player->load(cfg.pixFile);
+        if (err) { LOG("[pix] load failed: %d\n", err); }
+        else player->startTask();
+    } else if (!fsMounted) {
+        LOGLN("[pix] storage unavailable, autoplay skipped");
+    } else {
+        LOG("[pix] soubor nenalezen: %s\n", cfg.pixFile);
+    }
+}
+
 void setup() {
 #ifdef PIX_DEBUG
     Serial.begin(115200);
@@ -77,12 +110,17 @@ void setup() {
 
     fsMounted = LittleFS.begin(false);
     if (!fsMounted) {
-        LOGLN("[fs] LittleFS mount failed, continuing with AP fallback");
+        LOGLN("[fs] LittleFS mount failed, formatting clean filesystem");
+        fsMounted = LittleFS.begin(true);
+    }
+    if (!fsMounted) {
+        LOGLN("[fs] LittleFS unavailable, continuing with AP fallback");
     }
 
     cfg = fsMounted ? loadConfig() : defaultConfig();
-    LOG("[cfg] ledType=%d numLeds=%d dataPin=%d clkPin=%d file=%s\n",
-        cfg.ledType, cfg.numLeds, cfg.dataPin, cfg.clkPin, cfg.pixFile);
+    LOG("[cfg] ledType=%d numLeds=%d dataPin=%d clkPin=%d spi=%uMHz file=%s\n",
+        cfg.ledType, cfg.numLeds, cfg.dataPin, cfg.clkPin,
+        (unsigned)cfg.spiFrequencyMhz, cfg.pixFile);
 
     leds = createLedDriver(cfg);
 
@@ -113,16 +151,41 @@ void setup() {
             wifi->begin();
             LOGLN("[wifi] server ready");
             if (fsMounted && configNeedsSave()) {
+#if defined(ARDUINO_ARCH_ESP32C3) || defined(CONFIG_IDF_TARGET_ESP32C3) || defined(CONFIG_FREERTOS_UNICORE)
+                xTaskCreatePinnedToCore(
+                    [](void*) {
+                        vTaskDelay(pdMS_TO_TICKS(1500));
+                        bool saved = saveConfig(cfg);
+                        LOG("[cfg] delayed config save: %s\n", saved ? "OK" : "FAILED");
+                        vTaskDelete(nullptr);
+                    },
+                    "cfg_save", 4096, nullptr, 1, nullptr, 0
+                );
+#else
                 vTaskDelay(pdMS_TO_TICKS(1500));
                 bool saved = saveConfig(cfg);
                 LOG("[cfg] delayed config save: %s\n", saved ? "OK" : "FAILED");
+#endif
             }
+#if defined(ARDUINO_ARCH_ESP32C3) || defined(CONFIG_IDF_TARGET_ESP32C3) || defined(CONFIG_FREERTOS_UNICORE)
+            xTaskCreatePinnedToCore(
+                [](void*) {
+                    if (!syncCtrl->begin(cfg.syncMask, cfg.syncEnabled)) {
+                        LOGLN("[sync] init failed");
+                    }
+                    vTaskDelete(nullptr);
+                },
+                "sync_init", 4096, nullptr, 1, nullptr, 0
+            );
+            startSavedOutput();
+#else
             if (!syncCtrl->begin(cfg.syncMask, cfg.syncEnabled)) {
                 LOGLN("[sync] init failed");
             }
+#endif
             while (true) { syncCtrl->process(); wifi->handle(); vTaskDelay(1); }
         },
-        "wifi_ctrl", 8192, nullptr, 2, nullptr, 0  // core 0, priorita 2
+        "wifi_ctrl", 8192, nullptr, AURAX_WIFI_TASK_PRIORITY, nullptr, 0
     );
 
     esp_reset_reason_t resetReason = esp_reset_reason();
@@ -133,29 +196,12 @@ void setup() {
                     resetReason == ESP_RST_WDT);
     if (crashed) {
         LOG("[sys] crash detected (reason=%d), autoplay disabled\n", (int)resetReason);
-    } else if (cfg.autoStart == 1) {
-        EffectParams p = {};
-        p.effectId    = cfg.effectId;
-        p.speed       = cfg.effectSpeed;
-        p.intensity   = cfg.effectIntensity;
-        p.dotSize     = cfg.effectDotSize;
-        p.paletteId   = cfg.effectPaletteId;
-        p.paletteSize = cfg.paletteSize;
-        p.reverse     = cfg.effectReverse;
-        for (int i = 0; i < cfg.paletteSize && i < 4; i++)
-            p.palette[i] = { cfg.paletteR[i], cfg.paletteG[i], cfg.paletteB[i] };
-        if (p.paletteSize == 0) { p.palette[0] = {255, 0, 0}; p.paletteSize = 1; }
-        effectPlayer->start(p);
-        LOG("[sys] restored effect id=%d\n", p.effectId);
-    } else if (fsMounted && LittleFS.exists(cfg.pixFile)) {
-        int err = player->load(cfg.pixFile);
-        if (err) { LOG("[pix] load failed: %d\n", err); }
-        else player->startTask();
-    } else if (!fsMounted) {
-        LOGLN("[pix] storage unavailable, autoplay skipped");
-    } else {
-        LOG("[pix] soubor nenalezen: %s\n", cfg.pixFile);
+        crashAutoplayDisabled = true;
     }
+
+#if !(defined(ARDUINO_ARCH_ESP32C3) || defined(CONFIG_IDF_TARGET_ESP32C3) || defined(CONFIG_FREERTOS_UNICORE))
+    startSavedOutput();
+#endif
 }
 
 void loop() {

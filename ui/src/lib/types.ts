@@ -46,6 +46,7 @@ export interface Config {
   numLeds?: number
   dataPin?: number
   clkPin?: number
+  spiFrequencyMhz?: number
   pixFile?: string
   ssid?: string
   password?: string

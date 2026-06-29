@@ -15,7 +15,14 @@
 #include <esp_system.h>
 #include <esp_wifi.h>
 #include <mdns.h>
+#include <stdlib.h>
+#include <string.h>
 #include "web_html.h"
+
+static constexpr uint16_t WLED_REALTIME_PORT = 21324;
+static constexpr uint16_t DDP_REALTIME_PORT = 4048;
+static constexpr uint16_t REALTIME_PACKET_MAX = 1472;
+static constexpr uint32_t REALTIME_TIMEOUT_MS = 1500;
 
 static String jsonEscape(const String& s) {
     String out;
@@ -57,10 +64,20 @@ static String compactMac() {
     return mac;
 }
 
+static uint16_t softApSuffix() {
+    uint8_t mac[6] = {};
+    if (esp_read_mac(mac, ESP_MAC_WIFI_SOFTAP) == ESP_OK) {
+        return ((uint16_t)mac[4] << 8) | mac[5];
+    }
+    uint64_t efuse = ESP.getEfuseMac();
+    uint32_t folded = (uint32_t)efuse ^ (uint32_t)(efuse >> 16) ^ (uint32_t)(efuse >> 32);
+    return (uint16_t)(folded ^ (folded >> 16));
+}
+
 static String fallbackApSsid(const AppConfig& cfg) {
     (void)cfg;
     char apSsid[32];
-    snprintf(apSsid, sizeof(apSsid), "AuraX-%04X", (uint16_t)ESP.getEfuseMac());
+    snprintf(apSsid, sizeof(apSsid), "AuraX-%04X", softApSuffix());
     return String(apSsid);
 }
 
@@ -114,6 +131,57 @@ static void applyWifiStabilitySettings() {
     WiFi.setSleep(false);
     WiFi.setTxPower(WIFI_POWER_19_5dBm);
     esp_wifi_set_ps(WIFI_PS_NONE);
+}
+
+static uint8_t clampWifiChannel(int32_t channel) {
+    return (channel >= 1 && channel <= 13) ? (uint8_t)channel : 1;
+}
+
+static uint8_t scanSavedSsidChannel(const char* ssid) {
+    if (!ssid || !ssid[0]) return 1;
+
+    int bestRssi = -1000;
+    uint8_t bestChannel = 1;
+    int count = WiFi.scanNetworks(false, true, false, 220);
+    LOG("[wifi] channel scan found %d networks\n", count);
+
+    for (int i = 0; i < count; i++) {
+        if (WiFi.SSID(i) != ssid) continue;
+        int rssi = WiFi.RSSI(i);
+        uint8_t channel = clampWifiChannel(WiFi.channel(i));
+        LOG("[wifi] saved ssid %s seen on ch=%u rssi=%d auth=%d\n",
+            ssid, channel, rssi, WiFi.encryptionType(i));
+        if (rssi > bestRssi) {
+            bestRssi = rssi;
+            bestChannel = channel;
+        }
+    }
+
+    WiFi.scanDelete();
+    return bestChannel;
+}
+
+static void logWifiEvent(WiFiEvent_t event, WiFiEventInfo_t info) {
+    switch (event) {
+        case ARDUINO_EVENT_WIFI_STA_DISCONNECTED:
+            LOG("[wifi] event: STA disconnected reason=%u\n", info.wifi_sta_disconnected.reason);
+            break;
+        case ARDUINO_EVENT_WIFI_STA_CONNECTED:
+            LOGLN("[wifi] event: STA connected");
+            break;
+        case ARDUINO_EVENT_WIFI_STA_GOT_IP:
+            LOG("[wifi] event: STA got IP %s\n", WiFi.localIP().toString().c_str());
+            break;
+        default:
+            break;
+    }
+}
+
+static void ensureWifiEventLogging() {
+    static bool registered = false;
+    if (registered) return;
+    WiFi.onEvent(logWifiEvent);
+    registered = true;
 }
 
 static uint8_t auraBrightnessToWled(uint8_t pct) {
@@ -471,7 +539,8 @@ static uint16_t normalizeEffectSpeedValue(int speed) {
 void WifiControl::mdnsBegin(const char* hostname) {
     const char* mdnsHost = strlen(hostname) ? hostname : "aurax";
     if (MDNS.begin(mdnsHost)) {
-        MDNS.setInstanceName("AuraX");
+        String instanceName = "AuraX " + String(mdnsHost);
+        MDNS.setInstanceName(instanceName.c_str());
         MDNS.addService("http", "tcp", 80);
         MDNS.addService("aurax", "tcp", 80);
         MDNS.addServiceTxt("aurax", "tcp", "hostname", mdnsHost);
@@ -480,7 +549,10 @@ void WifiControl::mdnsBegin(const char* hostname) {
         MDNS.addService("wled", "tcp", 80);
         MDNS.addServiceTxt("wled", "tcp", "mac", mac.c_str());
         MDNS.addServiceTxt("wled", "tcp", "brand", "AuraX");
+        MDNS.addServiceTxt("wled", "tcp", "type", "wled");
         MDNS.addServiceTxt("wled", "tcp", "name", mdnsHost);
+        MDNS.addService("ddp", "udp", DDP_REALTIME_PORT);
+        MDNS.addServiceTxt("ddp", "udp", "name", mdnsHost);
         LOG("[mdns] http://%s.local\n", mdnsHost);
     }
     if (strcmp(mdnsHost, "aurax") != 0) {
@@ -495,14 +567,198 @@ void WifiControl::mdnsBegin(const char* hostname) {
 
 WifiControl::WifiControl(PixPlayer& player, EffectPlayer& effectPlayer, ILedDriver& leds, AppConfig& cfg,
                          SyncControl* sync, bool fsMounted)
-    : _player(player), _effectPlayer(effectPlayer), _leds(leds), _cfg(cfg), _sync(sync), _fsMounted(fsMounted) {}
+    : _player(player), _effectPlayer(effectPlayer), _leds(leds), _cfg(cfg), _sync(sync), _fsMounted(fsMounted) {
+    if (_sync) {
+        _sync->setRescueHandler(
+            [](uint8_t action, void* ctx) {
+                if (ctx) static_cast<WifiControl*>(ctx)->rescueAction(action);
+            },
+            this);
+        _sync->setStateHandlers(
+            [](const char* file, uint8_t endBehavior, void* ctx) {
+                if (ctx) static_cast<WifiControl*>(ctx)->rememberSyncedProgram(file, endBehavior);
+            },
+            [](const EffectParams& p, void* ctx) {
+                if (ctx) static_cast<WifiControl*>(ctx)->rememberSyncedEffect(p);
+            },
+            [](uint8_t brightness, void* ctx) {
+                if (ctx) static_cast<WifiControl*>(ctx)->rememberSyncedBrightness(brightness);
+            },
+            this);
+    }
+}
 
 bool WifiControl::saveRuntimeConfig() {
+    if (!_fsMounted) {
+        _fsMounted = LittleFS.begin(false);
+        if (!_fsMounted) _fsMounted = LittleFS.begin(true);
+    }
     if (!_fsMounted) return false;
     AppConfig saved = _cfg;
     if (strlen(_wantedHostname) > 0)
         strlcpy(saved.hostname, _wantedHostname, sizeof(saved.hostname));
     return saveConfig(saved);
+}
+
+void WifiControl::scheduleRuntimeConfigSave(uint32_t delayMs) {
+    _runtimeSavePending = true;
+    _runtimeSaveAtMs = millis() + delayMs;
+}
+
+void WifiControl::flushRuntimeConfigSave() {
+    if (!_runtimeSavePending) return;
+    int32_t remaining = (int32_t)(millis() - _runtimeSaveAtMs);
+    if (remaining < 0) return;
+    _runtimeSavePending = false;
+    saveRuntimeConfig();
+}
+
+void WifiControl::rememberSyncedProgram(const char* file, uint8_t endBehavior) {
+    if (!file || !file[0]) return;
+    strlcpy(_cfg.pixFile, file, sizeof(_cfg.pixFile));
+    _cfg.endBehavior = endBehavior;
+    _cfg.autoStart = 0;
+    saveRuntimeConfig();
+}
+
+void WifiControl::rememberSyncedEffect(const EffectParams& p) {
+    _cfg.autoStart = 1;
+    _cfg.effectId = p.effectId;
+    _cfg.effectSpeed = p.speed;
+    _cfg.effectIntensity = p.intensity;
+    _cfg.effectDotSize = p.dotSize;
+    _cfg.effectPaletteId = p.paletteId;
+    _cfg.effectReverse = p.reverse ? 1 : 0;
+    _cfg.paletteSize = p.paletteSize ? p.paletteSize : 1;
+    if (_cfg.paletteSize > 4) _cfg.paletteSize = 4;
+    for (int i = 0; i < _cfg.paletteSize; i++) {
+        _cfg.paletteR[i] = p.palette[i].r;
+        _cfg.paletteG[i] = p.palette[i].g;
+        _cfg.paletteB[i] = p.palette[i].b;
+    }
+    scheduleRuntimeConfigSave();
+}
+
+void WifiControl::rememberSyncedBrightness(uint8_t brightness) {
+    _cfg.brightness = brightness > 100 ? 100 : brightness;
+    scheduleRuntimeConfigSave();
+}
+
+void WifiControl::beginRealtimeUdp() {
+    if (_realtimeUdpStarted) return;
+    _wledRealtimeUdp.begin(WLED_REALTIME_PORT);
+    _ddpUdp.begin(DDP_REALTIME_PORT);
+    _realtimeUdpStarted = true;
+    LOG("[realtime] WLED UDP %u, DDP %u ready\n", WLED_REALTIME_PORT, DDP_REALTIME_PORT);
+}
+
+bool WifiControl::ensureRealtimeBuffer() {
+    uint16_t count = _leds.logicalNumLeds();
+    if (count == 0) return false;
+    if (_realtimeBuf && _realtimeBufLeds == count) return true;
+    if (_realtimeBuf) {
+        free(_realtimeBuf);
+        _realtimeBuf = nullptr;
+        _realtimeBufLeds = 0;
+    }
+    _realtimeBuf = (uint8_t*)malloc((size_t)count * 4);
+    if (!_realtimeBuf) {
+        LOGLN("[realtime] buffer allocation failed");
+        return false;
+    }
+    _realtimeBufLeds = count;
+    memset(_realtimeBuf, 0, (size_t)count * 4);
+    for (uint16_t i = 0; i < count; i++) _realtimeBuf[(size_t)i * 4] = 0xFF;
+    return true;
+}
+
+void WifiControl::enterRealtimeMode() {
+    _lastRealtimeMs = millis();
+    if (_realtimeActive) return;
+    _realtimeActive = true;
+    _effectPlayer.stop();
+    _player.stopTask();
+    _player.unload();
+    if (ensureRealtimeBuffer()) {
+        memset(_realtimeBuf, 0, (size_t)_realtimeBufLeds * 4);
+        for (uint16_t i = 0; i < _realtimeBufLeds; i++) _realtimeBuf[(size_t)i * 4] = 0xFF;
+    }
+}
+
+void WifiControl::writeRealtimeRgb(uint32_t byteOffset, const uint8_t* rgb, uint16_t len) {
+    if (!rgb || len == 0 || !ensureRealtimeBuffer()) return;
+    for (uint16_t i = 0; i < len; i++) {
+        uint32_t absolute = byteOffset + i;
+        uint16_t led = (uint16_t)(absolute / 3);
+        if (led >= _realtimeBufLeds) continue;
+        uint8_t component = absolute % 3;
+        uint8_t* dst = _realtimeBuf + (size_t)led * 4;
+        dst[0] = 0xFF;
+        if (component == 0) dst[3] = rgb[i];      // R
+        else if (component == 1) dst[2] = rgb[i]; // G
+        else dst[1] = rgb[i];                     // B
+    }
+}
+
+void WifiControl::showRealtimeBuffer() {
+    if (!_realtimeBuf || _realtimeBufLeds == 0) return;
+    _leds.showColumnDirect(_realtimeBuf, _realtimeBufLeds);
+}
+
+void WifiControl::handleDdpPacket(uint8_t* packet, int len) {
+    if (!packet || len < 10) return;
+    uint16_t payloadLen = ((uint16_t)packet[8] << 8) | packet[9];
+    if (payloadLen == 0) return;
+    if (payloadLen > (uint16_t)(len - 10)) payloadLen = (uint16_t)(len - 10);
+    uint32_t offset = ((uint32_t)packet[4] << 24) | ((uint32_t)packet[5] << 16) |
+                      ((uint32_t)packet[6] << 8) | packet[7];
+    enterRealtimeMode();
+    writeRealtimeRgb(offset, packet + 10, payloadLen);
+    showRealtimeBuffer();
+}
+
+void WifiControl::handleWledRealtimePacket(uint8_t* packet, int len) {
+    if (!packet || len < 2) return;
+    uint8_t protocol = packet[0];
+    enterRealtimeMode();
+    if (protocol == 1) {  // WARLS: timeout, then index/R/G/B tuples.
+        for (int i = 2; i + 3 < len; i += 4) {
+            uint32_t offset = (uint32_t)packet[i] * 3u;
+            writeRealtimeRgb(offset, packet + i + 1, 3);
+        }
+    } else if (protocol == 2) {  // DRGB: timeout, then RGB stream from LED 0.
+        writeRealtimeRgb(0, packet + 2, (uint16_t)(len - 2));
+    } else if (protocol == 3) {  // DRGBW: ignore W channel.
+        uint32_t led = 0;
+        for (int i = 2; i + 3 < len; i += 4, led++) {
+            uint8_t rgb[3] = {packet[i], packet[i + 1], packet[i + 2]};
+            writeRealtimeRgb(led * 3u, rgb, 3);
+        }
+    } else if (protocol == 4 && len >= 4) {  // DNRGB: timeout, start LED, RGB stream.
+        uint16_t startLed = ((uint16_t)packet[2] << 8) | packet[3];
+        writeRealtimeRgb((uint32_t)startLed * 3u, packet + 4, (uint16_t)(len - 4));
+    }
+    showRealtimeBuffer();
+}
+
+void WifiControl::receiveRealtimeUdp() {
+    if (!_realtimeUdpStarted) return;
+    static uint8_t packet[REALTIME_PACKET_MAX];
+    int len = _ddpUdp.parsePacket();
+    while (len > 0) {
+        int readLen = _ddpUdp.read(packet, len > REALTIME_PACKET_MAX ? REALTIME_PACKET_MAX : len);
+        handleDdpPacket(packet, readLen);
+        len = _ddpUdp.parsePacket();
+    }
+    len = _wledRealtimeUdp.parsePacket();
+    while (len > 0) {
+        int readLen = _wledRealtimeUdp.read(packet, len > REALTIME_PACKET_MAX ? REALTIME_PACKET_MAX : len);
+        handleWledRealtimePacket(packet, readLen);
+        len = _wledRealtimeUdp.parsePacket();
+    }
+    if (_realtimeActive && millis() - _lastRealtimeMs > REALTIME_TIMEOUT_MS) {
+        _realtimeActive = false;
+    }
 }
 
 bool WifiControl::storageReady() {
@@ -562,25 +818,29 @@ bool WifiControl::connectSta(uint32_t timeoutMs) {
     _apHadClient = false;
     _staServicesStarted = false;
 
-    WiFi.disconnect(true);
+    WiFi.disconnect(false, false);
     WiFi.setHostname(_cfg.hostname);
     WiFi.config(IPAddress((uint32_t)0), IPAddress((uint32_t)0), IPAddress((uint32_t)0));
     WiFi.softAPdisconnect(true);
     WiFi.mode(WIFI_STA);
     applyWifiStabilitySettings();
     delay(100);
+    _fallbackApChannel = scanSavedSsidChannel(staSsid());
+
     WiFi.begin(staSsid(), staPassword());
     applyWifiStabilitySettings();
     WiFi.setHostname(_cfg.hostname);
-    _lastStaRetryMs = millis();
-    _staDisconnectedSinceMs = _lastStaRetryMs;
-    LOG("[wifi] connecting to %s", staSsid());
+    LOG("[wifi] connecting to %s passLen=%u", staSsid(), (unsigned)strlen(staPassword()));
 
     uint32_t start = millis();
     while (WiFi.status() != WL_CONNECTED && millis() - start < timeoutMs) {
         delay(250);
         LOG("%c", '.');
     }
+
+    _lastStaRetryMs = millis();
+    _staDisconnectedSinceMs = _lastStaRetryMs;
+
     if (WiFi.status() != WL_CONNECTED) {
         LOGLN("\n[wifi] connect timeout");
         return false;
@@ -592,37 +852,47 @@ bool WifiControl::connectSta(uint32_t timeoutMs) {
     return true;
 }
 
+bool WifiControl::startSoftApRadio() {
+    String apSsid = fallbackApSsid(_cfg);
+    IPAddress apIP(192, 168, 4, 1);
+    uint8_t apChannel = clampWifiChannel(_fallbackApChannel);
+    WiFi.softAPConfig(apIP, apIP, IPAddress(255, 255, 255, 0));
+    WiFi.softAPsetHostname(_cfg.hostname);
+    bool apOk = WiFi.softAP(apSsid.c_str(), nullptr, apChannel);
+    LOG("[wifi] AP radio: SSID=%s IP=%s ch=%u ok=%u\n",
+        apSsid.c_str(), WiFi.softAPIP().toString().c_str(), apChannel, apOk ? 1 : 0);
+    return apOk;
+}
+
 void WifiControl::startFallbackAp() {
     if (_apActive) return;
 
     _apMode = true;
     _apHadClient = false;
+    WiFi.scanDelete();
     WiFi.setHostname(_cfg.hostname);
-    WiFi.mode(strlen(staSsid()) ? WIFI_AP_STA : WIFI_AP);
+    WiFi.mode(WIFI_AP);
     applyWifiStabilitySettings();
 
-    char apSsid[32];
-    snprintf(apSsid, sizeof(apSsid), "AuraX-%04X", (uint16_t)ESP.getEfuseMac());
-    IPAddress apIP(192, 168, 4, 1);
-    WiFi.softAPConfig(apIP, apIP, IPAddress(255, 255, 255, 0));
-    WiFi.softAPsetHostname(_cfg.hostname);
-    WiFi.softAP(apSsid);
+    bool apOk = startSoftApRadio();
     _apActive = true;
     _dns.setErrorReplyCode(DNSReplyCode::NoError);
     _dns.start(53, "*", WiFi.softAPIP());
-    LOG("[wifi] AP fallback: SSID=%s IP=%s\n", apSsid, WiFi.softAPIP().toString().c_str());
+    MDNS.end();
+    mdnsBegin(_cfg.hostname);
+    NBNS.begin(_cfg.hostname);
+    beginRealtimeUdp();
+    LOG("[wifi] AP fallback active ok=%u\n", apOk ? 1 : 0);
 
     if (strlen(staSsid())) {
-        WiFi.begin(staSsid(), staPassword());
-        applyWifiStabilitySettings();
-        _lastStaRetryMs = millis();
-        LOGLN("[wifi] background STA retry enabled until AP client connects");
+        LOGLN("[wifi] AP is stable; STA retry disabled until config save or reboot");
     }
 }
 
 void WifiControl::stopFallbackAp() {
     if (!_apActive) return;
     _dns.stop();
+    WiFi.scanDelete();
     WiFi.softAPdisconnect(true);
     _apActive = false;
     _apMode = false;
@@ -632,12 +902,43 @@ void WifiControl::stopFallbackAp() {
     LOG("[wifi] AP disabled, STA IP: %s\n", WiFi.localIP().toString().c_str());
 }
 
+void WifiControl::rescueAction(uint8_t action) {
+    if (action == SyncControl::RESCUE_REBOOT) {
+        LOGLN("[rescue] reboot requested");
+        delay(100);
+        esp_restart();
+        return;
+    }
+
+    if (action == SyncControl::RESCUE_FORCE_AP) {
+        LOGLN("[rescue] force AP requested");
+        startFallbackAp();
+        return;
+    }
+
+    if (action == SyncControl::RESCUE_STA_RETRY) {
+        LOGLN("[rescue] STA retry requested");
+        if (strlen(staSsid()) == 0) {
+            startFallbackAp();
+            return;
+        }
+        stopFallbackAp();
+        connectSta(STA_CONNECT_TIMEOUT_MS);
+        if (WiFi.status() == WL_CONNECTED) {
+            startStaServices();
+        } else {
+            startFallbackAp();
+        }
+    }
+}
+
 void WifiControl::startStaServices() {
     if (_staServicesStarted || WiFi.status() != WL_CONNECTED) return;
     MDNS.end();
     mdnsBegin(_cfg.hostname);
     NBNS.begin(_cfg.hostname);
     _udp.begin(DISCOVERY_PORT);
+    beginRealtimeUdp();
     announce();
     ArduinoOTA.setHostname(_cfg.hostname);
     ArduinoOTA.begin();
@@ -646,6 +947,7 @@ void WifiControl::startStaServices() {
 }
 
 bool WifiControl::begin(uint32_t timeoutMs) {
+    ensureWifiEventLogging();
     WiFi.persistent(false);
     WiFi.softAPdisconnect(true);
 
@@ -692,7 +994,9 @@ bool WifiControl::begin(uint32_t timeoutMs) {
     _server.on("/fw/status", HTTP_GET, [this]() { handleFirmwareStatus(); });
     _server.on("/fw/check", HTTP_OPTIONS, [this]() { handleCorsOptions(); });
     _server.on("/fw/check", HTTP_POST, [this]() { handleFirmwareCheck(); });
+    _server.on("/rescue", HTTP_POST, [this]() { handleRescue(); });
     _server.on("/programs", HTTP_GET, [this]() { handlePrograms(); });
+    _server.on("/program/download", HTTP_GET, [this]() { handleProgramDownload(); });
     _server.on("/program/select", HTTP_POST, [this]() { handleProgramSelect(); });
     _server.on("/program/delete", HTTP_POST, [this]() { handleProgramDelete(); });
     _server.on("/program/reorder", HTTP_POST, [this]() { handleProgramReorder(); });
@@ -839,6 +1143,7 @@ bool WifiControl::begin(uint32_t timeoutMs) {
         if (v < 0 || v > 3) v = 255;  // anything out of range → from file
         _cfg.endBehavior = (uint8_t)v;
         _player.setEndBehavior(_cfg.endBehavior);
+        scheduleRuntimeConfigSave();
         _server.send(200, "text/plain", "OK");
     });
     _server.on("/nudge", HTTP_GET, [this]() {
@@ -857,6 +1162,7 @@ bool WifiControl::begin(uint32_t timeoutMs) {
             _leds.setBrightness(_cfg.brightness);
             _player.setBrightness(_cfg.brightness);
         }
+        scheduleRuntimeConfigSave();
         _server.send(200, "text/plain", "OK");
     });
     _server.on("/effect",      HTTP_POST, [this]() { handleEffectStart(); });
@@ -892,9 +1198,7 @@ bool WifiControl::begin(uint32_t timeoutMs) {
 
     strlcpy(_wantedHostname, _cfg.hostname, sizeof(_wantedHostname));
 
-    if (_apMode) {
-        mdnsBegin(_cfg.hostname);
-    } else {
+    if (!_apMode) {
         startStaServices();
     }
 
@@ -905,11 +1209,21 @@ void WifiControl::maintainWifi() {
     if (strlen(staSsid()) == 0) return;
 
     uint32_t now = millis();
+
+    if (_apActive) {
+        uint8_t clients = apClientCount();
+        if (clients > 0 && !_apHadClient) {
+            _apHadClient = true;
+            LOG("[wifi] AP client connected (%u)\n", clients);
+        } else if (clients == 0 && _apHadClient) {
+            _apHadClient = false;
+            LOGLN("[wifi] AP client left");
+        }
+        return;
+    }
+
     if (WiFi.status() == WL_CONNECTED) {
         _staDisconnectedSinceMs = 0;
-        if (_apActive) {
-            stopFallbackAp();
-        }
         startStaServices();
         return;
     }
@@ -922,48 +1236,25 @@ void WifiControl::maintainWifi() {
         LOGLN("[wifi] disconnected");
     }
 
-    if (_apActive) {
-        uint8_t clients = apClientCount();
-        if (clients > 0) {
-            if (!_apHadClient) {
-                _apHadClient = true;
-                WiFi.disconnect(false);
-                LOG("[wifi] AP client connected (%u), pausing STA scan\n", clients);
-            }
-            return;
-        }
-        if (_apHadClient) {
-            _apHadClient = false;
-            _lastStaRetryMs = 0;
-            LOGLN("[wifi] AP client left, resuming STA scan");
-        }
-        if (now - _lastStaRetryMs > STA_RETRY_INTERVAL_MS) {
-            LOG("[wifi] AP fallback retry to %s\n", staSsid());
-            WiFi.mode(WIFI_AP_STA);
-            WiFi.begin(staSsid(), staPassword());
-            applyWifiStabilitySettings();
-            _lastStaRetryMs = now;
-        }
+    if (_staDisconnectedSinceMs == 0) _staDisconnectedSinceMs = now;
+    if (now - _staDisconnectedSinceMs > STA_CONNECT_TIMEOUT_MS) {
+        LOGLN("[wifi] reconnect timeout, starting stable AP fallback");
+        startFallbackAp();
         return;
     }
 
-    if (_staDisconnectedSinceMs == 0) _staDisconnectedSinceMs = now;
     if (now - _lastStaRetryMs > STA_RETRY_INTERVAL_MS) {
         LOG("[wifi] reconnecting to %s\n", staSsid());
         WiFi.begin(staSsid(), staPassword());
         applyWifiStabilitySettings();
         _lastStaRetryMs = now;
     }
-
-    if (!_apActive && now - _staDisconnectedSinceMs > STA_CONNECT_TIMEOUT_MS) {
-        LOGLN("[wifi] reconnect timeout, starting AP fallback");
-        startFallbackAp();
-    }
 }
 
 void WifiControl::handle() {
     _server.handleClient();
     if (_apActive) _dns.processNextRequest();
+    receiveRealtimeUdp();
     maintainWifi();
     if (_sync) _sync->refreshWifiPeer();
     if (_batMonitor.update()) {
@@ -977,6 +1268,7 @@ void WifiControl::handle() {
         expirePeers();
         if (millis() - _lastAnnounceMs > ANNOUNCE_INTERVAL_MS) announce();
     }
+    flushRuntimeConfigSave();
 }
 
 // ── handlers ──────────────────────────────────────────────────────────────────
@@ -1182,6 +1474,41 @@ void WifiControl::handlePrograms() {
     }
     json += "]}";
     _server.send(200, "application/json", json);
+}
+
+void WifiControl::handleProgramDownload() {
+    if (!_fsMounted) {
+        _server.send(503, "text/plain", "Storage unavailable");
+        return;
+    }
+
+    String path;
+    uint16_t slot = (uint16_t)_server.arg("slot").toInt();
+    if (slot > 0) {
+        if (!programPathForSlot(slot, path)) {
+            _server.send(404, "text/plain", "Program slot not found");
+            return;
+        }
+    } else {
+        path = sanitizeProgramPath(_server.arg("file"));
+    }
+
+    if (!path.length() || !LittleFS.exists(path)) {
+        _server.send(404, "text/plain", "Program not found");
+        return;
+    }
+
+    File file = LittleFS.open(path, "r");
+    if (!file) {
+        _server.send(500, "text/plain", "Program open failed");
+        return;
+    }
+
+    String filename = path;
+    if (filename.startsWith("/")) filename.remove(0, 1);
+    _server.sendHeader("Content-Disposition", "attachment; filename=\"" + filename + "\"");
+    _server.streamFile(file, "application/octet-stream");
+    file.close();
 }
 
 void WifiControl::handleProgramSelect() {
@@ -1633,6 +1960,7 @@ void WifiControl::handleWledStatePost() {
             _leds.setBrightness(_cfg.brightness);
             _player.setBrightness(_cfg.brightness);
         }
+        scheduleRuntimeConfigSave();
     }
 
     if (doc.containsKey("on")) {
@@ -1817,12 +2145,40 @@ void WifiControl::handleFirmwareCheck() {
     _server.send(ok ? 200 : 503, "application/json", firmwareStatusJson());
 }
 
+void WifiControl::handleRescue() {
+    sendCorsHeaders();
+    if (!_sync || !_sync->isReady()) {
+        _server.send(503, "text/plain", "ESP-NOW not ready");
+        return;
+    }
+
+    String actionArg = _server.arg("action");
+    actionArg.toLowerCase();
+    uint8_t action = 0;
+    if (actionArg == "ap" || actionArg == "force_ap") {
+        action = SyncControl::RESCUE_FORCE_AP;
+    } else if (actionArg == "reboot") {
+        action = SyncControl::RESCUE_REBOOT;
+    } else if (actionArg == "sta" || actionArg == "wifi" || actionArg == "retry") {
+        action = SyncControl::RESCUE_STA_RETRY;
+    }
+
+    if (action == 0) {
+        _server.send(400, "text/plain", "Use action=ap, action=reboot, or action=sta");
+        return;
+    }
+
+    _sync->broadcastRescue(action);
+    _server.send(200, "text/plain", "Rescue command sent");
+}
+
 void WifiControl::handleConfigGet() {
     StaticJsonDocument<2048> doc;
     doc["ledType"]  = _cfg.ledType;
     doc["numLeds"]  = _cfg.numLeds;
     doc["dataPin"]  = _cfg.dataPin;
     doc["clkPin"]   = _cfg.clkPin;
+    doc["spiFrequencyMhz"] = _cfg.spiFrequencyMhz;
     doc["ssid"]     = _cfg.ssid;
     doc["password"] = _cfg.password;
     doc["pixFile"]    = _cfg.pixFile;
@@ -1929,7 +2285,11 @@ void WifiControl::handleEffectStart() {
         _cfg.paletteG[i] = p.palette[i].g;
         _cfg.paletteB[i] = p.palette[i].b;
     }
-    if (persist) saveRuntimeConfig();
+    if (persist) {
+        saveRuntimeConfig();
+    } else {
+        scheduleRuntimeConfigSave();
+    }
 
     if (_sync && relay) {
         _sync->broadcastEffect(p);
@@ -1977,6 +2337,12 @@ void WifiControl::handleConfigPost() {
     }
     _cfg.dataPin = doc["dataPin"] | _cfg.dataPin;
     _cfg.clkPin  = doc["clkPin"]  | _cfg.clkPin;
+    {
+        int spiMhz = doc["spiFrequencyMhz"] | _cfg.spiFrequencyMhz;
+        if (spiMhz < 1) spiMhz = 1;
+        if (spiMhz > 20) spiMhz = 20;
+        _cfg.spiFrequencyMhz = (uint8_t)spiMhz;
+    }
     strlcpy(_cfg.ssid,     doc["ssid"]     | _cfg.ssid,     sizeof(_cfg.ssid));
     strlcpy(_cfg.password, doc["password"] | _cfg.password, sizeof(_cfg.password));
     strlcpy(_cfg.pixFile,  doc["pixFile"]  | _cfg.pixFile,  sizeof(_cfg.pixFile));
@@ -2113,7 +2479,7 @@ void WifiControl::handleConfigPost() {
 void WifiControl::announce() {
     char buf[112];
     snprintf(buf, sizeof(buf), "AURAX %s %s %04x %u %d %u %u",
-        _cfg.hostname, activeIP().toString().c_str(), (uint16_t)ESP.getEfuseMac(),
+        _cfg.hostname, activeIP().toString().c_str(), softApSuffix(),
         _batMonitor.pct(), _apMode ? 0 : (int)WiFi.RSSI(), (unsigned)_cfg.syncEnabled, (unsigned)_cfg.syncMask);
     _udp.beginPacket(IPAddress(255, 255, 255, 255), DISCOVERY_PORT);
     _udp.write((uint8_t*)buf, strlen(buf));
@@ -2122,15 +2488,15 @@ void WifiControl::announce() {
 }
 
 void WifiControl::receivePeers() {
-    int len = _udp.parsePacket();
-    if (len <= 0) return;
+    int len = 0;
+    while ((len = _udp.parsePacket()) > 0) {
     char buf[128] = {};
     _udp.read(buf, sizeof(buf) - 1);
 
     char* cmd      = strtok(buf, " ");
     if (cmd && strcmp(cmd, "AURAX?") == 0) {
         announce();
-        return;
+        continue;
     }
     char* host     = strtok(nullptr, " ");
     char* ip       = strtok(nullptr, " ");
@@ -2139,12 +2505,12 @@ void WifiControl::receivePeers() {
     char* rssiStr       = strtok(nullptr, " ");
     char* syncEnabledStr = strtok(nullptr, " ");
     char* syncMaskStr   = strtok(nullptr, " ");
-    if (!cmd || strcmp(cmd, "AURAX") != 0 || !host || !ip) return;
+    if (!cmd || strcmp(cmd, "AURAX") != 0 || !host || !ip) continue;
 
     // Ignorovat vlastní broadcast — kontrola vždy podle IP, nezávisle na hostname
     IPAddress senderIp;
     senderIp.fromString(ip);
-    if (senderIp == activeIP()) return;
+    if (senderIp == activeIP()) continue;
 
     uint16_t senderChipId   = chipHex   ? (uint16_t)strtoul(chipHex, nullptr, 16) : 0;
     uint8_t  senderBatPct   = batPctStr ? (uint8_t)atoi(batPctStr) : 0;
@@ -2155,7 +2521,7 @@ void WifiControl::receivePeers() {
         senderSyncMask = (uint16_t)strtoul(syncEnabledStr, nullptr, 10);
         senderSyncEnabled = senderSyncMask ? 1 : 0;
     }
-    uint16_t myChipId     = (uint16_t)ESP.getEfuseMac();
+    uint16_t myChipId     = softApSuffix();
 
     if (strcmp(host, _cfg.hostname) == 0) {
         // Konflikt: přejmenuje se zařízení s vyšším chip ID (deterministické)
@@ -2178,10 +2544,9 @@ void WifiControl::receivePeers() {
     // potom podle IP. Hostname se může při konfliktu změnit a nesmí schovat
     // další připojené zařízení se stejným nebo podobným jménem.
     for (int i = 0; i < _peerCount; i++) {
-        bool sameChip = senderChipId != 0 && _peers[i].chipId == senderChipId;
         bool sameIp = _peers[i].ip == senderIp;
-        bool legacySameHost = senderChipId == 0 && strcmp(_peers[i].hostname, host) == 0;
-        if (sameChip || sameIp || legacySameHost) {
+        bool sameHost = strcmp(_peers[i].hostname, host) == 0;
+        if (sameIp || sameHost) {
             strlcpy(_peers[i].hostname, host, sizeof(_peers[i].hostname));
             _peers[i].ip = senderIp;
             _peers[i].lastSeenMs  = millis();
@@ -2190,7 +2555,7 @@ void WifiControl::receivePeers() {
             _peers[i].rssi        = senderRssi;
             _peers[i].syncEnabled = senderSyncEnabled;
             _peers[i].syncMask    = senderSyncMask;
-            return;
+            goto next_packet;
         }
     }
     if (_peerCount < MAX_PEERS) {
@@ -2204,6 +2569,9 @@ void WifiControl::receivePeers() {
         _peers[_peerCount].syncMask    = senderSyncMask;
         _peerCount++;
         LOG("[discovery] peer: %s (%s)\n", host, ip);
+    }
+next_packet:
+    ;
     }
 }
 
@@ -2246,6 +2614,29 @@ void WifiControl::sortPeers() {
 
 void WifiControl::handlePeers() {
     sendCorsHeaders();
+    if (_staServicesStarted) {
+        const char* query = "AURAX?";
+        _udp.beginPacket(IPAddress(255, 255, 255, 255), DISCOVERY_PORT);
+        _udp.write((const uint8_t*)query, strlen(query));
+        _udp.endPacket();
+        IPAddress ip = WiFi.localIP();
+        IPAddress mask = WiFi.subnetMask();
+        IPAddress broadcast((uint8_t)(ip[0] | ~mask[0]),
+                            (uint8_t)(ip[1] | ~mask[1]),
+                            (uint8_t)(ip[2] | ~mask[2]),
+                            (uint8_t)(ip[3] | ~mask[3]));
+        if (broadcast != IPAddress(255, 255, 255, 255)) {
+            _udp.beginPacket(broadcast, DISCOVERY_PORT);
+            _udp.write((const uint8_t*)query, strlen(query));
+            _udp.endPacket();
+        }
+        uint32_t until = millis() + 400;
+        while ((int32_t)(millis() - until) < 0) {
+            receivePeers();
+            delay(5);
+        }
+        expirePeers();
+    }
     sortPeers();
     String json = "[";
     for (int i = 0; i < _peerCount; i++) {

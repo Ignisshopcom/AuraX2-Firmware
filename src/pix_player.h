@@ -72,6 +72,7 @@ private:
 
     int  parseHeader(File& f);
     int  loadAxp(File& f);
+    bool decodeAxpCommand(File& f, int cmdIdx, uint8_t* dst);
     // Returns pointer to 4*width raw bytes [dim,B,G,R] for column col of command cmdIdx.
     // Returns nullptr on error.
     const uint8_t* fetchColumn(int cmdIdx, int col);
@@ -91,6 +92,15 @@ private:
     uint8_t* _preloadBuf = nullptr;           // raw bytes for all images
     size_t   _cmdBufOffset[MAX_CMDS] = {};    // byte offset of each command's data inside _preloadBuf
     bool     _preloaded  = false;
+
+    // AXP streaming/cache mode for ESP32 variants without PSRAM.
+    uint32_t _axpDataOffset[MAX_CMDS] = {};
+    uint32_t _axpDataSize[MAX_CMDS] = {};
+    uint32_t _axpCodec[MAX_CMDS] = {};
+    bool     _axpStreaming = false;
+    uint8_t* _axpCmdCache = nullptr;           // decoded bytes for the currently active AXP command
+    size_t   _axpCmdCacheSize = 0;
+    int      _axpCachedCmd = -1;
 
     // Streaming mode
     char     _path[128]  = {};

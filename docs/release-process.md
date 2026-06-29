@@ -52,7 +52,7 @@ If more than one release is made on the same day, add a suffix:
    git push origin 26-05-20
    ```
 
-3. Open GitHub Releases for `kbogi/AuraX2` and create a release from the tag.
+3. Open GitHub Releases for `Ignisshopcom/AuraX2-Firmware` and create a release from the tag.
    GitHub will use `.github/release.yml` to group generated release notes.
 
 ## Commit Style

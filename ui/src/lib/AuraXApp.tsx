@@ -769,7 +769,8 @@ function SettingsPanel({
     numLeds: config.numLeds ?? 144,
     dataPin: config.dataPin ?? 6,
     clkPin: config.clkPin ?? 5,
-    mALimit: config.mALimit ?? 0,
+    spiFrequencyMhz: config.spiFrequencyMhz ?? 15,
+    mALimit: config.mALimit ?? 3500,
     effectReverse: config.effectReverse ?? false,
     renderMirror: config.renderMirror ?? false,
     contactPoi: config.contactPoi ?? false,
@@ -923,6 +924,9 @@ function SettingsPanel({
           <label>Data pin<input type="number" value={form.dataPin} min={0} max={48} onInput={(e) => set({ dataPin: +(e.currentTarget as HTMLInputElement).value })} /></label>
           {form.ledType === 1 && (
             <label>Clock pin<input type="number" value={form.clkPin} min={0} max={48} onInput={(e) => set({ clkPin: +(e.currentTarget as HTMLInputElement).value })} /></label>
+          )}
+          {form.ledType === 1 && (
+            <label>SPI frequency MHz<input type="number" value={form.spiFrequencyMhz} min={1} max={20} onInput={(e) => set({ spiFrequencyMhz: +(e.currentTarget as HTMLInputElement).value })} /></label>
           )}
           <label>Current limit mA<input type="number" value={form.mALimit} min={0} max={65000} step={100} onInput={(e) => set({ mALimit: +(e.currentTarget as HTMLInputElement).value })} /></label>
           <label class="check"><input type="checkbox" checked={form.contactPoi} onChange={(e) => set({ contactPoi: (e.currentTarget as HTMLInputElement).checked })} /> CONTACT POI</label>

@@ -10,7 +10,9 @@
 static bool gImportedFromWled = false;
 static bool gConfigNeedsSave  = false;
 
-static constexpr uint16_t AURAX_CONFIG_VERSION = 3;
+static constexpr uint16_t AURAX_CONFIG_VERSION = 4;
+static constexpr uint8_t MIN_SPI_MHZ = 1;
+static constexpr uint8_t MAX_SPI_MHZ = 20;
 
 void normalizeHostname(char* hostname, size_t len) {
     if (!hostname || len == 0) return;
@@ -95,6 +97,23 @@ static bool sanitizeWifiCredentials(AppConfig& cfg) {
     return changed;
 }
 
+static bool applyCompileTimeWifiFallback(AppConfig& cfg) {
+    bool changed = false;
+    if (strlen(WIFI_SSID) == 0) return false;
+
+    if (strcmp(cfg.ssid, WIFI_SSID) != 0) {
+        strlcpy(cfg.ssid, WIFI_SSID, sizeof(cfg.ssid));
+        changed = true;
+    }
+
+    if (strlen(WIFI_PASSWORD) > 0 &&
+        strcmp(cfg.password, WIFI_PASSWORD) != 0) {
+        strlcpy(cfg.password, WIFI_PASSWORD, sizeof(cfg.password));
+        changed = true;
+    }
+    return changed;
+}
+
 static uint32_t fnv1aFileHash(const char* path) {
     if (!LittleFS.exists(path)) return 0;
     File f = LittleFS.open(path, "r");
@@ -157,6 +176,9 @@ static void normalizeEffectConfig(AppConfig& cfg) {
     if (cfg.numLeds > 2048) cfg.numLeds = 2048;
     if (cfg.dataPin > 48) cfg.dataPin = (cfg.ledType == LED_TYPE_APA102) ? LED_DATA_PIN : WS_DATA_PIN;
     if (cfg.clkPin > 48) cfg.clkPin = LED_CLK_PIN;
+    if (cfg.spiFrequencyMhz < MIN_SPI_MHZ || cfg.spiFrequencyMhz > MAX_SPI_MHZ) {
+        cfg.spiFrequencyMhz = APA102_SPI_MHZ;
+    }
     if (cfg.effectSpeed > 255) {
         cfg.effectSpeed = cfg.effectSpeed > 1000 ? 255 : (uint16_t)(((uint32_t)cfg.effectSpeed * 255u + 500u) / 1000u);
     }
@@ -355,6 +377,8 @@ static AppConfig defaults() {
     cfg.numLeds = NUM_LEDS;
     cfg.dataPin = (LED_TYPE == LED_TYPE_APA102) ? LED_DATA_PIN : WS_DATA_PIN;
     cfg.clkPin  = LED_CLK_PIN;
+    cfg.spiFrequencyMhz = APA102_SPI_MHZ;
+    cfg.mALimit = DEFAULT_CURRENT_LIMIT_MA;
     strncpy(cfg.ssid,     WIFI_SSID,     sizeof(cfg.ssid)     - 1);
     strncpy(cfg.password, WIFI_PASSWORD, sizeof(cfg.password) - 1);
     strncpy(cfg.pixFile,  PIX_FILE,      sizeof(cfg.pixFile)  - 1);
@@ -381,7 +405,8 @@ AppConfig loadConfig() {
         cfg.wledImportHash = currentWledHash;
         if (strlen(cfg.hostname) == 0)
             strlcpy(cfg.hostname, "aurax", sizeof(cfg.hostname));
-        sanitizeWifiCredentials(cfg);
+        gConfigNeedsSave = sanitizeWifiCredentials(cfg) || gConfigNeedsSave;
+        gConfigNeedsSave = applyCompileTimeWifiFallback(cfg) || gConfigNeedsSave;
         ensureApCode(cfg);
         normalizeEffectConfig(cfg);
         if (hasWledConfig) {
@@ -406,6 +431,7 @@ AppConfig loadConfig() {
         cfg.numLeds = doc["numLeds"] | cfg.numLeds;
         cfg.dataPin = doc["dataPin"] | cfg.dataPin;
         cfg.clkPin  = doc["clkPin"]  | cfg.clkPin;
+        cfg.spiFrequencyMhz = doc["spiFrequencyMhz"] | cfg.spiFrequencyMhz;
         strlcpy(cfg.ssid,     doc["ssid"]     | cfg.ssid,     sizeof(cfg.ssid));
         strlcpy(cfg.password, doc["password"] | cfg.password, sizeof(cfg.password));
         strlcpy(cfg.apCode, doc["apCode"] | cfg.apCode, sizeof(cfg.apCode));
@@ -472,6 +498,7 @@ AppConfig loadConfig() {
         shouldSave = true;
     }
     shouldSave = sanitizeWifiCredentials(cfg) || shouldSave;
+    shouldSave = applyCompileTimeWifiFallback(cfg) || shouldSave;
     shouldSave = ensureApCode(cfg) || shouldSave;
     normalizeEffectConfig(cfg);
     if (shouldSave) {
@@ -496,6 +523,7 @@ bool saveConfig(const AppConfig& cfg) {
     doc["numLeds"]  = cfg.numLeds;
     doc["dataPin"]  = cfg.dataPin;
     doc["clkPin"]   = cfg.clkPin;
+    doc["spiFrequencyMhz"] = cfg.spiFrequencyMhz;
     doc["ssid"]     = cfg.ssid;
     doc["password"] = cfg.password;
     doc["apCode"]   = cfg.apCode;

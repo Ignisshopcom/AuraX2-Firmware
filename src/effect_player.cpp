@@ -33,7 +33,7 @@ void EffectPlayer::start(const EffectParams& p) {
     _fpsWindowStartUs = esp_timer_get_time();
     _currentFpsX10 = 0;
     _taskRunning = true;
-    xTaskCreatePinnedToCore(taskEntry, "effect", 4096, this, 4, &_taskHandle, AURAX_LED_TASK_CORE);
+    xTaskCreatePinnedToCore(taskEntry, "effect", 4096, this, AURAX_EFFECT_TASK_PRIORITY, &_taskHandle, AURAX_LED_TASK_CORE);
 }
 
 void EffectPlayer::apply(const EffectParams& p) {
@@ -102,6 +102,9 @@ void EffectPlayer::runTask() {
             nextUs = afterUpdateUs + intervalUs;
         }
 
+#if defined(ARDUINO_ARCH_ESP32C3) || defined(CONFIG_IDF_TARGET_ESP32C3) || defined(CONFIG_FREERTOS_UNICORE)
+        vTaskDelay(1);
+#else
         int64_t remaining = nextUs - esp_timer_get_time();
         if (remaining > 3000) {
             vTaskDelay(pdMS_TO_TICKS((remaining - 1500) / 1000));
@@ -110,5 +113,6 @@ void EffectPlayer::runTask() {
                 taskYIELD();
             }
         }
+#endif
     }
 }

@@ -31,8 +31,31 @@ public:
     void broadcastStop();
     void broadcastEffect(const EffectParams& p);
     void broadcastBrightness(uint8_t brightness);
+    void broadcastRescue(uint8_t action);
+
+    using RescueHandler = void (*)(uint8_t action, void* ctx);
+    using PlayStateHandler = void (*)(const char* file, uint8_t endBehavior, void* ctx);
+    using EffectStateHandler = void (*)(const EffectParams& p, void* ctx);
+    using BrightnessStateHandler = void (*)(uint8_t brightness, void* ctx);
+    void setRescueHandler(RescueHandler handler, void* ctx) {
+        _rescueHandler = handler;
+        _rescueCtx = ctx;
+    }
+    void setStateHandlers(PlayStateHandler playHandler,
+                          EffectStateHandler effectHandler,
+                          BrightnessStateHandler brightnessHandler,
+                          void* ctx) {
+        _playStateHandler = playHandler;
+        _effectStateHandler = effectHandler;
+        _brightnessStateHandler = brightnessHandler;
+        _stateCtx = ctx;
+    }
 
     static SyncControl* _instance;  // for C callback
+
+    static constexpr uint8_t RESCUE_FORCE_AP = 1;
+    static constexpr uint8_t RESCUE_REBOOT   = 2;
+    static constexpr uint8_t RESCUE_STA_RETRY = 3;
 
 private:
     #if defined(ARDUINO_ARCH_ESP32C3)
@@ -45,6 +68,7 @@ private:
     static constexpr uint8_t CMD_STOP   = 2;
     static constexpr uint8_t CMD_EFFECT = 3;
     static constexpr uint8_t CMD_BRIGHTNESS = 4;
+    static constexpr uint8_t CMD_RESCUE = 0x70;
 
     struct __attribute__((packed)) PlayData {
         uint32_t delayMs;
@@ -70,6 +94,13 @@ private:
         uint8_t value;
     };
 
+    struct __attribute__((packed)) RescueData {
+        uint8_t action;
+        uint8_t magicA;
+        uint8_t magicB;
+        uint8_t reserved;
+    };
+
     struct __attribute__((packed)) Packet {
         uint8_t  cmd;
         uint16_t channelMask;
@@ -78,6 +109,7 @@ private:
             PlayData   play;
             EffectData effect;
             BrightnessData brightness;
+            RescueData rescue;
         };
     };
 
@@ -103,4 +135,10 @@ private:
     wifi_interface_t _peerIfidx = WIFI_IF_STA;
     uint8_t       _peerChannel = 0;
     uint32_t      _lastRxNonce = 0;
+    RescueHandler _rescueHandler = nullptr;
+    void*         _rescueCtx = nullptr;
+    PlayStateHandler _playStateHandler = nullptr;
+    EffectStateHandler _effectStateHandler = nullptr;
+    BrightnessStateHandler _brightnessStateHandler = nullptr;
+    void*         _stateCtx = nullptr;
 };

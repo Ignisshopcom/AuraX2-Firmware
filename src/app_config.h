@@ -11,6 +11,7 @@ struct AppConfig {
     uint16_t numLeds;
     uint8_t  dataPin;       // MOSI for APA102, DATA for WS281x
     uint8_t  clkPin;        // CLK for APA102
+    uint8_t  spiFrequencyMhz; // APA102 SPI clock in MHz
     char     ssid[64];
     char     password[64];
     char     apCode[8];      // fallback AP suffix, e.g. AuraX_AB12
@@ -33,7 +34,7 @@ struct AppConfig {
     uint8_t  paletteG[4];
     uint8_t  paletteB[4];
     // Current limiting
-    uint16_t mALimit;   // max mA total draw; 0 = no limit
+    uint16_t mALimit;   // max mA total draw; 0 = default safety limit
     // Battery monitoring
     uint8_t  batPin;              // ADC pin
     float    batMultiplier;       // voltage divider ratio (e.g. 2.0 for 1:2 divider)

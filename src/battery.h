@@ -45,7 +45,12 @@ public:
 
         bool validReading = (_mv >= 1000 && _mv <= 6500);
         bool low = validReading && _cfg->batAutoOff && _pct <= _cfg->batAutoOffThreshold;
-        if (low && !_autoOffActive) {
+        if (low) {
+            if (_lowCount < 255) _lowCount++;
+        } else {
+            _lowCount = 0;
+        }
+        if (low && _lowCount >= 3 && !_autoOffActive) {
             _autoOffActive = true;
             return true;  // trigger blackout
         }
@@ -90,6 +95,7 @@ private:
     float      _mvf          = 0.0f;
     uint16_t   _mv           = 0;
     uint8_t    _pct          = 0;
+    uint8_t    _lowCount     = 0;
     bool       _autoOffActive = false;
     bool       _pinConflictLogged = false;
 };

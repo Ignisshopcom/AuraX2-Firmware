@@ -15,8 +15,8 @@ static constexpr uint16_t DISCOVERY_PORT   = 4210;
 static constexpr int      MAX_PEERS        = 32;
 static constexpr uint32_t PEER_EXPIRE_MS   = 90000;
 static constexpr uint32_t ANNOUNCE_INTERVAL_MS = 10000;
-static constexpr uint32_t STA_CONNECT_TIMEOUT_MS = 12000;
-static constexpr uint32_t STA_RETRY_INTERVAL_MS = 18000;
+static constexpr uint32_t STA_CONNECT_TIMEOUT_MS = 30000;
+static constexpr uint32_t STA_RETRY_INTERVAL_MS = 8000;
 
 class WifiControl {
 public:
@@ -39,6 +39,7 @@ private:
     void handleEffectStart();
     void handleEffectStop();
     void handlePrograms();
+    void handleProgramDownload();
     void handleProgramSelect();
     void handleProgramDelete();
     void handleProgramReorder();
@@ -58,6 +59,7 @@ private:
     void handleConfigPost();
     void handleFirmwareStatus();
     void handleFirmwareCheck();
+    void handleRescue();
     void handleOta();
     void handleCaptivePortal();
     void sendCorsHeaders();
@@ -80,8 +82,10 @@ private:
     void fanoutProgramStart(uint8_t slot, int64_t startUs);
     void fanoutEffect(const EffectParams& p);
     bool connectSta(uint32_t timeoutMs);
+    bool startSoftApRadio();
     void startFallbackAp();
     void stopFallbackAp();
+    void rescueAction(uint8_t action);
     void startStaServices();
     void maintainWifi();
     void announce();
@@ -89,6 +93,19 @@ private:
     void expirePeers();
     void sortPeers();
     bool saveRuntimeConfig();
+    void scheduleRuntimeConfigSave(uint32_t delayMs = 1200);
+    void flushRuntimeConfigSave();
+    void rememberSyncedProgram(const char* file, uint8_t endBehavior);
+    void rememberSyncedEffect(const EffectParams& p);
+    void rememberSyncedBrightness(uint8_t brightness);
+    void beginRealtimeUdp();
+    void receiveRealtimeUdp();
+    bool ensureRealtimeBuffer();
+    void enterRealtimeMode();
+    void writeRealtimeRgb(uint32_t byteOffset, const uint8_t* rgb, uint16_t len);
+    void showRealtimeBuffer();
+    void handleDdpPacket(uint8_t* packet, int len);
+    void handleWledRealtimePacket(uint8_t* packet, int len);
     bool storageReady();
     bool checkFirmwareManifest(bool force);
     String firmwareStatusJson() const;
@@ -137,12 +154,22 @@ private:
     bool         _apActive = false;
     bool         _apHadClient = false;
     bool         _staServicesStarted = false;
+    uint8_t      _fallbackApChannel = 1;
     bool         _fsMounted = true;
     uint32_t     _lastStaRetryMs = 0;
     uint32_t     _staDisconnectedSinceMs = 0;
+    bool         _runtimeSavePending = false;
+    uint32_t     _runtimeSaveAtMs = 0;
 
     DNSServer      _dns;
     WiFiUDP        _udp;
+    WiFiUDP        _wledRealtimeUdp;
+    WiFiUDP        _ddpUdp;
+    bool           _realtimeUdpStarted = false;
+    bool           _realtimeActive = false;
+    uint32_t       _lastRealtimeMs = 0;
+    uint8_t*       _realtimeBuf = nullptr;
+    uint16_t       _realtimeBufLeds = 0;
     Peer           _peers[MAX_PEERS];
     int            _peerCount      = 0;
     uint32_t       _lastAnnounceMs = 0;

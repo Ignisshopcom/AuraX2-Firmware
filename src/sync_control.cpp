@@ -125,20 +125,29 @@ bool SyncControl::refreshWifiPeer() {
     if (!_espNowReady) return false;
     esp_now_peer_info_t peer = {};
     memcpy(peer.peer_addr, BROADCAST, 6);
-    uint8_t primaryChannel = WiFi.channel();
-    wifi_second_chan_t secondChannel = WIFI_SECOND_CHAN_NONE;
-    esp_wifi_get_channel(&primaryChannel, &secondChannel);
     wifi_mode_t mode = WIFI_MODE_NULL;
     esp_wifi_get_mode(&mode);
     wifi_interface_t ifidx = (mode == WIFI_MODE_AP || (mode == WIFI_MODE_APSTA && WiFi.status() != WL_CONNECTED))
         ? WIFI_IF_AP
         : WIFI_IF_STA;
+    uint8_t primaryChannel = WiFi.channel();
+    wifi_second_chan_t secondChannel = WIFI_SECOND_CHAN_NONE;
+    if (ifidx == WIFI_IF_AP) {
+        wifi_config_t apConfig = {};
+        if (esp_wifi_get_config(WIFI_IF_AP, &apConfig) == ESP_OK && apConfig.ap.channel > 0) {
+            primaryChannel = apConfig.ap.channel;
+        } else {
+            esp_wifi_get_channel(&primaryChannel, &secondChannel);
+        }
+    } else {
+        esp_wifi_get_channel(&primaryChannel, &secondChannel);
+    }
     if (_peerConfigured && _peerChannel == primaryChannel && _peerIfidx == ifidx) return true;
 
     if (esp_now_is_peer_exist(BROADCAST)) {
         esp_now_del_peer(BROADCAST);
     }
-    peer.channel = 0;
+    peer.channel = (ifidx == WIFI_IF_AP) ? primaryChannel : 0;
     peer.ifidx   = ifidx;
     peer.encrypt = false;
     esp_err_t addResult = esp_now_add_peer(&peer);
@@ -169,7 +178,6 @@ void SyncControl::setSyncEnabled(bool enabled) {
 
 void SyncControl::recvCb(const uint8_t*, const uint8_t* data, int len) {
     if (!_instance || !_instance->_queue || len < (int)sizeof(Packet)) return;
-    if (!_instance->isSyncActive()) return;
     QueuedPacket queued = {};
     memcpy(&queued.pkt, data, sizeof(Packet));
     queued.rxUs = esp_timer_get_time();
@@ -185,7 +193,13 @@ void SyncControl::process() {
 }
 
 void SyncControl::handlePacket(const Packet& pkt, int64_t rxUs) {
-    if (!isSyncActive() || (pkt.channelMask & _syncMask) == 0) {
+    bool isRescue = pkt.cmd == CMD_RESCUE;
+    if (isRescue && (pkt.rescue.magicA != 'A' || pkt.rescue.magicB != 'X')) {
+        LOGLN("[sync] rescue ignored: bad magic");
+        return;
+    }
+
+    if (!isRescue && (!isSyncActive() || (pkt.channelMask & _syncMask) == 0)) {
         LOG("[sync] ignored packet (remote=0x%03x local=0x%03x)\n", pkt.channelMask, _syncMask);
         return;
     }
@@ -194,7 +208,12 @@ void SyncControl::handlePacket(const Packet& pkt, int64_t rxUs) {
         return;
     }
     _lastRxNonce = pkt.nonce;
-    if (pkt.cmd == CMD_PLAY) {
+    if (isRescue) {
+        LOG("[sync] rescue action=%u\n", pkt.rescue.action);
+        if (_rescueHandler) {
+            _rescueHandler(pkt.rescue.action, _rescueCtx);
+        }
+    } else if (pkt.cmd == CMD_PLAY) {
         uint32_t encodedDelay = pkt.play.delayMs;
         bool catchUpStart = (encodedDelay & SYNC_IMMEDIATE_FLAG) != 0;
         uint32_t timingMs = encodedDelay & SYNC_VALUE_MASK;
@@ -225,6 +244,7 @@ void SyncControl::handlePacket(const Packet& pkt, int64_t rxUs) {
         if (err) { LOG("[sync] load failed: %d\n", err); return; }
         _player.setEndBehavior(pkt.play.endBehavior);
         _player.scheduleStart(startUs);
+        if (_playStateHandler) _playStateHandler(playFile, pkt.play.endBehavior, _stateCtx);
         _player.startTask();
     } else if (pkt.cmd == CMD_STOP) {
         LOGLN("[sync] stop");
@@ -246,11 +266,13 @@ void SyncControl::handlePacket(const Packet& pkt, int64_t rxUs) {
             p.palette[i] = {pkt.effect.paletteR[i], pkt.effect.paletteG[i], pkt.effect.paletteB[i]};
         }
         _effectPlayer.apply(p);
+        if (_effectStateHandler) _effectStateHandler(p, _stateCtx);
     } else if (pkt.cmd == CMD_BRIGHTNESS) {
         uint8_t value = pkt.brightness.value > 100 ? 100 : pkt.brightness.value;
         LOG("[sync] brightness=%u\n", value);
         _leds.setBrightness(value);
         _player.setBrightness(value);
+        if (_brightnessStateHandler) _brightnessStateHandler(value, _stateCtx);
     }
 }
 
@@ -373,6 +395,18 @@ void SyncControl::broadcastBrightness(uint8_t brightness) {
 
     _leds.setBrightness(brightness);
     _player.setBrightness(brightness);
+}
+
+void SyncControl::broadcastRescue(uint8_t action) {
+    Packet pkt = {};
+    pkt.cmd             = CMD_RESCUE;
+    pkt.channelMask     = _syncMask;
+    pkt.nonce           = nextNonce();
+    pkt.rescue.action   = action;
+    pkt.rescue.magicA   = 'A';
+    pkt.rescue.magicB   = 'X';
+
+    sendPacket(pkt, "rescue", 12);
 }
 
 bool SyncControl::sendPacket(const Packet& pkt, const char* label, uint8_t repeats) {
