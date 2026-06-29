@@ -548,9 +548,13 @@ void WifiControl::mdnsBegin(const char* hostname) {
         String mac = compactMac();
         MDNS.addService("wled", "tcp", 80);
         MDNS.addServiceTxt("wled", "tcp", "mac", mac.c_str());
-        MDNS.addServiceTxt("wled", "tcp", "brand", "AuraX");
+        // Some WLED-compatible apps filter discovery by the official WLED brand
+        // marker. The root page is still AuraX; this is only for discovery.
+        MDNS.addServiceTxt("wled", "tcp", "brand", "WLED");
+        MDNS.addServiceTxt("wled", "tcp", "product", "WLED");
         MDNS.addServiceTxt("wled", "tcp", "type", "wled");
         MDNS.addServiceTxt("wled", "tcp", "name", mdnsHost);
+        MDNS.addServiceTxt("wled", "tcp", "ip", activeIP().toString().c_str());
         MDNS.addService("ddp", "udp", DDP_REALTIME_PORT);
         MDNS.addServiceTxt("ddp", "udp", "name", mdnsHost);
         LOG("[mdns] http://%s.local\n", mdnsHost);
@@ -645,11 +649,18 @@ void WifiControl::rememberSyncedBrightness(uint8_t brightness) {
 }
 
 void WifiControl::beginRealtimeUdp() {
-    if (_realtimeUdpStarted) return;
+    if (_realtimeUdpStarted) stopRealtimeUdp();
     _wledRealtimeUdp.begin(WLED_REALTIME_PORT);
     _ddpUdp.begin(DDP_REALTIME_PORT);
     _realtimeUdpStarted = true;
     LOG("[realtime] WLED UDP %u, DDP %u ready\n", WLED_REALTIME_PORT, DDP_REALTIME_PORT);
+}
+
+void WifiControl::stopRealtimeUdp() {
+    if (!_realtimeUdpStarted) return;
+    _wledRealtimeUdp.stop();
+    _ddpUdp.stop();
+    _realtimeUdpStarted = false;
 }
 
 bool WifiControl::ensureRealtimeBuffer() {
@@ -813,6 +824,7 @@ const char* WifiControl::staPassword() const {
 
 bool WifiControl::connectSta(uint32_t timeoutMs) {
     _dns.stop();
+    stopRealtimeUdp();
     _apActive = false;
     _apMode = false;
     _apHadClient = false;
@@ -867,6 +879,7 @@ bool WifiControl::startSoftApRadio() {
 void WifiControl::startFallbackAp() {
     if (_apActive) return;
 
+    stopRealtimeUdp();
     _apMode = true;
     _apHadClient = false;
     WiFi.scanDelete();
@@ -892,6 +905,7 @@ void WifiControl::startFallbackAp() {
 void WifiControl::stopFallbackAp() {
     if (!_apActive) return;
     _dns.stop();
+    stopRealtimeUdp();
     WiFi.scanDelete();
     WiFi.softAPdisconnect(true);
     _apActive = false;
@@ -986,6 +1000,9 @@ bool WifiControl::begin(uint32_t timeoutMs) {
     _server.on("/json/state", HTTP_OPTIONS, [this]() { handleCorsOptions(); });
     _server.on("/json/state", HTTP_GET, [this]() { handleWledState(); });
     _server.on("/json/state", HTTP_POST, [this]() { handleWledStatePost(); });
+    _server.on("/json/cfg", HTTP_OPTIONS, [this]() { handleCorsOptions(); });
+    _server.on("/json/cfg", HTTP_GET, [this]() { handleWledConfig(); });
+    _server.on("/json/cfg", HTTP_POST, [this]() { handleWledConfigPost(); });
     _server.on("/json/effects", HTTP_GET, [this]() { handleWledEffects(); });
     _server.on("/json/palettes", HTTP_GET, [this]() { handleWledPalettes(); });
     _server.on("/config", HTTP_GET,  [this]() { handleConfigGet(); });
@@ -1231,6 +1248,7 @@ void WifiControl::maintainWifi() {
     if (_staServicesStarted) {
         MDNS.end();
         _udp.stop();
+        stopRealtimeUdp();
         _staServicesStarted = false;
         _lastAnnounceMs = 0;
         LOGLN("[wifi] disconnected");
@@ -1831,7 +1849,7 @@ void WifiControl::handleStatus() {
 }
 
 String WifiControl::wledStateJson() {
-    bool on = _player.isLoaded() || _effectPlayer.isRunning();
+    bool on = _player.isLoaded() || _effectPlayer.isRunning() || _realtimeActive;
     uint8_t bri = auraBrightnessToWled(_cfg.brightness);
     uint8_t fx = _effectPlayer.isRunning() ? _cfg.effectId : 0;
     if (fx > 25) fx = 0;
@@ -1880,16 +1898,17 @@ String WifiControl::wledInfoJson() {
 
     String json;
     json.reserve(920);
-    json += "{\"ver\":\"0.14.4\",\"vid\":2403290,\"cn\":\"AuraX\"";
+    json += "{\"ver\":\"0.14.4\",\"vid\":2403290,\"cn\":\"WLED\"";
     json += ",\"release\":\"AuraX WLED discovery compatibility\"";
     json += ",\"name\":\"" + jsonEscape(deviceName) + "\"";
-    json += ",\"brand\":\"AuraX\",\"product\":\"AuraX\",\"btype\":\"esp32s3\"";
+    json += ",\"brand\":\"WLED\",\"product\":\"WLED\",\"btype\":\"esp32s3\"";
     json += ",\"mac\":\"" + compactMac() + "\"";
     json += ",\"ip\":\"" + activeIP().toString() + "\"";
     json += ",\"arch\":\"esp32\",\"core\":\"arduino\",\"lwip\":0";
     json += ",\"freeheap\":" + String((unsigned long)ESP.getFreeHeap());
     json += ",\"uptime\":" + String((unsigned long)(millis() / 1000));
-    json += ",\"opt\":0,\"str\":false,\"udpport\":21324,\"live\":false";
+    json += ",\"opt\":0,\"str\":false,\"udpport\":21324,\"live\":";
+    json += _realtimeActive ? "true" : "false";
     json += ",\"lm\":\"\",\"lip\":\"\",\"ws\":-1";
     json += ",\"fxcount\":54,\"palcount\":30";
     json += ",\"leds\":{\"count\":" + String(logicalCount);
@@ -1906,6 +1925,26 @@ String WifiControl::wledInfoJson() {
     json += ",\"t\":" + String(_fsMounted ? (unsigned long)LittleFS.totalBytes() : 0);
     json += ",\"pmt\":0}";
     json += ",\"ndc\":0,\"platform\":\"esp32\"}";
+    return json;
+}
+
+String WifiControl::wledConfigJson() {
+    String json;
+    json.reserve(520);
+    json += "{\"if\":{\"live\":{";
+    json += "\"en\":true";
+    json += ",\"port\":" + String(DDP_REALTIME_PORT);
+    json += ",\"no-gc\":false";
+    json += ",\"maxbri\":false";
+    json += ",\"timeout\":25";
+    json += ",\"dmx\":{\"mode\":4,\"uni\":1,\"addr\":1}";
+    json += "}}";
+    json += ",\"nw\":{\"ins\":[{\"name\":\"";
+    json += jsonEscape(strlen(_wantedHostname) ? String(_wantedHostname) : String(_cfg.hostname));
+    json += "\",\"ip\":\"";
+    json += activeIP().toString();
+    json += "\"}],\"mdns\":true}";
+    json += "}";
     return json;
 }
 
@@ -1946,8 +1985,23 @@ void WifiControl::handleWledState() {
 void WifiControl::handleWledStatePost() {
     sendCorsHeaders();
     StaticJsonDocument<512> doc;
-    DeserializationError err = deserializeJson(doc, _server.arg("plain"));
-    if (err != DeserializationError::Ok) {
+    bool parsed = false;
+    String body = _server.arg("plain");
+    if (body.length()) {
+        DeserializationError err = deserializeJson(doc, body);
+        parsed = (err == DeserializationError::Ok);
+    }
+    if (!parsed && _server.hasArg("bri")) {
+        doc["bri"] = _server.arg("bri").toInt();
+        parsed = true;
+    }
+    if (!parsed && _server.hasArg("on")) parsed = true;
+    if (_server.hasArg("on")) {
+        String value = _server.arg("on");
+        value.toLowerCase();
+        doc["on"] = (value == "1" || value == "true" || value == "on");
+    }
+    if (!parsed) {
         _server.send(400, "text/plain", "JSON error");
         return;
     }
@@ -2009,6 +2063,16 @@ void WifiControl::handleWledStatePost() {
     }
 
     _server.send(200, "application/json", wledStateJson());
+}
+
+void WifiControl::handleWledConfig() {
+    sendCorsHeaders();
+    _server.send(200, "application/json", wledConfigJson());
+}
+
+void WifiControl::handleWledConfigPost() {
+    sendCorsHeaders();
+    _server.send(200, "application/json", wledConfigJson());
 }
 
 void WifiControl::handleWledEffects() {

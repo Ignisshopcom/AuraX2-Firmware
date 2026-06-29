@@ -53,6 +53,8 @@ private:
     void handleWledInfo();
     void handleWledState();
     void handleWledStatePost();
+    void handleWledConfig();
+    void handleWledConfigPost();
     void handleWledEffects();
     void handleWledPalettes();
     void handleConfigGet();
@@ -99,6 +101,7 @@ private:
     void rememberSyncedEffect(const EffectParams& p);
     void rememberSyncedBrightness(uint8_t brightness);
     void beginRealtimeUdp();
+    void stopRealtimeUdp();
     void receiveRealtimeUdp();
     bool ensureRealtimeBuffer();
     void enterRealtimeMode();
@@ -111,6 +114,7 @@ private:
     String firmwareStatusJson() const;
     String wledInfoJson();
     String wledStateJson();
+    String wledConfigJson();
     String wledEffectsJson();
     String wledPalettesJson();
 

@@ -1,7 +1,7 @@
 #pragma once
 
-#define WIFI_SSID     "vlcek"
-#define WIFI_PASSWORD "Vlcek123"
+#define WIFI_SSID     ""
+#define WIFI_PASSWORD ""
 
 // LED strip type — change to LED_TYPE_WS281X for WS2812B/WS2811 strips
 #define LED_TYPE_APA102  1
