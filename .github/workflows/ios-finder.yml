@@ -2,6 +2,15 @@ name: iOS Finder
 
 on:
   workflow_dispatch:
+    inputs:
+      build_device_ipa:
+        description: "Build signed iPhone .ipa (requires Apple signing secrets)"
+        type: boolean
+        default: false
+      upload_testflight:
+        description: "Upload signed .ipa to App Store Connect / TestFlight"
+        type: boolean
+        default: false
   push:
     paths:
       - "ios/AuraXFinder/**"
@@ -37,3 +46,137 @@ jobs:
         with:
           name: AuraXFinder-iOS-simulator-app
           path: ios/AuraXFinder/build/Build/Products/Debug-iphonesimulator/AuraXFinder.app
+
+  build-device-ipa:
+    if: github.event_name == 'workflow_dispatch' && inputs.build_device_ipa
+    runs-on: macos-latest
+    defaults:
+      run:
+        working-directory: ios/AuraXFinder
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode.app
+
+      - name: Validate signing secrets
+        env:
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          IOS_CERTIFICATE_P12_BASE64: ${{ secrets.IOS_CERTIFICATE_P12_BASE64 }}
+          IOS_CERTIFICATE_PASSWORD: ${{ secrets.IOS_CERTIFICATE_PASSWORD }}
+          IOS_PROVISIONING_PROFILE_BASE64: ${{ secrets.IOS_PROVISIONING_PROFILE_BASE64 }}
+          IOS_PROVISIONING_PROFILE_NAME: ${{ secrets.IOS_PROVISIONING_PROFILE_NAME }}
+        run: |
+          test -n "$APPLE_TEAM_ID"
+          test -n "$IOS_CERTIFICATE_P12_BASE64"
+          test -n "$IOS_CERTIFICATE_PASSWORD"
+          test -n "$IOS_PROVISIONING_PROFILE_BASE64"
+          test -n "$IOS_PROVISIONING_PROFILE_NAME"
+
+      - name: Install Apple signing assets
+        env:
+          IOS_CERTIFICATE_P12_BASE64: ${{ secrets.IOS_CERTIFICATE_P12_BASE64 }}
+          IOS_CERTIFICATE_PASSWORD: ${{ secrets.IOS_CERTIFICATE_PASSWORD }}
+          IOS_PROVISIONING_PROFILE_BASE64: ${{ secrets.IOS_PROVISIONING_PROFILE_BASE64 }}
+          KEYCHAIN_PASSWORD: ${{ secrets.IOS_KEYCHAIN_PASSWORD || github.run_id }}
+        run: |
+          CERTIFICATE_PATH="$RUNNER_TEMP/aurax_distribution.p12"
+          PROFILE_PATH="$RUNNER_TEMP/aurax.mobileprovision"
+          KEYCHAIN_PATH="$RUNNER_TEMP/aurax-signing.keychain-db"
+
+          echo "$IOS_CERTIFICATE_P12_BASE64" | base64 --decode > "$CERTIFICATE_PATH"
+          echo "$IOS_PROVISIONING_PROFILE_BASE64" | base64 --decode > "$PROFILE_PATH"
+
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security import "$CERTIFICATE_PATH" -P "$IOS_CERTIFICATE_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
+          security list-keychain -d user -s "$KEYCHAIN_PATH"
+
+          mkdir -p "$HOME/Library/MobileDevice/Provisioning Profiles"
+          cp "$PROFILE_PATH" "$HOME/Library/MobileDevice/Provisioning Profiles/aurax.mobileprovision"
+
+      - name: Write export options
+        env:
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          IOS_PROVISIONING_PROFILE_NAME: ${{ secrets.IOS_PROVISIONING_PROFILE_NAME }}
+        run: |
+          cat > ExportOptions.plist <<EOF
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>method</key>
+            <string>app-store</string>
+            <key>signingStyle</key>
+            <string>manual</string>
+            <key>teamID</key>
+            <string>$APPLE_TEAM_ID</string>
+            <key>provisioningProfiles</key>
+            <dict>
+              <key>com.aurax.finder</key>
+              <string>$IOS_PROVISIONING_PROFILE_NAME</string>
+            </dict>
+            <key>stripSwiftSymbols</key>
+            <true/>
+            <key>uploadSymbols</key>
+            <true/>
+          </dict>
+          </plist>
+          EOF
+
+      - name: Archive iPhone app
+        env:
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          IOS_PROVISIONING_PROFILE_NAME: ${{ secrets.IOS_PROVISIONING_PROFILE_NAME }}
+        run: |
+          xcodebuild \
+            -project AuraXFinder.xcodeproj \
+            -scheme AuraXFinder \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination "generic/platform=iOS" \
+            -archivePath build/AuraXFinder.xcarchive \
+            DEVELOPMENT_TEAM="$APPLE_TEAM_ID" \
+            CODE_SIGN_STYLE=Manual \
+            CODE_SIGN_IDENTITY="Apple Distribution" \
+            PROVISIONING_PROFILE_SPECIFIER="$IOS_PROVISIONING_PROFILE_NAME" \
+            CURRENT_PROJECT_VERSION="${{ github.run_number }}" \
+            clean archive
+
+      - name: Export .ipa
+        run: |
+          xcodebuild \
+            -exportArchive \
+            -archivePath build/AuraXFinder.xcarchive \
+            -exportPath build/export \
+            -exportOptionsPlist ExportOptions.plist
+
+      - name: Upload signed .ipa artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: AuraXFinder-iPhone-ipa
+          path: ios/AuraXFinder/build/export/*.ipa
+
+      - name: Upload to TestFlight
+        if: inputs.upload_testflight
+        env:
+          APPSTORE_API_KEY_ID: ${{ secrets.APPSTORE_API_KEY_ID }}
+          APPSTORE_API_ISSUER_ID: ${{ secrets.APPSTORE_API_ISSUER_ID }}
+          APPSTORE_API_PRIVATE_KEY: ${{ secrets.APPSTORE_API_PRIVATE_KEY }}
+        run: |
+          test -n "$APPSTORE_API_KEY_ID"
+          test -n "$APPSTORE_API_ISSUER_ID"
+          test -n "$APPSTORE_API_PRIVATE_KEY"
+
+          mkdir -p "$HOME/private_keys"
+          printf "%s" "$APPSTORE_API_PRIVATE_KEY" > "$HOME/private_keys/AuthKey_${APPSTORE_API_KEY_ID}.p8"
+
+          IPA_PATH="$(find build/export -name '*.ipa' -print -quit)"
+          xcrun altool \
+            --upload-app \
+            --type ios \
+            --file "$IPA_PATH" \
+            --apiKey "$APPSTORE_API_KEY_ID" \
+            --apiIssuer "$APPSTORE_API_ISSUER_ID"
