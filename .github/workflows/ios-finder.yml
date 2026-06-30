@@ -16,6 +16,8 @@ on:
         type: boolean
         default: true
   push:
+    branches:
+      - "codex/ios-finder-release"
     paths:
       - "ios/AuraXFinder/**"
       - ".github/workflows/ios-finder.yml"
@@ -52,7 +54,7 @@ jobs:
           path: ios/AuraXFinder/build/Build/Products/Debug-iphonesimulator/AuraXFinder.app
 
   build-device-ipa:
-    if: github.event_name == 'workflow_dispatch' && inputs.build_device_ipa
+    if: (github.event_name == 'workflow_dispatch' && inputs.build_device_ipa) || (github.event_name == 'push' && github.ref == 'refs/heads/codex/ios-finder-release')
     runs-on: macos-latest
     defaults:
       run:
@@ -65,7 +67,7 @@ jobs:
         run: sudo xcode-select -s /Applications/Xcode.app
 
       - name: Validate signing secrets
-        if: ${{ !inputs.automatic_signing }}
+        if: ${{ github.event_name == 'workflow_dispatch' && !inputs.automatic_signing }}
         env:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           IOS_CERTIFICATE_P12_BASE64: ${{ secrets.IOS_CERTIFICATE_P12_BASE64 }}
@@ -80,7 +82,7 @@ jobs:
           test -n "$IOS_PROVISIONING_PROFILE_NAME"
 
       - name: Install Apple signing assets
-        if: ${{ !inputs.automatic_signing }}
+        if: ${{ github.event_name == 'workflow_dispatch' && !inputs.automatic_signing }}
         env:
           IOS_CERTIFICATE_P12_BASE64: ${{ secrets.IOS_CERTIFICATE_P12_BASE64 }}
           IOS_CERTIFICATE_PASSWORD: ${{ secrets.IOS_CERTIFICATE_PASSWORD }}
@@ -104,7 +106,7 @@ jobs:
           cp "$PROFILE_PATH" "$HOME/Library/MobileDevice/Provisioning Profiles/aurax.mobileprovision"
 
       - name: Validate automatic signing secrets
-        if: ${{ inputs.automatic_signing }}
+        if: ${{ github.event_name == 'push' || inputs.automatic_signing }}
         env:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           APPSTORE_API_KEY_ID: ${{ secrets.APPSTORE_API_KEY_ID }}
@@ -117,7 +119,7 @@ jobs:
           test -n "$APPSTORE_API_PRIVATE_KEY"
 
       - name: Install App Store Connect API key
-        if: ${{ inputs.automatic_signing || inputs.upload_testflight }}
+        if: ${{ github.event_name == 'push' || inputs.automatic_signing || inputs.upload_testflight }}
         env:
           APPSTORE_API_KEY_ID: ${{ secrets.APPSTORE_API_KEY_ID }}
           APPSTORE_API_PRIVATE_KEY: ${{ secrets.APPSTORE_API_PRIVATE_KEY }}
@@ -126,7 +128,7 @@ jobs:
           printf "%s" "$APPSTORE_API_PRIVATE_KEY" > "$RUNNER_TEMP/private_keys/AuthKey_${APPSTORE_API_KEY_ID}.p8"
 
       - name: Write automatic export options
-        if: ${{ inputs.automatic_signing }}
+        if: ${{ github.event_name == 'push' || inputs.automatic_signing }}
         env:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
@@ -150,7 +152,7 @@ jobs:
           EOF
 
       - name: Write manual export options
-        if: ${{ !inputs.automatic_signing }}
+        if: ${{ github.event_name == 'workflow_dispatch' && !inputs.automatic_signing }}
         env:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           IOS_PROVISIONING_PROFILE_NAME: ${{ secrets.IOS_PROVISIONING_PROFILE_NAME }}
@@ -186,7 +188,7 @@ jobs:
           APPSTORE_API_ISSUER_ID: ${{ secrets.APPSTORE_API_ISSUER_ID }}
           IOS_PROVISIONING_PROFILE_NAME: ${{ secrets.IOS_PROVISIONING_PROFILE_NAME }}
         run: |
-          if [ "${{ inputs.automatic_signing }}" = "true" ]; then
+          if [ "${{ github.event_name == 'push' || inputs.automatic_signing }}" = "true" ]; then
             xcodebuild \
               -project AuraXFinder.xcodeproj \
               -scheme AuraXFinder \
@@ -224,7 +226,7 @@ jobs:
           APPSTORE_API_ISSUER_ID: ${{ secrets.APPSTORE_API_ISSUER_ID }}
         run: |
           EXTRA_ARGS=()
-          if [ "${{ inputs.automatic_signing }}" = "true" ]; then
+          if [ "${{ github.event_name == 'push' || inputs.automatic_signing }}" = "true" ]; then
             EXTRA_ARGS=(
               -allowProvisioningUpdates
               -authenticationKeyPath "$RUNNER_TEMP/private_keys/AuthKey_${APPSTORE_API_KEY_ID}.p8"
@@ -246,7 +248,7 @@ jobs:
           path: ios/AuraXFinder/build/export/*.ipa
 
       - name: Upload to TestFlight
-        if: inputs.upload_testflight
+        if: ${{ github.event_name == 'push' || inputs.upload_testflight }}
         env:
           APPSTORE_API_KEY_ID: ${{ secrets.APPSTORE_API_KEY_ID }}
           APPSTORE_API_ISSUER_ID: ${{ secrets.APPSTORE_API_ISSUER_ID }}
