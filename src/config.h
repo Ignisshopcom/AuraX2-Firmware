@@ -20,13 +20,13 @@
 
 #define PIX_FILE      "/show.pix"
 
-// Safety guard used when runtime current limit is 0.
+// Safety guard used when no valid runtime current limit is stored.
 // Keeps full SPI speed, but clamps sudden all-white current spikes.
-#define DEFAULT_CURRENT_LIMIT_MA 3500
+#define DEFAULT_CURRENT_LIMIT_MA 1000
 #define APA102_AUTO_CURRENT_LIMIT_MA DEFAULT_CURRENT_LIMIT_MA
 
 // Odkomentuj pro debug výpisy na sériový port
-#define PIX_DEBUG
+// #define PIX_DEBUG
 
 #ifdef PIX_DEBUG
   #define LOG(...)  do { if (Serial) Serial.printf(__VA_ARGS__); } while (0)

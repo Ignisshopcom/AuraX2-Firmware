@@ -2393,6 +2393,11 @@ void WifiControl::handleConfigPost() {
         strcmp(doc["password"] | "", _cfg.password) != 0)
         wifiChanged = true;
     bool contactPoiChanged = false;
+    const uint8_t oldLedType = _cfg.ledType;
+    const uint16_t oldNumLeds = _cfg.numLeds;
+    const uint8_t oldDataPin = _cfg.dataPin;
+    const uint8_t oldClkPin = _cfg.clkPin;
+    const uint8_t oldSpiFrequencyMhz = _cfg.spiFrequencyMhz;
 
     _cfg.ledType = doc["ledType"] | _cfg.ledType;
     {
@@ -2407,6 +2412,12 @@ void WifiControl::handleConfigPost() {
         if (spiMhz > 20) spiMhz = 20;
         _cfg.spiFrequencyMhz = (uint8_t)spiMhz;
     }
+    const bool ledOutputChanged =
+        _cfg.ledType != oldLedType ||
+        _cfg.numLeds != oldNumLeds ||
+        _cfg.dataPin != oldDataPin ||
+        _cfg.clkPin != oldClkPin ||
+        _cfg.spiFrequencyMhz != oldSpiFrequencyMhz;
     strlcpy(_cfg.ssid,     doc["ssid"]     | _cfg.ssid,     sizeof(_cfg.ssid));
     strlcpy(_cfg.password, doc["password"] | _cfg.password, sizeof(_cfg.password));
     strlcpy(_cfg.pixFile,  doc["pixFile"]  | _cfg.pixFile,  sizeof(_cfg.pixFile));
@@ -2467,6 +2478,7 @@ void WifiControl::handleConfigPost() {
         _cfg.paletteSize = (uint8_t)paletteSize;
     }
     _cfg.mALimit  = doc["mALimit"]  | _cfg.mALimit;
+    if (_cfg.mALimit == 0) _cfg.mALimit = DEFAULT_CURRENT_LIMIT_MA;
     _leds.setCurrentLimit(_cfg.mALimit, 60);
     _cfg.batPin              = doc["batPin"]              | _cfg.batPin;
     _cfg.batMultiplier       = doc["batMultiplier"]       | _cfg.batMultiplier;
@@ -2518,8 +2530,8 @@ void WifiControl::handleConfigPost() {
     }
 
     if (saveRuntimeConfig()) {
-        if (wifiChanged) {
-            _server.send(200, "text/plain", configResponse + " - restartuji WiFi");
+        if (wifiChanged || ledOutputChanged) {
+            _server.send(200, "text/plain", configResponse + " - restartuji zarizeni");
             delay(750);
             esp_restart();
             return;

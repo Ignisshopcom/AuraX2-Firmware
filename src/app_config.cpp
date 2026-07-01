@@ -170,6 +170,12 @@ static uint16_t effectiveLedCount(uint16_t physicalCount, uint8_t contactPoi) {
     return physicalCount <= 20 ? 1 : (uint16_t)(physicalCount - 19);
 }
 
+static bool normalizeCurrentLimit(AppConfig& cfg) {
+    if (cfg.mALimit > 0) return false;
+    cfg.mALimit = DEFAULT_CURRENT_LIMIT_MA;
+    return true;
+}
+
 static void normalizeEffectConfig(AppConfig& cfg) {
     if (cfg.ledType != LED_TYPE_APA102 && cfg.ledType != LED_TYPE_WS281X) cfg.ledType = LED_TYPE_WS281X;
     if (cfg.numLeds < 1) cfg.numLeds = 1;
@@ -316,7 +322,7 @@ static void importFromWled(AppConfig& cfg) {
 
     int maxpwr = selectedMaxPower;
     if (maxpwr < 0) maxpwr = doc["hw"]["led"]["maxpwr"] | -1;
-    if (maxpwr >= 0) cfg.mALimit = (uint16_t)maxpwr;
+    if (maxpwr > 0 && maxpwr <= 65535) cfg.mALimit = (uint16_t)maxpwr;
 
     const char* mdns = doc["id"]["mdns"] | "";
     const char* name = doc["id"]["name"] | "";
@@ -390,6 +396,7 @@ AppConfig defaultConfig() {
     AppConfig cfg = defaults();
     if (strlen(cfg.hostname) == 0)
         strlcpy(cfg.hostname, "aurax", sizeof(cfg.hostname));
+    normalizeCurrentLimit(cfg);
     normalizeEffectConfig(cfg);
     return cfg;
 }
@@ -408,6 +415,7 @@ AppConfig loadConfig() {
         gConfigNeedsSave = sanitizeWifiCredentials(cfg) || gConfigNeedsSave;
         gConfigNeedsSave = applyCompileTimeWifiFallback(cfg) || gConfigNeedsSave;
         ensureApCode(cfg);
+        normalizeCurrentLimit(cfg);
         normalizeEffectConfig(cfg);
         if (hasWledConfig) {
             gImportedFromWled = true;
@@ -500,6 +508,7 @@ AppConfig loadConfig() {
     shouldSave = sanitizeWifiCredentials(cfg) || shouldSave;
     shouldSave = applyCompileTimeWifiFallback(cfg) || shouldSave;
     shouldSave = ensureApCode(cfg) || shouldSave;
+    shouldSave = normalizeCurrentLimit(cfg) || shouldSave;
     normalizeEffectConfig(cfg);
     if (shouldSave) {
         gConfigNeedsSave = true;
