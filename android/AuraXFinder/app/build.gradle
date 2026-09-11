@@ -1,0 +1,45 @@
+plugins {
+    id "com.android.application"
+}
+
+android {
+    namespace "com.aurax.finder"
+    compileSdk 36
+
+    signingConfigs {
+        release {
+            def keyPath = System.getenv("AURAX_KEYSTORE")
+            if (keyPath) storeFile file(keyPath)
+            storePassword System.getenv("AURAX_STORE_PASSWORD")
+            keyAlias "aurax"
+            keyPassword System.getenv("AURAX_KEY_PASSWORD")
+        }
+    }
+
+    defaultConfig {
+        applicationId "com.ignisshop.auraxfinder"
+        minSdk 23
+        targetSdk 36
+        versionCode 10
+        versionName "1.1"
+    }
+
+    buildTypes {
+        debug {
+            applicationIdSuffix ".debug"
+            versionNameSuffix "-debug"
+            resValue "string", "app_name", "AuraX Finder Audio Test"
+        }
+        release {
+            signingConfig signingConfigs.release
+            minifyEnabled false
+            shrinkResources false
+        }
+    }
+}
+
+dependencies {
+    implementation 'androidx.webkit:webkit:1.12.1'
+    implementation 'com.github.wendykierp:JTransforms:3.1'
+    testImplementation 'junit:junit:4.13.2'
+}

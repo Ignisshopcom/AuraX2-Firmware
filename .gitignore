@@ -3,6 +3,16 @@
 dist/
 out/
 build/
+.gradle/
+local.properties
+*.jks
+*.keystore
+*.p8
+*.p12
+*.mobileprovision
+*.ipa
+*.aab
+*.apk
 node_modules/
 ui/node_modules/
 ui/dist/
