@@ -1,6 +1,7 @@
 #pragma once
 
 #define AURAX_FW_VERSION "1.1"
-#define AURAX_FW_BUILD 5
+#define AURAX_FW_BUILD 6
+#define AURAX_BUILD_LABEL "iphone-managed-reconnect"
 #define AURAX_UPDATE_MANIFEST_URL "https://ignisshop.com/aurax/firmware.json"
 #define AURAX_RELEASES_URL "https://ignisshop.com/aurax/firmware.html"

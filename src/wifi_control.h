@@ -19,7 +19,10 @@ static constexpr int      MAX_PEERS        = 32;
 static constexpr uint32_t PEER_EXPIRE_MS   = 90000;
 static constexpr uint32_t ANNOUNCE_INTERVAL_MS = 10000;
 static constexpr uint32_t STA_CONNECT_TIMEOUT_MS = 30000;
-static constexpr uint32_t STA_RETRY_INTERVAL_MS = 8000;
+static constexpr uint32_t STA_RETRY_INITIAL_MS = 500;
+static constexpr uint32_t STA_RETRY_MAX_MS = 4000;
+static constexpr uint32_t STA_RETRY_WATCHDOG_MS = 8000;
+static constexpr uint32_t STA_FRAMEWORK_FIRST_RETRY_GRACE_MS = 8000;
 
 class WifiControl {
 public:
@@ -104,6 +107,8 @@ private:
     void fanoutProgramStart(uint8_t slot, int64_t startUs);
     void fanoutEffect(const EffectParams& p);
     bool connectSta(uint32_t timeoutMs);
+    void enableManagedReconnect(bool enabled);
+    void processManagedReconnect(uint32_t now);
     bool startSoftApRadio();
     void startFallbackAp();
     void stopFallbackAp();
@@ -203,6 +208,7 @@ private:
     bool         _fsMounted = true;
     uint32_t     _lastStaRetryMs = 0;
     uint32_t     _staDisconnectedSinceMs = 0;
+    uint8_t      _staRetryCount = 0;
     bool         _runtimeSavePending = false;
     uint32_t     _runtimeSaveAtMs = 0;
     bool         _audioReactiveActive = false;

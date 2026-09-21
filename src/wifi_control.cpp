@@ -249,15 +249,112 @@ static uint8_t scanSavedSsidChannel(const char* ssid) {
     return bestChannel;
 }
 
+struct WifiEventSnapshot {
+    bool reconnectEnabled;
+    bool reconnectPending;
+    bool staAssociated;
+    uint8_t lastDisconnectReason;
+    uint32_t disconnectCount;
+    uint32_t connectedCount;
+    uint32_t gotIpCount;
+    uint32_t sessionDisconnectCount;
+    uint32_t reconnectAttempts;
+    uint32_t lastDisconnectMs;
+    uint32_t lastGotIpMs;
+};
+
+static portMUX_TYPE wifiEventMux = portMUX_INITIALIZER_UNLOCKED;
+static volatile bool wifiReconnectEnabled = false;
+static volatile bool wifiReconnectPending = false;
+static volatile bool wifiStaAssociated = false;
+static volatile uint8_t wifiLastDisconnectReason = 0;
+static volatile uint32_t wifiDisconnectCount = 0;
+static volatile uint32_t wifiConnectedCount = 0;
+static volatile uint32_t wifiGotIpCount = 0;
+static volatile uint32_t wifiSessionDisconnectCount = 0;
+static volatile uint32_t wifiReconnectAttempts = 0;
+static volatile uint32_t wifiLastDisconnectMs = 0;
+static volatile uint32_t wifiLastGotIpMs = 0;
+
+static void setWifiReconnectEnabled(bool enabled) {
+    portENTER_CRITICAL(&wifiEventMux);
+    if (enabled && !wifiReconnectEnabled) wifiSessionDisconnectCount = 0;
+    wifiReconnectEnabled = enabled;
+    wifiReconnectPending = false;
+    if (!enabled) wifiStaAssociated = false;
+    portEXIT_CRITICAL(&wifiEventMux);
+}
+
+static void consumeWifiReconnectRequest() {
+    portENTER_CRITICAL(&wifiEventMux);
+    wifiReconnectPending = false;
+    wifiReconnectAttempts++;
+    portEXIT_CRITICAL(&wifiEventMux);
+}
+
+static WifiEventSnapshot wifiEventSnapshot() {
+    WifiEventSnapshot snapshot;
+    portENTER_CRITICAL(&wifiEventMux);
+    snapshot.reconnectEnabled = wifiReconnectEnabled;
+    snapshot.reconnectPending = wifiReconnectPending;
+    snapshot.staAssociated = wifiStaAssociated;
+    snapshot.lastDisconnectReason = wifiLastDisconnectReason;
+    snapshot.disconnectCount = wifiDisconnectCount;
+    snapshot.connectedCount = wifiConnectedCount;
+    snapshot.gotIpCount = wifiGotIpCount;
+    snapshot.sessionDisconnectCount = wifiSessionDisconnectCount;
+    snapshot.reconnectAttempts = wifiReconnectAttempts;
+    snapshot.lastDisconnectMs = wifiLastDisconnectMs;
+    snapshot.lastGotIpMs = wifiLastGotIpMs;
+    portEXIT_CRITICAL(&wifiEventMux);
+    return snapshot;
+}
+
+static const char* wifiDisconnectReasonName(uint8_t reason) {
+    switch (reason) {
+        case 0: return "NONE";
+        case WIFI_REASON_AUTH_EXPIRE: return "AUTH_EXPIRE";
+        case WIFI_REASON_AUTH_FAIL: return "AUTH_FAIL";
+        case WIFI_REASON_ASSOC_EXPIRE: return "ASSOC_EXPIRE";
+        case WIFI_REASON_ASSOC_FAIL: return "ASSOC_FAIL";
+        case WIFI_REASON_HANDSHAKE_TIMEOUT: return "HANDSHAKE_TIMEOUT";
+        case WIFI_REASON_BEACON_TIMEOUT: return "BEACON_TIMEOUT";
+        case WIFI_REASON_NO_AP_FOUND: return "NO_AP_FOUND";
+        case WIFI_REASON_ASSOC_LEAVE: return "ASSOC_LEAVE";
+        default: return "OTHER";
+    }
+}
+
 static void logWifiEvent(WiFiEvent_t event, WiFiEventInfo_t info) {
     switch (event) {
         case ARDUINO_EVENT_WIFI_STA_DISCONNECTED:
+            portENTER_CRITICAL(&wifiEventMux);
+            wifiStaAssociated = false;
+            wifiLastDisconnectReason = info.wifi_sta_disconnected.reason;
+            wifiLastDisconnectMs = millis();
+            wifiDisconnectCount++;
+            if (wifiReconnectEnabled &&
+                info.wifi_sta_disconnected.reason != WIFI_REASON_ASSOC_LEAVE) {
+                wifiSessionDisconnectCount++;
+                wifiReconnectPending = true;
+            }
+            portEXIT_CRITICAL(&wifiEventMux);
             LOG("[wifi] event: STA disconnected reason=%u\n", info.wifi_sta_disconnected.reason);
             break;
         case ARDUINO_EVENT_WIFI_STA_CONNECTED:
+            portENTER_CRITICAL(&wifiEventMux);
+            wifiStaAssociated = true;
+            wifiReconnectPending = false;
+            wifiConnectedCount++;
+            portEXIT_CRITICAL(&wifiEventMux);
             LOGLN("[wifi] event: STA connected");
             break;
         case ARDUINO_EVENT_WIFI_STA_GOT_IP:
+            portENTER_CRITICAL(&wifiEventMux);
+            wifiReconnectPending = false;
+            wifiGotIpCount++;
+            wifiLastGotIpMs = millis();
+            portEXIT_CRITICAL(&wifiEventMux);
             LOG("[wifi] event: STA got IP %s\n", WiFi.localIP().toString().c_str());
             break;
         default:
@@ -936,6 +1033,7 @@ const char* WifiControl::staPassword() const {
 }
 
 bool WifiControl::connectSta(uint32_t timeoutMs) {
+    enableManagedReconnect(false);
     _dns.stop();
     stopRealtimeUdp();
     _apActive = false;
@@ -952,14 +1050,18 @@ bool WifiControl::connectSta(uint32_t timeoutMs) {
     delay(100);
     _fallbackApChannel = scanSavedSsidChannel(staSsid());
 
+    enableManagedReconnect(true);
     WiFi.begin(staSsid(), staPassword());
     applyWifiStabilitySettings();
     WiFi.setHostname(_cfg.hostname);
     LOG("[wifi] connecting to %s passLen=%u", staSsid(), (unsigned)strlen(staPassword()));
 
     uint32_t start = millis();
+    _lastStaRetryMs = start;
+    _staRetryCount = 0;
     while (WiFi.status() != WL_CONNECTED && millis() - start < timeoutMs) {
-        delay(250);
+        processManagedReconnect(millis());
+        delay(50);
         LOG("%c", '.');
     }
 
@@ -967,6 +1069,7 @@ bool WifiControl::connectSta(uint32_t timeoutMs) {
     _staDisconnectedSinceMs = _lastStaRetryMs;
 
     if (WiFi.status() != WL_CONNECTED) {
+        enableManagedReconnect(false);
         LOGLN("\n[wifi] connect timeout");
         return false;
     }
@@ -975,6 +1078,40 @@ bool WifiControl::connectSta(uint32_t timeoutMs) {
     _lastStaRetryMs = 0;
     LOG("\n[wifi] connected, IP: %s\n", WiFi.localIP().toString().c_str());
     return true;
+}
+
+void WifiControl::enableManagedReconnect(bool enabled) {
+    WiFi.setAutoReconnect(false);
+    setWifiReconnectEnabled(enabled);
+    if (!enabled) _staRetryCount = 0;
+}
+
+void WifiControl::processManagedReconnect(uint32_t now) {
+    if (_apActive || WiFi.status() == WL_CONNECTED) return;
+
+    WifiEventSnapshot snapshot = wifiEventSnapshot();
+    if (!snapshot.reconnectEnabled || snapshot.staAssociated) return;
+
+    uint8_t reason = snapshot.lastDisconnectReason;
+    uint32_t requestedAtMs = snapshot.lastDisconnectMs;
+    bool pending = snapshot.reconnectPending;
+    uint8_t shift = _staRetryCount > 3 ? 3 : _staRetryCount;
+    uint32_t retryDelayMs = STA_RETRY_INITIAL_MS << shift;
+    if (retryDelayMs > STA_RETRY_MAX_MS) retryDelayMs = STA_RETRY_MAX_MS;
+    if (snapshot.sessionDisconnectCount == 1 && _staRetryCount == 0) {
+        retryDelayMs = STA_FRAMEWORK_FIRST_RETRY_GRACE_MS;
+    }
+
+    bool eventDue = pending && now - requestedAtMs >= retryDelayMs;
+    bool watchdogDue = !pending && now - _lastStaRetryMs >= STA_RETRY_WATCHDOG_MS;
+    if (!eventDue && !watchdogDue) return;
+
+    consumeWifiReconnectRequest();
+    esp_err_t err = esp_wifi_connect();
+    _lastStaRetryMs = now;
+    if (_staRetryCount < 255) _staRetryCount++;
+    LOG("[wifi] managed reconnect #%u reason=%u (%s) err=%d\n",
+        _staRetryCount, reason, wifiDisconnectReasonName(reason), (int)err);
 }
 
 bool WifiControl::startSoftApRadio() {
@@ -992,6 +1129,7 @@ bool WifiControl::startSoftApRadio() {
 void WifiControl::startFallbackAp() {
     if (_apActive) return;
 
+    enableManagedReconnect(false);
     stopRealtimeUdp();
     _apMode = true;
     _apHadClient = false;
@@ -1076,6 +1214,7 @@ void WifiControl::startStaServices() {
 bool WifiControl::begin(uint32_t timeoutMs) {
     ensureWifiEventLogging();
     WiFi.persistent(false);
+    WiFi.setAutoReconnect(false);
     WiFi.softAPdisconnect(true);
 
     if (strlen(staSsid()) == 0) {
@@ -1526,6 +1665,7 @@ void WifiControl::maintainWifi() {
 
     if (WiFi.status() == WL_CONNECTED) {
         _staDisconnectedSinceMs = 0;
+        _staRetryCount = 0;
         startStaServices();
         return;
     }
@@ -1546,12 +1686,7 @@ void WifiControl::maintainWifi() {
         return;
     }
 
-    if (now - _lastStaRetryMs > STA_RETRY_INTERVAL_MS) {
-        LOG("[wifi] reconnecting to %s\n", staSsid());
-        WiFi.begin(staSsid(), staPassword());
-        applyWifiStabilitySettings();
-        _lastStaRetryMs = now;
-    }
+    processManagedReconnect(now);
 }
 
 void WifiControl::handle() {
@@ -2565,6 +2700,7 @@ void WifiControl::handleStatus() {
     if (_cfg.ledType == LED_TYPE_APA102 && effectiveMALimit == 0) {
         effectiveMALimit = APA102_AUTO_CURRENT_LIMIT_MA;
     }
+    WifiEventSnapshot wifiEvents = wifiEventSnapshot();
     String json = "{";
     json += "\"playing\":"          + String(_player.isLoaded() ? "true" : "false") + ",";
     json += "\"effect_running\":"   + String(_effectPlayer.isRunning() ? "true" : "false") + ",";
@@ -2595,6 +2731,19 @@ void WifiControl::handleStatus() {
     json += "\"partition_layout\":\"" + partitionLayoutName() + "\",";
     json += "\"fw_version\":\""     + String(AURAX_FW_VERSION) + "\",";
     json += "\"fw_build\":"         + String(AURAX_FW_BUILD) + ",";
+    json += "\"build_label\":\""    + String(AURAX_BUILD_LABEL) + "\",";
+    json += "\"wifi_managed_reconnect\":" + String(wifiEvents.reconnectEnabled ? "true" : "false") + ",";
+    json += "\"wifi_reconnect_pending\":" + String(wifiEvents.reconnectPending ? "true" : "false") + ",";
+    json += "\"wifi_sta_associated\":" + String(wifiEvents.staAssociated ? "true" : "false") + ",";
+    json += "\"wifi_disconnect_reason\":" + String(wifiEvents.lastDisconnectReason) + ",";
+    json += "\"wifi_disconnect_reason_name\":\"" + String(wifiDisconnectReasonName(wifiEvents.lastDisconnectReason)) + "\",";
+    json += "\"wifi_disconnect_count\":" + String(wifiEvents.disconnectCount) + ",";
+    json += "\"wifi_connected_count\":" + String(wifiEvents.connectedCount) + ",";
+    json += "\"wifi_got_ip_count\":" + String(wifiEvents.gotIpCount) + ",";
+    json += "\"wifi_session_disconnect_count\":" + String(wifiEvents.sessionDisconnectCount) + ",";
+    json += "\"wifi_reconnect_attempts\":" + String(wifiEvents.reconnectAttempts) + ",";
+    json += "\"wifi_last_disconnect_ms\":" + String(wifiEvents.lastDisconnectMs) + ",";
+    json += "\"wifi_last_got_ip_ms\":" + String(wifiEvents.lastGotIpMs) + ",";
     json += "\"reset_reason\":"     + String((int)resetReason) + ",";
     json += "\"reset_reason_name\":\"" + String(resetReasonName(resetReason)) + "\",";
     json += "\"mA_limit\":"         + String(_cfg.mALimit) + ",";
