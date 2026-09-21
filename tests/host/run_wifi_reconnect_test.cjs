@@ -18,13 +18,18 @@ const retry = section(source, 'void WifiControl::enableManagedReconnect(', 'bool
 const maintain = section(source, 'void WifiControl::maintainWifi()', 'void WifiControl::handle()');
 // Optional check against the user-tested source, without depending on it to run tests.
 if (process.env.AURAX_IPHONE_REFERENCE) {
-    const reference = fs.readFileSync(process.env.AURAX_IPHONE_REFERENCE, 'utf8');
+    // Only the documented AUTH_EXPIRE fix may differ from the tested candidate.
+    const reference = fs.readFileSync(process.env.AURAX_IPHONE_REFERENCE, 'utf8').replace(/\r/g, '')
+        .replace('    if (_apActive || WiFi.status() == WL_CONNECTED) return;\n\n    WifiEventSnapshot snapshot = wifiEventSnapshot();',
+            '    WifiEventSnapshot snapshot = wifiEventSnapshot();\n    // Arduino 2.0.6 can retain WL_CONNECTED after an AUTH_EXPIRE event.\n    if (_apActive || (WiFi.status() == WL_CONNECTED && snapshot.staAssociated)) return;')
+        .replace('    if (WiFi.status() == WL_CONNECTED) {\n        _staDisconnectedSinceMs = 0;',
+            '    if (WiFi.status() == WL_CONNECTED && wifiEventSnapshot().staAssociated) {\n        _staDisconnectedSinceMs = 0;');
     for (const [start, end] of [
         ['struct WifiEventSnapshot {', 'static void ensureWifiEventLogging()'],
         ['bool WifiControl::connectSta(', 'bool WifiControl::startSoftApRadio()'],
         ['void WifiControl::maintainWifi()', 'void WifiControl::handle()']
     ]) assert.equal(section(source, start, end).replace(/\r/g, ''), section(reference, start, end).replace(/\r/g, ''));
-    console.log('PASS: reconnect implementation matches user-tested iPhone source');
+    console.log('PASS: reconnect matches iPhone source plus the documented AUTH_EXPIRE fix');
 }
 const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'aurax-wifi-test-'));
 try {

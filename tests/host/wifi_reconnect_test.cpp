@@ -100,6 +100,17 @@ int main() {
     c.processManagedReconnect(90000); assert(connects == 1);
 
     c = fresh();
+    logWifiEvent(ARDUINO_EVENT_WIFI_STA_CONNECTED, {{0}});
+    WiFi.state = WL_CONNECTED;
+    clockMs = 100; c.maintainWifi();
+    // Arduino 2.0.6 retains WL_CONNECTED after AUTH_EXPIRE.
+    disconnectAt(200, WIFI_REASON_AUTH_EXPIRE);
+    clockMs = 201; c.maintainWifi();
+    assert(!c._staServicesStarted && c._staDisconnectedSinceMs == 201);
+    c.processManagedReconnect(8199); assert(connects == 0);
+    c.processManagedReconnect(8200); assert(connects == 1);
+
+    c = fresh();
     c.enableManagedReconnect(false);
     disconnectAt(100);
     assert(!wifiEventSnapshot().reconnectPending);

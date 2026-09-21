@@ -20,10 +20,12 @@ Run `node tests/host/run_wifi_reconnect_test.cjs` with `CXX` pointing to a host
 C++ compiler (including `zig.exe`). The runner extracts the production Wi-Fi
 event handlers and reconnect functions into a temporary translation unit.
 Optional `AURAX_IPHONE_REFERENCE` points to the tested candidate's
-`src/wifi_control.cpp` and checks exact equality of the imported logic.
+`src/wifi_control.cpp` and checks equality of the imported logic, allowing only
+the documented AUTH_EXPIRE stale-status fix added during integration review.
 
 Checks cover first-framework-retry grace, exponential retry delays, watchdog,
 DHCP waiting, established connections, disabled retries, intentional disconnect,
-30-second stable AP fallback, missing SSID, and millisecond counter wrap.
+30-second stable AP fallback, missing SSID, millisecond counter wrap, and
+Arduino 2.0.6 retaining WL_CONNECTED after an AUTH_EXPIRE disconnect event.
 Radio behavior, real event concurrency, and phone compatibility require hardware
 testing; these host tests do not emulate the ESP32 Wi-Fi driver.

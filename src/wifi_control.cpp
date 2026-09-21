@@ -1087,9 +1087,9 @@ void WifiControl::enableManagedReconnect(bool enabled) {
 }
 
 void WifiControl::processManagedReconnect(uint32_t now) {
-    if (_apActive || WiFi.status() == WL_CONNECTED) return;
-
     WifiEventSnapshot snapshot = wifiEventSnapshot();
+    // Arduino 2.0.6 can retain WL_CONNECTED after an AUTH_EXPIRE event.
+    if (_apActive || (WiFi.status() == WL_CONNECTED && snapshot.staAssociated)) return;
     if (!snapshot.reconnectEnabled || snapshot.staAssociated) return;
 
     uint8_t reason = snapshot.lastDisconnectReason;
@@ -1663,7 +1663,7 @@ void WifiControl::maintainWifi() {
         return;
     }
 
-    if (WiFi.status() == WL_CONNECTED) {
+    if (WiFi.status() == WL_CONNECTED && wifiEventSnapshot().staAssociated) {
         _staDisconnectedSinceMs = 0;
         _staRetryCount = 0;
         startStaServices();
