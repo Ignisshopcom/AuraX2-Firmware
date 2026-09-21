@@ -12,6 +12,13 @@ struct AppConfig {
     uint8_t  dataPin;       // MOSI for APA102, DATA for WS281x
     uint8_t  clkPin;        // CLK for APA102
     uint8_t  spiFrequencyMhz; // APA102 SPI clock in MHz
+    // Optional Adafruit XTSD SPI NAND module used only for program files.
+    uint8_t  externalStorageEnabled;
+    uint8_t  storageSckPin;
+    uint8_t  storageMosiPin;
+    uint8_t  storageMisoPin;
+    uint8_t  storageCsPin;
+    uint8_t  storageSpiFrequencyMhz;
     char     ssid[64];
     char     password[64];
     char     apCode[8];      // fallback AP suffix, e.g. AuraX_AB12

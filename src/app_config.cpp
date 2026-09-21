@@ -10,9 +10,10 @@
 static bool gImportedFromWled = false;
 static bool gConfigNeedsSave  = false;
 
-static constexpr uint16_t AURAX_CONFIG_VERSION = 4;
+static constexpr uint16_t AURAX_CONFIG_VERSION = 5;
 static constexpr uint8_t MIN_SPI_MHZ = 1;
 static constexpr uint8_t MAX_SPI_MHZ = 20;
+static constexpr uint8_t MAX_STORAGE_SPI_MHZ = 50;
 
 void normalizeHostname(char* hostname, size_t len) {
     if (!hostname || len == 0) return;
@@ -184,6 +185,14 @@ static void normalizeEffectConfig(AppConfig& cfg) {
     if (cfg.clkPin > 48) cfg.clkPin = LED_CLK_PIN;
     if (cfg.spiFrequencyMhz < MIN_SPI_MHZ || cfg.spiFrequencyMhz > MAX_SPI_MHZ) {
         cfg.spiFrequencyMhz = APA102_SPI_MHZ;
+    }
+    cfg.externalStorageEnabled = cfg.externalStorageEnabled ? 1 : 0;
+    if (cfg.storageSckPin > 48) cfg.storageSckPin = 7;
+    if (cfg.storageMosiPin > 48) cfg.storageMosiPin = 9;
+    if (cfg.storageMisoPin > 48) cfg.storageMisoPin = 44;
+    if (cfg.storageCsPin > 48) cfg.storageCsPin = 43;
+    if (cfg.storageSpiFrequencyMhz < MIN_SPI_MHZ || cfg.storageSpiFrequencyMhz > MAX_STORAGE_SPI_MHZ) {
+        cfg.storageSpiFrequencyMhz = 20;
     }
     if (cfg.effectSpeed > 255) {
         cfg.effectSpeed = cfg.effectSpeed > 1000 ? 255 : (uint16_t)(((uint32_t)cfg.effectSpeed * 255u + 500u) / 1000u);
@@ -384,6 +393,12 @@ static AppConfig defaults() {
     cfg.dataPin = (LED_TYPE == LED_TYPE_APA102) ? LED_DATA_PIN : WS_DATA_PIN;
     cfg.clkPin  = LED_CLK_PIN;
     cfg.spiFrequencyMhz = APA102_SPI_MHZ;
+    cfg.externalStorageEnabled = 1;
+    cfg.storageSckPin = 7;
+    cfg.storageMosiPin = 9;
+    cfg.storageMisoPin = 44;
+    cfg.storageCsPin = 43;
+    cfg.storageSpiFrequencyMhz = 20;
     cfg.mALimit = DEFAULT_CURRENT_LIMIT_MA;
     strncpy(cfg.ssid,     WIFI_SSID,     sizeof(cfg.ssid)     - 1);
     strncpy(cfg.password, WIFI_PASSWORD, sizeof(cfg.password) - 1);
@@ -430,7 +445,7 @@ AppConfig loadConfig() {
     File f = LittleFS.open(CFG_FILE, "r");
     if (!f) return cfg;
 
-    StaticJsonDocument<2048> doc;
+    DynamicJsonDocument doc(2560);
     bool shouldSave = false;
     uint16_t savedConfigVersion = 0;
     if (deserializeJson(doc, f) == DeserializationError::Ok) {
@@ -440,6 +455,12 @@ AppConfig loadConfig() {
         cfg.dataPin = doc["dataPin"] | cfg.dataPin;
         cfg.clkPin  = doc["clkPin"]  | cfg.clkPin;
         cfg.spiFrequencyMhz = doc["spiFrequencyMhz"] | cfg.spiFrequencyMhz;
+        cfg.externalStorageEnabled = doc["externalStorageEnabled"] | cfg.externalStorageEnabled;
+        cfg.storageSckPin = doc["storageSckPin"] | cfg.storageSckPin;
+        cfg.storageMosiPin = doc["storageMosiPin"] | cfg.storageMosiPin;
+        cfg.storageMisoPin = doc["storageMisoPin"] | cfg.storageMisoPin;
+        cfg.storageCsPin = doc["storageCsPin"] | cfg.storageCsPin;
+        cfg.storageSpiFrequencyMhz = doc["storageSpiFrequencyMhz"] | cfg.storageSpiFrequencyMhz;
         strlcpy(cfg.ssid,     doc["ssid"]     | cfg.ssid,     sizeof(cfg.ssid));
         strlcpy(cfg.password, doc["password"] | cfg.password, sizeof(cfg.password));
         strlcpy(cfg.apCode, doc["apCode"] | cfg.apCode, sizeof(cfg.apCode));
@@ -526,13 +547,19 @@ bool configNeedsSave() {
 }
 
 bool saveConfig(const AppConfig& cfg) {
-    StaticJsonDocument<2048> doc;
+    DynamicJsonDocument doc(2560);
     doc["auraxConfigVersion"] = AURAX_CONFIG_VERSION;
     doc["ledType"]  = cfg.ledType;
     doc["numLeds"]  = cfg.numLeds;
     doc["dataPin"]  = cfg.dataPin;
     doc["clkPin"]   = cfg.clkPin;
     doc["spiFrequencyMhz"] = cfg.spiFrequencyMhz;
+    doc["externalStorageEnabled"] = cfg.externalStorageEnabled;
+    doc["storageSckPin"] = cfg.storageSckPin;
+    doc["storageMosiPin"] = cfg.storageMosiPin;
+    doc["storageMisoPin"] = cfg.storageMisoPin;
+    doc["storageCsPin"] = cfg.storageCsPin;
+    doc["storageSpiFrequencyMhz"] = cfg.storageSpiFrequencyMhz;
     doc["ssid"]     = cfg.ssid;
     doc["password"] = cfg.password;
     doc["apCode"]   = cfg.apCode;
@@ -572,7 +599,8 @@ bool saveConfig(const AppConfig& cfg) {
 
     File f = LittleFS.open(CFG_FILE, "w");
     if (!f) return false;
-    serializeJson(doc, f);
+    size_t written = serializeJson(doc, f);
+    f.flush();
     f.close();
-    return true;
+    return !doc.overflowed() && written > 0;
 }

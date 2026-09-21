@@ -5,7 +5,6 @@
 #include <esp_system.h>
 #include <esp_timer.h>
 #include <WiFi.h>
-#include <LittleFS.h>
 #include <string.h>
 
 SyncControl* SyncControl::_instance = nullptr;
@@ -40,9 +39,9 @@ static uint16_t storedSlotFromPath(const String& path) {
     return (uint16_t)((a - '0') * 100 + (b - '0') * 10 + (c - '0'));
 }
 
-static int collectSyncPrograms(SyncProgramEntry* entries, int maxEntries) {
+static int collectSyncPrograms(fs::FS& storage, SyncProgramEntry* entries, int maxEntries) {
     int count = 0;
-    File root = LittleFS.open("/");
+    File root = storage.open("/");
     if (!root) return 0;
     File file = root.openNextFile();
     while (file && count < maxEntries) {
@@ -81,17 +80,17 @@ static int collectSyncPrograms(SyncProgramEntry* entries, int maxEntries) {
     return count;
 }
 
-static bool findProgramSlotPath(uint8_t slot, char* out, size_t outLen) {
+static bool findProgramSlotPath(fs::FS& storage, uint8_t slot, char* out, size_t outLen) {
     if (slot == 0 || !out || outLen == 0) return false;
     SyncProgramEntry entries[32];
-    int count = collectSyncPrograms(entries, 32);
+    int count = collectSyncPrograms(storage, entries, 32);
     if (slot > count) return false;
     strlcpy(out, entries[slot - 1].path, outLen);
     return true;
 }
 
-SyncControl::SyncControl(PixPlayer& player, EffectPlayer& effectPlayer, ILedDriver& leds)
-    : _player(player), _effectPlayer(effectPlayer), _leds(leds) {
+SyncControl::SyncControl(PixPlayer& player, EffectPlayer& effectPlayer, ILedDriver& leds, fs::FS& storage)
+    : _player(player), _effectPlayer(effectPlayer), _leds(leds), _storage(storage) {
     _instance = this;
 }
 
@@ -107,6 +106,7 @@ bool SyncControl::begin(uint16_t syncMask, bool syncEnabled) {
         return false;
     }
 
+    _audioQueue = xQueueCreate(1, sizeof(AudioQueued));
     esp_wifi_set_ps(WIFI_PS_NONE);
 
     if (esp_now_init() != ESP_OK) {
@@ -115,6 +115,7 @@ bool SyncControl::begin(uint16_t syncMask, bool syncEnabled) {
     }
     _espNowReady = true;
     esp_now_register_recv_cb(recvCb);
+    esp_now_register_send_cb(sentCb);
     if (!refreshWifiPeer()) return false;
 
     LOGLN("[sync] ESP-NOW ready");
@@ -176,8 +177,45 @@ void SyncControl::setSyncEnabled(bool enabled) {
     _syncEnabled = enabled;
 }
 
-void SyncControl::recvCb(const uint8_t*, const uint8_t* data, int len) {
-    if (!_instance || !_instance->_queue || len < (int)sizeof(Packet)) return;
+void SyncControl::sentCb(const uint8_t*, esp_now_send_status_t) {
+    if (_instance && _instance->_pendingSends.load() > 0) --_instance->_pendingSends;
+}
+
+esp_err_t SyncControl::sendRaw(const uint8_t* data, size_t length) {
+    ++_pendingSends;
+    esp_err_t result = esp_now_send(BROADCAST, data, length);
+    if (result != ESP_OK) --_pendingSends;
+    return result;
+}
+
+bool SyncControl::sendAudioGroup(const AudioGroup::Packet& packet) {
+    if (!audioGroupReady() || !_peerConfigured || !AudioGroup::valid(packet)) return false;
+    // Legacy sends retain their behavior; audio yields until ALL prior callbacks finish.
+    if (_pendingSends.load() != 0) return false;
+    return sendRaw((const uint8_t*)&packet, sizeof(packet)) == ESP_OK;
+}
+
+bool SyncControl::pollAudioGroup(AudioGroup::Packet& packet, uint8_t* mac, int64_t& rxUs) {
+    AudioQueued queued;
+    if (!_audioQueue || xQueueReceive(_audioQueue, &queued, 0) != pdTRUE) return false;
+    packet = queued.packet;
+    memcpy(mac, queued.mac, 6);
+    rxUs = queued.rxUs;
+    return true;
+}
+
+void SyncControl::recvCb(const uint8_t* mac, const uint8_t* data, int len) {
+    if (!_instance) return;
+    if (len == sizeof(AudioGroup::Packet) && !memcmp(data, "AXG1", 4)) {
+        if (!_instance->_audioQueue) return;
+        AudioQueued queued;
+        memcpy(&queued.packet, data, sizeof(queued.packet));
+        memcpy(queued.mac, mac, 6);
+        queued.rxUs = esp_timer_get_time();
+        xQueueOverwriteFromISR(_instance->_audioQueue, &queued, nullptr);
+        return;
+    }
+    if (!_instance->_queue || len < (int)sizeof(Packet)) return;
     QueuedPacket queued = {};
     memcpy(&queued.pkt, data, sizeof(Packet));
     queued.rxUs = esp_timer_get_time();
@@ -220,7 +258,7 @@ void SyncControl::handlePacket(const Packet& pkt, int64_t rxUs) {
         char slotPath[64] = {};
         const char* playFile = pkt.play.file;
         if (pkt.play.programSlot != 0) {
-            if (!findProgramSlotPath(pkt.play.programSlot, slotPath, sizeof(slotPath))) {
+            if (!findProgramSlotPath(_storage, pkt.play.programSlot, slotPath, sizeof(slotPath))) {
                 LOG("[sync] slot %u not found\n", pkt.play.programSlot);
                 return;
             }
@@ -413,7 +451,7 @@ bool SyncControl::sendPacket(const Packet& pkt, const char* label, uint8_t repea
     if (!refreshWifiPeer()) return false;
     bool ok = false;
     for (uint8_t i = 0; i < repeats; i++) {
-        esp_err_t r = esp_now_send(BROADCAST, (const uint8_t*)&pkt, sizeof(pkt));
+        esp_err_t r = sendRaw((const uint8_t*)&pkt, sizeof(pkt));
         if (r == ESP_OK) {
             ok = true;
         } else {
@@ -435,7 +473,7 @@ bool SyncControl::sendTimedPlayPacket(Packet& pkt, int64_t triggerUs, const char
         if (ageMs > MAX_SYNC_AGE_MS) ageMs = MAX_SYNC_AGE_MS;
         pkt.play.delayMs = SYNC_IMMEDIATE_FLAG | ageMs;
 
-        esp_err_t r = esp_now_send(BROADCAST, (const uint8_t*)&pkt, sizeof(pkt));
+        esp_err_t r = sendRaw((const uint8_t*)&pkt, sizeof(pkt));
         if (r == ESP_OK) {
             ok = true;
         } else {

@@ -1,7 +1,9 @@
 #pragma once
 
 #include <Arduino.h>
-#include <LittleFS.h>
+#include <FS.h>
+#include <freertos/queue.h>
+#include <freertos/semphr.h>
 #include "led_driver.h"
 #include "task_compat.h"
 
@@ -15,10 +17,10 @@ enum class PixEndBehavior : uint8_t {
 
 class PixPlayer {
 public:
-    explicit PixPlayer(ILedDriver& leds);
+    PixPlayer(ILedDriver& leds, fs::FS& storage);
     ~PixPlayer();
 
-    // Mount LittleFS (if not already mounted) and load the file.
+    // Load from the selected program filesystem.
     // Tries to preload all images into PSRAM; falls back to streaming.
     // Returns 0 on success, non-zero error code on failure.
     int load(const char* path);
@@ -79,8 +81,15 @@ private:
 
     static void taskEntry(void* arg);
     void        runTask();
+    static void prefetchTaskEntry(void* arg);
+    void        runPrefetchTask();
+    bool        startPrefetchTask();
+    void        stopPrefetchTask();
+    void        requestPrefetch(int cmdIdx);
+    int         cachedSlotFor(int cmdIdx);
 
     ILedDriver& _leds;
+    fs::FS&     _storage;
 
     Command _cmds[MAX_CMDS];
     int     _numCmds     = 0;
@@ -98,9 +107,15 @@ private:
     uint32_t _axpDataSize[MAX_CMDS] = {};
     uint32_t _axpCodec[MAX_CMDS] = {};
     bool     _axpStreaming = false;
-    uint8_t* _axpCmdCache = nullptr;           // decoded bytes for the currently active AXP command
+    uint8_t* _axpCmdCache[2] = {};             // current and next decoded commands
     size_t   _axpCmdCacheSize = 0;
-    int      _axpCachedCmd = -1;
+    int      _axpCachedCmd[2] = {-1, -1};
+    bool     _axpCacheLoading[2] = {};
+    volatile int _axpConsumerCmd = -1;
+    QueueHandle_t _prefetchQueue = nullptr;
+    SemaphoreHandle_t _cacheMutex = nullptr;
+    TaskHandle_t _prefetchTaskHandle = nullptr;
+    volatile bool _prefetchStop = false;
 
     // Streaming mode
     char     _path[128]  = {};

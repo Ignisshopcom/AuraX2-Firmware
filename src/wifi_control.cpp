@@ -2,6 +2,7 @@
 #include "sync_control.h"
 #include "config.h"
 #include "version.h"
+#include "wled_fx_effect.h"
 #include <ArduinoJson.h>
 #include <WiFi.h>
 #include <HTTPClient.h>
@@ -11,10 +12,12 @@
 #include <Update.h>
 #include <WiFiClientSecure.h>
 #include <esp_ota_ops.h>
+#include <esp_heap_caps.h>
 #include <esp_partition.h>
 #include <esp_system.h>
 #include <esp_wifi.h>
 #include <mdns.h>
+#include <mbedtls/base64.h>
 #include <stdlib.h>
 #include <string.h>
 #include "web_html.h"
@@ -23,6 +26,91 @@ static constexpr uint16_t WLED_REALTIME_PORT = 21324;
 static constexpr uint16_t DDP_REALTIME_PORT = 4048;
 static constexpr uint16_t REALTIME_PACKET_MAX = 1472;
 static constexpr uint32_t REALTIME_TIMEOUT_MS = 1500;
+static constexpr size_t PROGRAM_UPLOAD_BUFFER_BYTES = 16 * 1024;
+static constexpr size_t PROGRAM_UPLOAD_COMMIT_BYTES = 512 * 1024;
+static constexpr size_t CHUNK_UPLOAD_COMMIT_BYTES = 512 * 1024;
+static constexpr size_t PROGRAM_STORAGE_WRITE_SLICE_BYTES = 4 * 1024;
+static constexpr char CHUNK_UPLOAD_TEMP_PATH[] = "/.aurax-upload.part";
+static constexpr uint16_t PROGRAM_UPLOAD_STREAM_PORT = 4211;
+static constexpr uint32_t PROGRAM_UPLOAD_STREAM_MAGIC = 0x31505541;   // "AUP1"
+static constexpr uint32_t PROGRAM_UPLOAD_STREAM_REPLY = 0x314B4F41;   // "AOK1"
+static constexpr size_t PROGRAM_UPLOAD_STREAM_FRAME_BYTES = 32 * 1024;
+static constexpr size_t PROGRAM_UPLOAD_STREAM_BUFFER_BYTES = 32 * 1024;
+static constexpr uint32_t PROGRAM_UPLOAD_STREAM_SETTLE_MS = 4;
+static constexpr uint8_t PROGRAM_UPLOAD_STREAM_RECOVERY_ATTEMPTS = 3;
+
+static bool writeFileFully(File& file, const uint8_t* data, size_t length, size_t& written) {
+    size_t offset = 0;
+    uint8_t retries = 0;
+    while (offset < length) {
+        size_t request = min(length - offset, PROGRAM_STORAGE_WRITE_SLICE_BYTES);
+        size_t count = file.write(data + offset, request);
+        if (count > 0) {
+            offset += count;
+            written += count;
+            retries = 0;
+            delay(1);
+            continue;
+        }
+        file.flush();
+        delay(5);
+        if (++retries >= 40) return false;
+    }
+    return true;
+}
+
+static uint32_t readMemoryDw(const uint8_t* data) {
+    return (uint32_t)data[0] | ((uint32_t)data[1] << 8) |
+           ((uint32_t)data[2] << 16) | ((uint32_t)data[3] << 24);
+}
+
+static void writeMemoryDw(uint8_t* data, uint32_t value) {
+    data[0] = (uint8_t)value;
+    data[1] = (uint8_t)(value >> 8);
+    data[2] = (uint8_t)(value >> 16);
+    data[3] = (uint8_t)(value >> 24);
+}
+
+static bool readClientFully(WiFiClient& client, uint8_t* data, size_t length,
+                            uint32_t timeoutMs) {
+    size_t offset = 0;
+    uint32_t lastDataMs = millis();
+    while (offset < length) {
+        int available = client.available();
+        if (available > 0) {
+            size_t amount = min(length - offset, (size_t)available);
+            int count = client.read(data + offset, amount);
+            if (count > 0) {
+                offset += (size_t)count;
+                lastDataMs = millis();
+                continue;
+            }
+        }
+        if (!client.connected() || millis() - lastDataMs >= timeoutMs) return false;
+        delay(1);
+    }
+    return true;
+}
+
+static bool sendUploadStreamReply(WiFiClient& client, uint32_t status, size_t received) {
+    uint8_t reply[12];
+    writeMemoryDw(reply, PROGRAM_UPLOAD_STREAM_REPLY);
+    writeMemoryDw(reply + 4, status);
+    writeMemoryDw(reply + 8, (uint32_t)received);
+    size_t offset = 0;
+    uint32_t startedAt = millis();
+    while (offset < sizeof(reply) && client.connected()) {
+        size_t count = client.write(reply + offset, sizeof(reply) - offset);
+        if (count > 0) {
+            offset += count;
+            startedAt = millis();
+        } else {
+            if (millis() - startedAt >= 2000) return false;
+            delay(1);
+        }
+    }
+    return offset == sizeof(reply);
+}
 
 static String jsonEscape(const String& s) {
     String out;
@@ -203,15 +291,14 @@ static bool isProgramExtension(const String& lowerName) {
 
 static String playerLoadErrorText(int err) {
     if (err == 7) {
-        return "Spatne nastaveni PX: program neodpovida aktualnimu poctu pixelu v zarizeni.";
+        return "Pixel count mismatch: the program does not match this device.";
     }
     return "load failed: " + String(err);
 }
 
 static String programPxMismatchText(uint32_t programPx, uint16_t devicePx) {
-    return "Spatne nastaveni PX: program ma " + String(programPx) +
-           " px, ale zarizeni je nastavene na " + String(devicePx) +
-           " px. U CONTACT POI nahraj program pro logicky pocet PX.";
+    return "Pixel count mismatch: the program uses " + String(programPx) +
+           " pixels, but the device is configured for " + String(devicePx) + " pixels.";
 }
 
 static bool readProgramDw(File& f, uint32_t& out) {
@@ -230,13 +317,14 @@ static void splitProgramDw(uint32_t dw, uint8_t& label, uint8_t& type, uint16_t&
     size  = dw & 0xFFFF;
 }
 
-static bool programMatchesLedCount(const String& path, uint16_t ledCount, String& error) {
-    File f = LittleFS.open(path, "r");
+static bool programMatchesLedCount(fs::FS& storage, const String& path, uint16_t ledCount, String& error) {
+    File f = storage.open(path, "r");
     if (!f) {
         error = "Program validation failed: cannot open file";
         return false;
     }
 
+    const size_t fileBytes = f.size();
     uint32_t dw = 0;
     if (!readProgramDw(f, dw)) {
         f.close();
@@ -250,7 +338,6 @@ static bool programMatchesLedCount(const String& path, uint16_t ledCount, String
                   readProgramDw(f, numLeds) && readProgramDw(f, endBehavior) &&
                   readProgramDw(f, decodedBytes);
         (void)endBehavior;
-        (void)decodedBytes;
         if (!ok || commandCount == 0 || commandCount > 64 || version < 1 || version > 2) {
             f.close();
             error = "Program validation failed: invalid AXP header";
@@ -269,8 +356,7 @@ static bool programMatchesLedCount(const String& path, uint16_t ledCount, String
                  readProgramDw(f, frequency) && readProgramDw(f, dataOffset) &&
                  readProgramDw(f, dataSize) && readProgramDw(f, decodedOffset) &&
                  readProgramDw(f, codec) && readProgramDw(f, isLast);
-            (void)startTime; (void)endTime; (void)height; (void)frequency;
-            (void)dataOffset; (void)dataSize; (void)decodedOffset; (void)codec; (void)isLast;
+            (void)startTime; (void)endTime; (void)isLast;
             if (!ok) {
                 f.close();
                 error = "Program validation failed: incomplete AXP command table";
@@ -279,6 +365,14 @@ static bool programMatchesLedCount(const String& path, uint16_t ledCount, String
             if (width != ledCount) {
                 f.close();
                 error = programPxMismatchText(width, ledCount);
+                return false;
+            }
+            uint64_t rawBytes = (uint64_t)width * (uint64_t)height * 4u;
+            if (height == 0 || frequency == 0 || codec > 2 ||
+                (uint64_t)dataOffset + dataSize > fileBytes ||
+                (uint64_t)decodedOffset + rawBytes > decodedBytes) {
+                f.close();
+                error = "Program validation failed: incomplete or invalid AXP data";
                 return false;
             }
         }
@@ -365,11 +459,22 @@ static String sanitizeProgramPath(const String& input) {
     return "/" + clean;
 }
 
-static size_t fileSizeOf(const char* path) {
-    File f = LittleFS.open(path, "r");
+static size_t fileSizeOf(fs::FS& storage, const char* path) {
+    File f = storage.open(path, "r");
     if (!f) return 0;
     size_t size = f.size();
     f.close();
+    return size;
+}
+
+static size_t waitForFileSize(fs::FS& storage, const char* path, size_t expected,
+                              uint32_t timeoutMs = 500) {
+    uint32_t startedAt = millis();
+    size_t size = fileSizeOf(storage, path);
+    while (size != expected && millis() - startedAt < timeoutMs) {
+        delay(10);
+        size = fileSizeOf(storage, path);
+    }
     return size;
 }
 
@@ -409,9 +514,9 @@ static String numberedProgramPath(uint16_t slot, const String& displayName) {
     return "/" + String(prefix) + clean;
 }
 
-static int collectPrograms(ProgramEntry* entries, int maxEntries) {
+static int collectPrograms(fs::FS& storage, ProgramEntry* entries, int maxEntries) {
     int count = 0;
-    File root = LittleFS.open("/");
+    File root = storage.open("/");
     if (!root) return 0;
     File file = root.openNextFile();
     while (file && count < maxEntries) {
@@ -452,7 +557,7 @@ static int collectPrograms(ProgramEntry* entries, int maxEntries) {
     return count;
 }
 
-static bool applyProgramOrder(ProgramEntry* entries, int count, AppConfig* cfg) {
+static bool applyProgramOrder(fs::FS& storage, ProgramEntry* entries, int count, AppConfig* cfg) {
     String selected = cfg ? String(cfg->pixFile) : "";
     String tempPaths[32];
     int selectedIndex = -1;
@@ -460,46 +565,46 @@ static bool applyProgramOrder(ProgramEntry* entries, int count, AppConfig* cfg) 
     for (int i = 0; i < count; i++) {
         if (entries[i].path == selected) selectedIndex = i;
         tempPaths[i] = "/__aurax_tmp_" + String(i);
-        if (LittleFS.exists(tempPaths[i])) LittleFS.remove(tempPaths[i]);
-        if (!LittleFS.rename(entries[i].path, tempPaths[i])) return false;
+        if (storage.exists(tempPaths[i])) storage.remove(tempPaths[i]);
+        if (!storage.rename(entries[i].path, tempPaths[i])) return false;
     }
 
     for (int i = 0; i < count; i++) {
         String finalPath = numberedProgramPath((uint16_t)(i + 1), entries[i].displayName);
-        if (LittleFS.exists(finalPath)) LittleFS.remove(finalPath);
-        if (!LittleFS.rename(tempPaths[i], finalPath)) return false;
+        if (storage.exists(finalPath)) storage.remove(finalPath);
+        if (!storage.rename(tempPaths[i], finalPath)) return false;
         if (cfg && i == selectedIndex) strlcpy(cfg->pixFile, finalPath.c_str(), sizeof(cfg->pixFile));
     }
     return true;
 }
 
-static bool renumberPrograms(AppConfig* cfg) {
+static bool renumberPrograms(fs::FS& storage, AppConfig* cfg) {
     ProgramEntry entries[32];
-    int count = collectPrograms(entries, 32);
+    int count = collectPrograms(storage, entries, 32);
     if (count == 0) return true;
-    return applyProgramOrder(entries, count, cfg);
+    return applyProgramOrder(storage, entries, count, cfg);
 }
 
-static bool programPathForSlot(uint16_t slot, String& out) {
+static bool programPathForSlot(fs::FS& storage, uint16_t slot, String& out) {
     ProgramEntry entries[32];
-    int count = collectPrograms(entries, 32);
+    int count = collectPrograms(storage, entries, 32);
     if (slot < 1 || slot > count) return false;
     out = entries[slot - 1].path;
     return true;
 }
 
-static uint16_t slotForProgramPath(const String& path) {
+static uint16_t slotForProgramPath(fs::FS& storage, const String& path) {
     ProgramEntry entries[32];
-    int count = collectPrograms(entries, 32);
+    int count = collectPrograms(storage, entries, 32);
     for (int i = 0; i < count; i++) {
         if (entries[i].path == path) return (uint16_t)(i + 1);
     }
     return 0;
 }
 
-static String nextUploadProgramPath(const String& filename) {
+static String nextUploadProgramPath(fs::FS& storage, const String& filename) {
     ProgramEntry entries[32];
-    int count = collectPrograms(entries, 32);
+    int count = collectPrograms(storage, entries, 32);
     return numberedProgramPath((uint16_t)(count + 1), programDisplayName(sanitizeProgramPath(filename)));
 }
 
@@ -532,6 +637,13 @@ static uint16_t normalizeEffectSpeedValue(int speed) {
         speed = speed > 1000 ? 255 : (speed * 255 + 500) / 1000;
     }
     return speed > 255 ? 255 : (uint16_t)speed;
+}
+
+static int hexNibble(char value) {
+    if (value >= '0' && value <= '9') return value - '0';
+    if (value >= 'a' && value <= 'f') return value - 'a' + 10;
+    if (value >= 'A' && value <= 'F') return value - 'A' + 10;
+    return -1;
 }
 
 // ── WifiControl ───────────────────────────────────────────────────────────────
@@ -570,8 +682,9 @@ void WifiControl::mdnsBegin(const char* hostname) {
 }
 
 WifiControl::WifiControl(PixPlayer& player, EffectPlayer& effectPlayer, ILedDriver& leds, AppConfig& cfg,
-                         SyncControl* sync, bool fsMounted)
-    : _player(player), _effectPlayer(effectPlayer), _leds(leds), _cfg(cfg), _sync(sync), _fsMounted(fsMounted) {
+                         ProgramStorage& programStorage, SyncControl* sync, bool fsMounted)
+    : _player(player), _effectPlayer(effectPlayer), _leds(leds), _cfg(cfg),
+      _programStorage(programStorage), _sync(sync), _fsMounted(fsMounted) {
     if (_sync) {
         _sync->setRescueHandler(
             [](uint8_t action, void* ctx) {
@@ -773,7 +886,7 @@ void WifiControl::receiveRealtimeUdp() {
 }
 
 bool WifiControl::storageReady() {
-    return _fsMounted;
+    return _programStorage.ready();
 }
 
 IPAddress WifiControl::activeIP() const {
@@ -1018,6 +1131,10 @@ bool WifiControl::begin(uint32_t timeoutMs) {
     _server.on("/program/delete", HTTP_POST, [this]() { handleProgramDelete(); });
     _server.on("/program/reorder", HTTP_POST, [this]() { handleProgramReorder(); });
     _server.on("/program/start", HTTP_POST, [this]() { handleProgramStart(); });
+    _server.on("/program/upload/start", HTTP_POST, [this]() { handleProgramUploadStart(); });
+    _server.on("/program/upload/chunk", HTTP_POST, [this]() { handleProgramUploadChunk(); });
+    _server.on("/program/upload/finish", HTTP_POST, [this]() { handleProgramUploadFinish(); });
+    _server.on("/program/upload/abort", HTTP_POST, [this]() { handleProgramUploadAbort(); });
     _server.on("/identify", HTTP_POST, [this]() { handleIdentify(); });
     _server.on("/sync", HTTP_POST, [this]() { handleSyncNow(); });
     _server.on("/reboot", HTTP_POST, [this]() {
@@ -1030,47 +1147,48 @@ bool WifiControl::begin(uint32_t timeoutMs) {
         _player.stopTask();
         _player.unload();
         _leds.clear();
-        bool ok = LittleFS.format();
-        if (ok) _fsMounted = LittleFS.begin(false);
+        bool ok = _programStorage.erasePrograms();
+        if (ok) {
+            _cfg.pixFile[0] = '\0';
+            saveRuntimeConfig();
+        }
         _server.send(ok ? 200 : 500, "text/plain",
-            ok ? "Storage formatted, rebooting..." : "Storage format failed");
-        delay(300);
-        if (ok) esp_restart();
+            ok ? "Program storage erased" : "Program storage erase failed");
     });
 
     _server.on("/upload", HTTP_POST,
         [this]() {
             if (_uploadFile) _uploadFile.close();
-            if (!_fsMounted) {
+            if (!storageReady()) {
                 _server.send(503, "text/plain", "Storage unavailable. Format storage first.");
                 return;
             }
             if (!_uploadError) {
                 String validationError;
-                if (!programMatchesLedCount(String(_cfg.pixFile), _leds.logicalNumLeds(), validationError)) {
-                    LittleFS.remove(_cfg.pixFile);
+                if (!programMatchesLedCount(_programStorage.fs(), String(_cfg.pixFile), _leds.logicalNumLeds(), validationError)) {
+                    _programStorage.fs().remove(_cfg.pixFile);
                     _server.send(400, "text/plain", validationError);
                     return;
                 }
             }
             if (_uploadError) {
-                if (_uploadPath.length()) LittleFS.remove(_uploadPath);
-                _server.send(500, "text/plain", "Chyba: nedostatek místa v LittleFS");
+                if (_uploadPath.length()) _programStorage.fs().remove(_uploadPath);
+                _server.send(500, "text/plain", "Upload failed: not enough program storage space");
             } else {
-                _server.send(200, "text/plain", "OK — soubor nahrán jako " + String(_cfg.pixFile));
+                _server.send(200, "text/plain", "OK: uploaded as " + String(_cfg.pixFile));
             }
         },
         [this]() {
             HTTPUpload& up = _server.upload();
-            if (!_fsMounted) {
+            if (!storageReady()) {
                 _uploadError = true;
                 return;
             }
             if (up.status == UPLOAD_FILE_START) {
                 _uploadError = false;
                 _player.unload();
-                if (LittleFS.exists(_cfg.pixFile)) LittleFS.remove(_cfg.pixFile);
-                _uploadFile = LittleFS.open(_cfg.pixFile, "w");
+                if (_programStorage.fs().exists(_cfg.pixFile)) _programStorage.fs().remove(_cfg.pixFile);
+                _uploadFile = _programStorage.fs().open(_cfg.pixFile, "w");
                 if (!_uploadFile) { LOGLN("[upload] open failed"); _uploadError = true; return; }
                 LOG("[upload] start: %s\n", up.filename.c_str());
             } else if (up.status == UPLOAD_FILE_WRITE) {
@@ -1089,68 +1207,226 @@ bool WifiControl::begin(uint32_t timeoutMs) {
     _server.on("/program/upload", HTTP_POST,
         [this]() {
             if (_uploadFile) _uploadFile.close();
-            if (!_fsMounted) {
+            releaseProgramUploadBatch();
+            if (!storageReady()) {
                 _server.send(503, "text/plain", "Storage unavailable. Format storage first.");
                 return;
             }
             if (_uploadError) {
-                if (_uploadPath.length()) LittleFS.remove(_uploadPath);
-                _server.send(413, "text/plain", "Upload failed: not enough LittleFS space");
+                if (_uploadPath.length()) _programStorage.fs().remove(_uploadPath);
+                _server.send(_uploadErrorStatus, "text/plain",
+                             _uploadErrorMessage.length() ? _uploadErrorMessage : "Program upload failed");
             } else {
                 String validationError;
-                if (!programMatchesLedCount(_uploadPath, _leds.logicalNumLeds(), validationError)) {
-                    if (_uploadPath.length()) LittleFS.remove(_uploadPath);
+                if (!programMatchesLedCount(_programStorage.fs(), _uploadPath, _leds.logicalNumLeds(), validationError)) {
+                    if (_uploadPath.length()) _programStorage.fs().remove(_uploadPath);
                     _server.send(400, "text/plain", validationError);
                     return;
                 }
                 strlcpy(_cfg.pixFile, _uploadPath.c_str(), sizeof(_cfg.pixFile));
                 _cfg.autoStart = 0;
-                renumberPrograms(&_cfg);
+                renumberPrograms(_programStorage.fs(), &_cfg);
                 saveRuntimeConfig();
                 _server.send(200, "text/plain", "OK: uploaded " + _uploadPath);
             }
         },
         [this]() {
             HTTPUpload& up = _server.upload();
-            if (!_fsMounted) {
+            if (!storageReady()) {
                 _uploadError = true;
+                _uploadErrorStatus = 503;
+                _uploadErrorMessage = "Program storage is unavailable";
                 return;
             }
             if (up.status == UPLOAD_FILE_START) {
+                releaseProgramUploadBatch();
                 _uploadError = false;
-                _uploadPath = nextUploadProgramPath(up.filename);
+                _uploadErrorStatus = 500;
+                _uploadErrorMessage = "";
+                _uploadPath = nextUploadProgramPath(_programStorage.fs(), up.filename);
                 _uploadWritten = 0;
-                size_t existingSize = fileSizeOf(_uploadPath.c_str());
-                size_t total = LittleFS.totalBytes();
-                size_t used = LittleFS.usedBytes();
+                _uploadCommittedBytes = 0;
+                _uploadExpectedBytes = 0;
+                _uploadEscaped = _server.header("X-AuraX-Transfer-Encoding").equalsIgnoreCase("escape-cr");
+                _uploadEscapePending = false;
+                String programLedsHeader = _server.header("X-AuraX-Num-Leds");
+                if (programLedsHeader.length()) {
+                    uint32_t programLeds = strtoul(programLedsHeader.c_str(), nullptr, 10);
+                    if (programLeds != 0 && programLeds != _leds.logicalNumLeds()) {
+                        _uploadError = true;
+                        _uploadErrorStatus = 400;
+                        _uploadErrorMessage = programPxMismatchText(programLeds, _leds.logicalNumLeds());
+                        return;
+                    }
+                }
+                size_t existingSize = fileSizeOf(_programStorage.fs(), _uploadPath.c_str());
+                size_t total = _programStorage.totalBytes();
+                size_t used = _programStorage.usedBytes();
                 _uploadMaxBytes = (total > used ? total - used : 0) + existingSize;
+                String expectedHeader = _server.header("X-AuraX-File-Size");
+                if (expectedHeader.length()) {
+                    unsigned long long expected = strtoull(expectedHeader.c_str(), nullptr, 10);
+                    if (expected > (unsigned long long)SIZE_MAX) {
+                        _uploadError = true;
+                        _uploadErrorStatus = 413;
+                        _uploadErrorMessage = "Program file is too large for this device";
+                        return;
+                    }
+                    _uploadExpectedBytes = (size_t)expected;
+                }
+                if (_uploadExpectedBytes > _uploadMaxBytes) {
+                    _uploadError = true;
+                    _uploadErrorStatus = 413;
+                    _uploadErrorMessage = "Program needs " + String((unsigned)_uploadExpectedBytes) +
+                                          " bytes, but only " + String((unsigned)_uploadMaxBytes) +
+                                          " bytes are free";
+                    return;
+                }
                 _player.stopTask();
                 _player.unload();
-                if (LittleFS.exists(_uploadPath)) LittleFS.remove(_uploadPath);
-                _uploadFile = LittleFS.open(_uploadPath, "w");
-                if (!_uploadFile) { LOGLN("[program] upload open failed"); _uploadError = true; return; }
+                if (_programStorage.fs().exists(_uploadPath)) _programStorage.fs().remove(_uploadPath);
+                _uploadFile = _programStorage.fs().open(_uploadPath, "w");
+                if (!_uploadFile) {
+                    LOGLN("[program] upload open failed");
+                    _uploadError = true;
+                    _uploadErrorStatus = 500;
+                    _uploadErrorMessage = "Cannot create the program file on " + String(_programStorage.typeName());
+                    return;
+                }
+                _uploadBatchCapacity = 32 * 1024;
+                _uploadBatch = static_cast<uint8_t*>(
+                    heap_caps_malloc(_uploadBatchCapacity, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
+                if (!_uploadBatch) {
+                    _uploadBatch = static_cast<uint8_t*>(malloc(_uploadBatchCapacity));
+                }
+                if (!_uploadBatch) {
+                    _uploadFile.close();
+                    _programStorage.fs().remove(_uploadPath);
+                    _uploadError = true;
+                    _uploadErrorStatus = 503;
+                    _uploadErrorMessage = "Not enough memory to buffer the program upload";
+                    return;
+                }
+                if (!_programStorage.externalMounted() &&
+                    !_uploadFile.setBufferSize(PROGRAM_UPLOAD_BUFFER_BYTES)) {
+                    LOGLN("[program] upload file buffer unavailable; using filesystem default");
+                }
                 LOG("[program] upload start: %s as %s free=%u\n", up.filename.c_str(), _uploadPath.c_str(), (unsigned)_uploadMaxBytes);
             } else if (up.status == UPLOAD_FILE_WRITE) {
                 if (_uploadFile && !_uploadError) {
-                    if (_uploadWritten + up.currentSize > _uploadMaxBytes) {
+                    const uint8_t* uploadData = up.buf;
+                    size_t uploadSize = up.currentSize;
+                    uint8_t decoded[HTTP_UPLOAD_BUFLEN];
+                    if (_uploadEscaped) {
+                        uploadSize = 0;
+                        for (size_t i = 0; i < up.currentSize; i++) {
+                            uint8_t value = up.buf[i];
+                            if (_uploadEscapePending) {
+                                if (value == 0xDC) decoded[uploadSize++] = 0x0D;
+                                else if (value == 0xDD) decoded[uploadSize++] = 0xDB;
+                                else {
+                                    _uploadError = true;
+                                    _uploadErrorStatus = 400;
+                                    _uploadErrorMessage = "Invalid escaped program data";
+                                    break;
+                                }
+                                _uploadEscapePending = false;
+                            } else if (value == 0xDB) {
+                                _uploadEscapePending = true;
+                            } else {
+                                decoded[uploadSize++] = value;
+                            }
+                        }
+                        uploadData = decoded;
+                    }
+                    if (_uploadError) return;
+                    if (_uploadWritten + _uploadBatchLength + uploadSize > _uploadMaxBytes) {
                         LOGLN("[program] upload rejected: file too large");
                         _uploadError = true;
+                        _uploadErrorStatus = 413;
+                        _uploadErrorMessage = "Program is larger than the available storage space";
                         _uploadFile.close();
-                        LittleFS.remove(_uploadPath);
+                        _programStorage.fs().remove(_uploadPath);
                         return;
                     }
-                    if (_uploadFile.write(up.buf, up.currentSize) != up.currentSize) {
-                        LOGLN("[program] upload write failed");
-                        _uploadError = true;
-                    } else {
-                        _uploadWritten += up.currentSize;
+                    size_t sourceOffset = 0;
+                    while (sourceOffset < uploadSize && !_uploadError) {
+                        size_t room = _uploadBatchCapacity - _uploadBatchLength;
+                        size_t amount = min(room, uploadSize - sourceOffset);
+                        memcpy(_uploadBatch + _uploadBatchLength, uploadData + sourceOffset, amount);
+                        _uploadBatchLength += amount;
+                        sourceOffset += amount;
+                        if (_uploadBatchLength == _uploadBatchCapacity && !flushProgramUploadBatch()) {
+                            LOGLN("[program] upload write failed");
+                            _uploadError = true;
+                            _uploadErrorStatus = 507;
+                            _uploadErrorMessage = "Storage write failed after " +
+                                                  String((unsigned)_uploadWritten) +
+                                                  " bytes. Check the XTSD module and its SPI settings.";
+                        }
+                    }
+                    if (!_uploadError &&
+                        _uploadWritten - _uploadCommittedBytes >= PROGRAM_UPLOAD_COMMIT_BYTES) {
+                        _uploadFile.flush();
+                        _uploadFile.close();
+                        size_t storedBytes = waitForFileSize(_programStorage.fs(), _uploadPath.c_str(),
+                                                             _uploadWritten);
+                        if (storedBytes != _uploadWritten) {
+                            _uploadError = true;
+                            _uploadErrorStatus = 507;
+                            _uploadErrorMessage = "Storage commit failed after " + String((unsigned)storedBytes) +
+                                                  " of " + String((unsigned)_uploadWritten) + " bytes";
+                            return;
+                        }
+                        _uploadFile = _programStorage.fs().open(_uploadPath, "a");
+                        if (!_uploadFile) {
+                            _uploadError = true;
+                            _uploadErrorStatus = 507;
+                            _uploadErrorMessage = "Cannot continue the program file after " +
+                                                  String((unsigned)storedBytes) + " bytes";
+                            return;
+                        }
+                        if (!_programStorage.externalMounted()) {
+                            _uploadFile.setBufferSize(PROGRAM_UPLOAD_BUFFER_BYTES);
+                        }
+                        _uploadCommittedBytes = storedBytes;
+                        delay(0);
                     }
                 }
             } else if (up.status == UPLOAD_FILE_END) {
+                if (_uploadEscaped && _uploadEscapePending && !_uploadError) {
+                    _uploadError = true;
+                    _uploadErrorStatus = 400;
+                    _uploadErrorMessage = "Escaped program upload ended mid-byte";
+                }
+                if (_uploadFile && !_uploadError && !flushProgramUploadBatch()) {
+                    _uploadError = true;
+                    _uploadErrorStatus = 507;
+                    _uploadErrorMessage = "Storage write failed after " +
+                                          String((unsigned)_uploadWritten) + " bytes";
+                }
                 if (_uploadFile) {
+                    _uploadFile.flush();
                     _uploadFile.close();
                     LOG("[program] upload done: %u bytes\n", up.totalSize);
                 }
+                size_t expectedBytes = _uploadExpectedBytes ? _uploadExpectedBytes : up.totalSize;
+                if (!_uploadError && _uploadWritten != expectedBytes) {
+                    _uploadError = true;
+                    _uploadErrorStatus = 400;
+                    _uploadErrorMessage = "Upload was incomplete: received " + String((unsigned)_uploadWritten) +
+                                          " of " + String((unsigned)expectedBytes) + " bytes";
+                }
+                size_t storedBytes = waitForFileSize(_programStorage.fs(), _uploadPath.c_str(),
+                                                     expectedBytes);
+                if (!_uploadError && storedBytes != expectedBytes) {
+                    _uploadError = true;
+                    _uploadErrorStatus = 507;
+                    _uploadErrorMessage = "Storage kept only " + String((unsigned)storedBytes) +
+                                          " of " + String((unsigned)expectedBytes) +
+                                          " bytes. Check the XTSD module and its power supply.";
+                }
+                releaseProgramUploadBatch();
             }
         }
     );
@@ -1184,6 +1460,10 @@ bool WifiControl::begin(uint32_t timeoutMs) {
     });
     _server.on("/effect",      HTTP_POST, [this]() { handleEffectStart(); });
     _server.on("/effect/stop", HTTP_GET,  [this]() { handleEffectStop();  });
+    _server.on("/audio/start", HTTP_POST, [this]() { handleAudioReactiveStart(); });
+    _server.on("/audio/data", HTTP_POST, [this]() { handleAudioReactiveData(); });
+    _server.on("/audio/stop", HTTP_POST, [this]() { handleAudioReactiveStop(); });
+    _server.on("/audio/settings", HTTP_POST, [this]() { handleAudioReactiveSettings(); });
     _server.on("/peers",  HTTP_OPTIONS, [this]() { handleCorsOptions(); });
     _server.on("/peers",  HTTP_GET,     [this]() { handlePeers(); });
     _server.on("/generate_204",       HTTP_GET, [this]() { handleCaptivePortal(); });
@@ -1202,14 +1482,19 @@ bool WifiControl::begin(uint32_t timeoutMs) {
     _server.on("/update", HTTP_POST,
         [this]() {
             _server.send(Update.hasError() ? 500 : 200, "text/plain",
-                         Update.hasError() ? "Chyba aktualizace" : "OK — rebooting");
+                         Update.hasError() ? "Firmware update failed" : "OK: rebooting");
             delay(500);
             esp_restart();
         },
         [this]() { handleOta(); }
     );
 
+    const char* trackedHeaders[] = {
+        "X-AuraX-File-Size", "X-AuraX-Transfer-Encoding", "X-AuraX-Num-Leds"};
+    _server.collectHeaders(trackedHeaders, 3);
     _server.begin();
+    _programUploadServer.begin();
+    _programUploadServer.setNoDelay(true);
 
     _batMonitor.begin(_cfg);
 
@@ -1270,7 +1555,25 @@ void WifiControl::maintainWifi() {
 }
 
 void WifiControl::handle() {
+    processAudioGroup();
+    receiveAudioStream();
+    handleProgramUploadStream();
     _server.handleClient();
+    receiveAudioStream();
+    if (_audioReactiveActive) {
+        if (!_effectPlayer.isAudioReactive()) {
+            endAudioGroup();
+            _groupReceiver.block();
+            _groupFollower = false;
+            _audioReactiveActive = false;
+            _audioResumeEffect = false;
+            _audioUdp.stop();
+            _audioUdpStarted = false;
+            _effectPlayer.clearAudioReactive();
+        } else if (millis() - _audioLastPacketMs > 1500) {
+            stopAudioReactive(true);
+        }
+    }
     if (_apActive) _dns.processNextRequest();
     receiveRealtimeUdp();
     maintainWifi();
@@ -1280,6 +1583,7 @@ void WifiControl::handle() {
         _player.blackout();
         LOG("[bat] auto-off: battery %u%% (<= %u%%)\n", _batMonitor.pct(), _cfg.batAutoOffThreshold);
     }
+    processAudioGroup();
     if (_staServicesStarted) {
         ArduinoOTA.handle();
         receivePeers();
@@ -1300,26 +1604,27 @@ void WifiControl::handleRoot() {
 }
 
 void WifiControl::handleCaptivePortal() {
-    if (!_apActive || !shouldRedirectCaptive()) {
+    if (!_apActive) {
         _server.send_P(200, "text/html", CLIENT_HTML);
         return;
     }
-    _server.sendHeader("Location", rootUrl());
+    // Mark only portal entry; opening the normal device URL keeps direct file upload.
+    _server.sendHeader("Location", rootUrl() + "?aurax_captive=1");
     _server.sendHeader("Cache-Control", "no-store");
     _server.send(302, "text/plain", "");
 }
 
 bool WifiControl::validateProgramForPlay(const String& path) {
-    if (!_fsMounted) {
-        _server.send(503, "text/plain", "Storage unavailable. Format storage or flash LittleFS first.");
+    if (!storageReady()) {
+        _server.send(503, "text/plain", "Program storage unavailable");
         return false;
     }
-    if (!path.length() || !LittleFS.exists(path)) {
+    if (!path.length() || !_programStorage.fs().exists(path)) {
         _server.send(404, "text/plain", "Program not found");
         return false;
     }
     String validationError;
-    if (!programMatchesLedCount(path, _leds.logicalNumLeds(), validationError)) {
+    if (!programMatchesLedCount(_programStorage.fs(), path, _leds.logicalNumLeds(), validationError)) {
         _server.send(409, "text/plain", validationError);
         return false;
     }
@@ -1423,13 +1728,13 @@ void WifiControl::fanoutEffect(const EffectParams& p) {
 
 void WifiControl::handlePlay() {
     int64_t requestUs = esp_timer_get_time();
-    if (!_fsMounted) {
-        _server.send(503, "text/plain", "Storage unavailable. Format storage or flash LittleFS first.");
+    if (!storageReady()) {
+        _server.send(503, "text/plain", "Program storage unavailable");
         return;
     }
     bool relay = requestAllowsRelay();
     if (!validateProgramForPlay(String(_cfg.pixFile))) return;
-    uint8_t slot = (uint8_t)slotForProgramPath(_cfg.pixFile);
+    uint8_t slot = (uint8_t)slotForProgramPath(_programStorage.fs(), _cfg.pixFile);
     _effectPlayer.stop();
     _cfg.autoStart = 0;
     saveRuntimeConfig();
@@ -1437,8 +1742,8 @@ void WifiControl::handlePlay() {
         uint32_t totalAgeMs = (uint32_t)((esp_timer_get_time() - requestUs) / 1000);
         if (totalAgeMs > 30000) totalAgeMs = 30000;
         int err = totalAgeMs > 0
-            ? _sync->broadcastPlayFromAge(_cfg.pixFile, _cfg.endBehavior, totalAgeMs, (uint8_t)slotForProgramPath(_cfg.pixFile))
-            : _sync->broadcastPlay(_cfg.pixFile, _cfg.endBehavior, 0, (uint8_t)slotForProgramPath(_cfg.pixFile));
+            ? _sync->broadcastPlayFromAge(_cfg.pixFile, _cfg.endBehavior, totalAgeMs, slot)
+            : _sync->broadcastPlay(_cfg.pixFile, _cfg.endBehavior, 0, slot);
         if (err) { _server.send(500, "text/plain", playerLoadErrorText(err)); return; }
         fanoutProgramStart(slot, requestUs);
     } else {
@@ -1464,24 +1769,484 @@ void WifiControl::handleStop() {
     _server.send(200, "text/plain", "OK");
 }
 
+void WifiControl::handleProgramUploadStart() {
+    if (!storageReady()) {
+        _server.send(503, "text/plain", "Program storage is unavailable");
+        return;
+    }
+    StaticJsonDocument<256> doc;
+    if (deserializeJson(doc, _server.arg("plain")) != DeserializationError::Ok) {
+        _server.send(400, "text/plain", "Invalid upload request");
+        return;
+    }
+    const char* filename = doc["filename"] | "program.axp";
+    uint64_t requestedSize = doc["size"] | 0ULL;
+    uint32_t declaredLedCount = doc["numLeds"] | 0U;
+    if (requestedSize == 0 || requestedSize > (uint64_t)SIZE_MAX) {
+        _server.send(400, "text/plain", "Program size is invalid");
+        return;
+    }
+    if (declaredLedCount != 0 && declaredLedCount != _leds.logicalNumLeds()) {
+        _server.send(400, "text/plain",
+                     programPxMismatchText(declaredLedCount, _leds.logicalNumLeds()));
+        return;
+    }
+
+    fs::FS& storage = _programStorage.fs();
+    if (_chunkUploadFile) _chunkUploadFile.close();
+    if (_chunkUploadActive && _chunkUploadPath.length()) storage.remove(_chunkUploadPath);
+    storage.remove(CHUNK_UPLOAD_TEMP_PATH);
+
+    size_t total = _programStorage.totalBytes();
+    size_t used = _programStorage.usedBytes();
+    size_t freeBytes = total > used ? total - used : 0;
+    if (requestedSize > freeBytes) {
+        _chunkUploadActive = false;
+        _server.send(413, "text/plain",
+                     "Program needs " + String((unsigned)requestedSize) +
+                     " bytes, but only " + String((unsigned)freeBytes) + " bytes are free");
+        return;
+    }
+
+    _effectPlayer.stop();
+    _player.stopTask();
+    _player.unload();
+
+    _chunkUploadPath = CHUNK_UPLOAD_TEMP_PATH;
+    _chunkUploadFinalPath = nextUploadProgramPath(storage, filename);
+    _chunkUploadExpected = (size_t)requestedSize;
+    _chunkUploadWritten = 0;
+    _chunkUploadCommitted = 0;
+    _chunkUploadFile = storage.open(_chunkUploadPath, "w");
+    if (!_chunkUploadFile) {
+        _chunkUploadActive = false;
+        _server.send(507, "text/plain", "Cannot create a temporary program file");
+        return;
+    }
+    if (!_programStorage.externalMounted()) {
+        _chunkUploadFile.setBufferSize(PROGRAM_UPLOAD_BUFFER_BYTES);
+    }
+    _chunkUploadActive = true;
+
+    StaticJsonDocument<192> response;
+    response["path"] = _chunkUploadFinalPath;
+    response["received"] = 0;
+    response["total"] = _chunkUploadExpected;
+    response["streamPort"] = PROGRAM_UPLOAD_STREAM_PORT;
+    response["streamFrameBytes"] = PROGRAM_UPLOAD_STREAM_FRAME_BYTES;
+    String json;
+    serializeJson(response, json);
+    _server.send(200, "application/json", json);
+}
+
+bool WifiControl::flushProgramUploadBatch() {
+    if (_uploadBatchLength == 0) return true;
+    size_t batchWritten = 0;
+    bool ok = writeFileFully(_uploadFile, _uploadBatch, _uploadBatchLength, batchWritten);
+    _uploadWritten += batchWritten;
+    _uploadBatchLength = 0;
+    if (ok) _uploadFile.flush();
+    delay(2);
+    return ok;
+}
+
+void WifiControl::releaseProgramUploadBatch() {
+    if (_uploadBatch) heap_caps_free(_uploadBatch);
+    _uploadBatch = nullptr;
+    _uploadBatchLength = 0;
+    _uploadBatchCapacity = 0;
+}
+
+void WifiControl::handleProgramUploadStream() {
+    WiFiClient client = _programUploadServer.available();
+    if (!client) return;
+
+    client.setNoDelay(true);
+    uint8_t header[16];
+    if (!readClientFully(client, header, sizeof(header), 2500)) {
+        client.stop();
+        return;
+    }
+
+    uint32_t magic = readMemoryDw(header);
+    uint32_t expected = readMemoryDw(header + 4);
+    uint32_t offset = readMemoryDw(header + 8);
+    uint32_t requestedFrameBytes = readMemoryDw(header + 12);
+    if (magic != PROGRAM_UPLOAD_STREAM_MAGIC || requestedFrameBytes == 0 ||
+        requestedFrameBytes > PROGRAM_UPLOAD_STREAM_FRAME_BYTES) {
+        sendUploadStreamReply(client, 3, _chunkUploadWritten);
+        client.stop();
+        return;
+    }
+    if (!_chunkUploadActive || !_chunkUploadPath.length()) {
+        sendUploadStreamReply(client, 1, _chunkUploadWritten);
+        client.stop();
+        return;
+    }
+    if (expected != _chunkUploadExpected || offset != _chunkUploadWritten) {
+        sendUploadStreamReply(client, 2, _chunkUploadWritten);
+        client.stop();
+        return;
+    }
+
+    uint8_t* buffer = static_cast<uint8_t*>(
+        heap_caps_malloc(PROGRAM_UPLOAD_STREAM_BUFFER_BYTES,
+                         MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
+    if (!buffer) buffer = static_cast<uint8_t*>(malloc(PROGRAM_UPLOAD_STREAM_BUFFER_BYTES));
+    if (!buffer) {
+        sendUploadStreamReply(client, 5, _chunkUploadWritten);
+        client.stop();
+        return;
+    }
+    if (!sendUploadStreamReply(client, 0, _chunkUploadWritten)) {
+        free(buffer);
+        client.stop();
+        return;
+    }
+
+    fs::FS& storage = _programStorage.fs();
+    bool failed = false;
+    while (client.connected()) {
+        uint8_t frameHeader[4];
+        if (!readClientFully(client, frameHeader, sizeof(frameHeader), 15000)) {
+            failed = true;
+            break;
+        }
+        uint32_t frameBytes = readMemoryDw(frameHeader);
+        if (frameBytes == 0) {
+            uint32_t status = _chunkUploadWritten == _chunkUploadExpected ? 0 : 2;
+            sendUploadStreamReply(client, status, _chunkUploadWritten);
+            failed = status != 0;
+            break;
+        }
+        if (frameBytes > requestedFrameBytes ||
+            (uint64_t)_chunkUploadWritten + frameBytes > _chunkUploadExpected) {
+            sendUploadStreamReply(client, 2, _chunkUploadWritten);
+            failed = true;
+            break;
+        }
+        if (!_chunkUploadFile) {
+            _chunkUploadFile = storage.open(_chunkUploadPath, "a");
+        }
+        if (!_chunkUploadFile) {
+            sendUploadStreamReply(client, 4, _chunkUploadWritten);
+            failed = true;
+            break;
+        }
+
+        size_t frameRemaining = frameBytes;
+        uint8_t recoveryAttempts = 0;
+        while (frameRemaining > 0) {
+            size_t amount = min(frameRemaining, PROGRAM_UPLOAD_STREAM_BUFFER_BYTES);
+            if (!readClientFully(client, buffer, amount, 15000)) {
+                failed = true;
+                break;
+            }
+            size_t bufferOffset = 0;
+            while (bufferOffset < amount) {
+                size_t request = amount - bufferOffset;
+                size_t written = 0;
+                bool writeOk = writeFileFully(_chunkUploadFile, buffer + bufferOffset,
+                                              request, written);
+                _chunkUploadWritten += written;
+                frameRemaining -= written;
+                bufferOffset += written;
+                if (writeOk && written == request) break;
+
+                if (_chunkUploadFile) {
+                    _chunkUploadFile.flush();
+                    _chunkUploadFile.close();
+                }
+
+                bool recovered = false;
+                while (!recovered &&
+                       recoveryAttempts < PROGRAM_UPLOAD_STREAM_RECOVERY_ATTEMPTS) {
+                    recoveryAttempts++;
+                    _programStorage.end();
+                    delay(100 + (uint32_t)recoveryAttempts * 100);
+                    if (!_programStorage.begin(_cfg, _fsMounted) ||
+                        !_programStorage.externalMounted()) {
+                        continue;
+                    }
+                    size_t storedBytes = waitForFileSize(_programStorage.fs(),
+                                                         _chunkUploadPath.c_str(),
+                                                         _chunkUploadWritten);
+                    if (storedBytes != _chunkUploadWritten) continue;
+                    _chunkUploadFile = _programStorage.fs().open(_chunkUploadPath, "a");
+                    recovered = (bool)_chunkUploadFile;
+                }
+                if (!recovered) {
+                    failed = true;
+                    break;
+                }
+            }
+            if (failed) break;
+            // Let the XTSD controller finish background NAND work between frames.
+            delay(PROGRAM_UPLOAD_STREAM_SETTLE_MS);
+        }
+        if (failed) {
+            sendUploadStreamReply(client, 4, _chunkUploadWritten);
+            break;
+        }
+
+        bool checkpoint = _chunkUploadWritten == _chunkUploadExpected ||
+                          _chunkUploadWritten - _chunkUploadCommitted >=
+                              CHUNK_UPLOAD_COMMIT_BYTES;
+        if (checkpoint) {
+            _chunkUploadFile.flush();
+            _chunkUploadFile.close();
+            size_t storedBytes = waitForFileSize(storage, _chunkUploadPath.c_str(),
+                                                 _chunkUploadWritten);
+            if (storedBytes != _chunkUploadWritten) {
+                sendUploadStreamReply(client, 4, storedBytes);
+                failed = true;
+                break;
+            }
+            _chunkUploadCommitted = storedBytes;
+            if (_chunkUploadWritten < _chunkUploadExpected) {
+                _chunkUploadFile = storage.open(_chunkUploadPath, "a");
+                if (!_chunkUploadFile) {
+                    sendUploadStreamReply(client, 4, storedBytes);
+                    failed = true;
+                    break;
+                }
+            }
+        }
+        if (!sendUploadStreamReply(client, 0, _chunkUploadWritten)) {
+            failed = true;
+            break;
+        }
+    }
+
+    free(buffer);
+    client.stop();
+    if (failed) {
+        if (_chunkUploadFile) _chunkUploadFile.close();
+        if (_programStorage.ready()) _programStorage.fs().remove(_chunkUploadPath);
+        _chunkUploadActive = false;
+        _chunkUploadWritten = 0;
+        _chunkUploadCommitted = 0;
+        if (_programStorage.externalMounted()) {
+            _programStorage.end();
+            delay(100);
+            _programStorage.begin(_cfg, _fsMounted);
+        }
+    }
+}
+
+void WifiControl::handleProgramUploadChunk() {
+    if (!_chunkUploadActive || !_chunkUploadPath.length()) {
+        _server.send(409, "text/plain", "No program upload is active");
+        return;
+    }
+
+    String offsetText = _server.arg("offset");
+    uint64_t requestedOffset = strtoull(offsetText.c_str(), nullptr, 10);
+    if (!offsetText.length() || requestedOffset > _chunkUploadWritten) {
+        _server.send(409, "text/plain",
+                     "Upload offset mismatch. Device expects " + String((unsigned)_chunkUploadWritten));
+        return;
+    }
+    if (requestedOffset < _chunkUploadWritten) {
+        StaticJsonDocument<128> response;
+        response["received"] = _chunkUploadWritten;
+        response["total"] = _chunkUploadExpected;
+        String json;
+        serializeJson(response, json);
+        _server.send(200, "application/json", json);
+        return;
+    }
+
+    String encoded = _server.arg("plain");
+    if (!encoded.length()) {
+        _server.send(400, "text/plain", "Upload chunk is empty");
+        return;
+    }
+    size_t capacity = (encoded.length() / 4) * 3 + 3;
+    uint8_t* decoded = static_cast<uint8_t*>(malloc(capacity));
+    if (!decoded) {
+        _server.send(503, "text/plain", "Not enough memory for the upload chunk");
+        return;
+    }
+    size_t decodedLength = 0;
+    int decodeResult = mbedtls_base64_decode(decoded, capacity, &decodedLength,
+                                             reinterpret_cast<const unsigned char*>(encoded.c_str()),
+                                             encoded.length());
+    if (decodeResult != 0 || decodedLength == 0) {
+        free(decoded);
+        _server.send(400, "text/plain", "Upload chunk is not valid Base64 data");
+        return;
+    }
+    if (_chunkUploadWritten + decodedLength > _chunkUploadExpected) {
+        free(decoded);
+        _server.send(413, "text/plain", "Upload exceeds the declared program size");
+        return;
+    }
+
+    if (_chunkUploadWritten == 0 && decodedLength >= 16 &&
+        readMemoryDw(decoded) == 0x31505841) {
+        uint32_t version = readMemoryDw(decoded + 4);
+        uint32_t commandCount = readMemoryDw(decoded + 8);
+        uint32_t programLedCount = readMemoryDw(decoded + 12);
+        if (version < 1 || version > 2 || commandCount == 0 || commandCount > 64) {
+            free(decoded);
+            _chunkUploadFile.close();
+            _programStorage.fs().remove(_chunkUploadPath);
+            _chunkUploadActive = false;
+            _server.send(400, "text/plain", "Program validation failed: invalid AXP header");
+            return;
+        }
+        if (programLedCount != 0 && programLedCount != _leds.logicalNumLeds()) {
+            free(decoded);
+            _chunkUploadFile.close();
+            _programStorage.fs().remove(_chunkUploadPath);
+            _chunkUploadActive = false;
+            _server.send(400, "text/plain",
+                         programPxMismatchText(programLedCount, _leds.logicalNumLeds()));
+            return;
+        }
+    }
+
+    fs::FS& storage = _programStorage.fs();
+    if (!_chunkUploadFile) {
+        _chunkUploadFile = storage.open(_chunkUploadPath, "a");
+        if (_chunkUploadFile && !_programStorage.externalMounted()) {
+            _chunkUploadFile.setBufferSize(PROGRAM_UPLOAD_BUFFER_BYTES);
+        }
+    }
+    if (!_chunkUploadFile) {
+        free(decoded);
+        _server.send(507, "text/plain", "Cannot continue writing the program file");
+        return;
+    }
+    size_t chunkWritten = 0;
+    bool writeOk = writeFileFully(_chunkUploadFile, decoded, decodedLength, chunkWritten);
+    free(decoded);
+    if (!writeOk || chunkWritten != decodedLength) {
+        _chunkUploadFile.close();
+        size_t storedBytes = waitForFileSize(storage, _chunkUploadPath.c_str(), _chunkUploadWritten);
+        storage.remove(_chunkUploadPath);
+        _chunkUploadActive = false;
+        _server.send(507, "text/plain",
+                     "Storage write failed after " + String((unsigned)storedBytes) + " bytes");
+        return;
+    }
+    _chunkUploadWritten += chunkWritten;
+
+    bool checkpoint = _chunkUploadWritten == _chunkUploadExpected ||
+                      _chunkUploadWritten - _chunkUploadCommitted >= CHUNK_UPLOAD_COMMIT_BYTES;
+    if (checkpoint) {
+        _chunkUploadFile.flush();
+        _chunkUploadFile.close();
+        size_t storedBytes = fileSizeOf(storage, _chunkUploadPath.c_str());
+        if (storedBytes != _chunkUploadWritten) {
+            storage.remove(_chunkUploadPath);
+            _chunkUploadActive = false;
+            _server.send(507, "text/plain",
+                         "Storage write failed after " + String((unsigned)storedBytes) + " bytes");
+            return;
+        }
+        _chunkUploadCommitted = storedBytes;
+        if (_chunkUploadWritten < _chunkUploadExpected) {
+            _chunkUploadFile = storage.open(_chunkUploadPath, "a");
+            if (_chunkUploadFile && !_programStorage.externalMounted()) {
+                _chunkUploadFile.setBufferSize(PROGRAM_UPLOAD_BUFFER_BYTES);
+            }
+            if (!_chunkUploadFile) {
+                storage.remove(_chunkUploadPath);
+                _chunkUploadActive = false;
+                _server.send(507, "text/plain", "Cannot continue writing the program file");
+                return;
+            }
+        }
+    }
+
+    StaticJsonDocument<128> response;
+    response["received"] = _chunkUploadWritten;
+    response["total"] = _chunkUploadExpected;
+    String json;
+    serializeJson(response, json);
+    _server.send(200, "application/json", json);
+}
+
+void WifiControl::handleProgramUploadFinish() {
+    if (!_chunkUploadActive || !_chunkUploadPath.length()) {
+        _server.send(409, "text/plain", "No program upload is active");
+        return;
+    }
+    fs::FS& storage = _programStorage.fs();
+    if (_chunkUploadFile) {
+        _chunkUploadFile.flush();
+        _chunkUploadFile.close();
+    }
+    size_t storedBytes = waitForFileSize(storage, _chunkUploadPath.c_str(), _chunkUploadExpected);
+    if (_chunkUploadWritten != _chunkUploadExpected || storedBytes != _chunkUploadExpected) {
+        _server.send(400, "text/plain",
+                     "Upload is incomplete: received " + String((unsigned)storedBytes) +
+                     " of " + String((unsigned)_chunkUploadExpected) + " bytes");
+        return;
+    }
+
+    String validationError;
+    if (!programMatchesLedCount(storage, _chunkUploadPath, _leds.logicalNumLeds(), validationError)) {
+        storage.remove(_chunkUploadPath);
+        _chunkUploadActive = false;
+        _server.send(400, "text/plain", validationError);
+        return;
+    }
+    if (!storage.rename(_chunkUploadPath, _chunkUploadFinalPath)) {
+        _server.send(507, "text/plain", "Cannot finalize the uploaded program file");
+        return;
+    }
+
+    strlcpy(_cfg.pixFile, _chunkUploadFinalPath.c_str(), sizeof(_cfg.pixFile));
+    _cfg.autoStart = 0;
+    renumberPrograms(storage, &_cfg);
+    saveRuntimeConfig();
+    String finalPath = _cfg.pixFile;
+    _chunkUploadActive = false;
+    _chunkUploadPath = "";
+    _chunkUploadFinalPath = "";
+    _chunkUploadExpected = 0;
+    _chunkUploadWritten = 0;
+    _chunkUploadCommitted = 0;
+    _server.send(200, "text/plain", "OK: uploaded " + finalPath);
+}
+
+void WifiControl::handleProgramUploadAbort() {
+    if (_chunkUploadFile) _chunkUploadFile.close();
+    if (_chunkUploadPath.length() && storageReady()) _programStorage.fs().remove(_chunkUploadPath);
+    _chunkUploadActive = false;
+    _chunkUploadPath = "";
+    _chunkUploadFinalPath = "";
+    _chunkUploadExpected = 0;
+    _chunkUploadWritten = 0;
+    _chunkUploadCommitted = 0;
+    _server.send(200, "text/plain", "OK");
+}
+
 void WifiControl::handlePrograms() {
-    if (!_fsMounted) {
+    if (!storageReady()) {
         String json = "{\"total\":0,\"used\":0,\"free\":0,\"selected\":\"\",\"selected_slot\":0,"
                       "\"storage_mounted\":false,\"error\":\"Storage unavailable\",\"files\":[]}";
         _server.send(200, "application/json", json);
         return;
     }
-    size_t total = LittleFS.totalBytes();
-    size_t used = LittleFS.usedBytes();
+    size_t total = _programStorage.totalBytes();
+    size_t used = _programStorage.usedBytes();
     ProgramEntry entries[32];
-    int count = collectPrograms(entries, 32);
-    uint16_t selectedSlot = slotForProgramPath(_cfg.pixFile);
+    int count = collectPrograms(_programStorage.fs(), entries, 32);
+    uint16_t selectedSlot = slotForProgramPath(_programStorage.fs(), _cfg.pixFile);
     String json = "{";
     json += "\"total\":" + String((unsigned)total) + ",";
     json += "\"used\":" + String((unsigned)used) + ",";
     json += "\"free\":" + String((unsigned)(total > used ? total - used : 0)) + ",";
     json += "\"selected\":\"" + jsonEscape(String(_cfg.pixFile)) + "\",";
     json += "\"selected_slot\":" + String(selectedSlot) + ",";
+    json += "\"storage_mounted\":true,";
+    json += "\"storage_type\":\"" + String(_programStorage.typeName()) + "\",";
+    json += "\"external_storage_detected\":" + String(_programStorage.externalDetected() ? "true" : "false") + ",";
+    json += "\"external_storage\":" + String(_programStorage.externalMounted() ? "true" : "false") + ",";
     json += "\"files\":[";
     for (int i = 0; i < count; i++) {
         if (i > 0) json += ",";
@@ -1495,7 +2260,7 @@ void WifiControl::handlePrograms() {
 }
 
 void WifiControl::handleProgramDownload() {
-    if (!_fsMounted) {
+    if (!storageReady()) {
         _server.send(503, "text/plain", "Storage unavailable");
         return;
     }
@@ -1503,7 +2268,7 @@ void WifiControl::handleProgramDownload() {
     String path;
     uint16_t slot = (uint16_t)_server.arg("slot").toInt();
     if (slot > 0) {
-        if (!programPathForSlot(slot, path)) {
+        if (!programPathForSlot(_programStorage.fs(), slot, path)) {
             _server.send(404, "text/plain", "Program slot not found");
             return;
         }
@@ -1511,12 +2276,12 @@ void WifiControl::handleProgramDownload() {
         path = sanitizeProgramPath(_server.arg("file"));
     }
 
-    if (!path.length() || !LittleFS.exists(path)) {
+    if (!path.length() || !_programStorage.fs().exists(path)) {
         _server.send(404, "text/plain", "Program not found");
         return;
     }
 
-    File file = LittleFS.open(path, "r");
+    File file = _programStorage.fs().open(path, "r");
     if (!file) {
         _server.send(500, "text/plain", "Program open failed");
         return;
@@ -1530,7 +2295,7 @@ void WifiControl::handleProgramDownload() {
 }
 
 void WifiControl::handleProgramSelect() {
-    if (!_fsMounted) {
+    if (!storageReady()) {
         _server.send(503, "text/plain", "Storage unavailable");
         return;
     }
@@ -1542,14 +2307,14 @@ void WifiControl::handleProgramSelect() {
     String path;
     uint16_t slot = doc["slot"] | 0;
     if (slot > 0) {
-        if (!programPathForSlot(slot, path)) {
+        if (!programPathForSlot(_programStorage.fs(), slot, path)) {
             _server.send(404, "text/plain", "Program slot not found");
             return;
         }
     } else {
         path = sanitizeProgramPath(doc["file"] | "");
     }
-    if (!LittleFS.exists(path)) {
+    if (!_programStorage.fs().exists(path)) {
         _server.send(404, "text/plain", "Program not found");
         return;
     }
@@ -1560,7 +2325,7 @@ void WifiControl::handleProgramSelect() {
 }
 
 void WifiControl::handleProgramDelete() {
-    if (!_fsMounted) {
+    if (!storageReady()) {
         _server.send(503, "text/plain", "Storage unavailable");
         return;
     }
@@ -1570,7 +2335,7 @@ void WifiControl::handleProgramDelete() {
         return;
     }
     String path = sanitizeProgramPath(doc["file"] | "");
-    if (!LittleFS.exists(path)) {
+    if (!_programStorage.fs().exists(path)) {
         _server.send(404, "text/plain", "Program not found");
         return;
     }
@@ -1580,14 +2345,14 @@ void WifiControl::handleProgramDelete() {
         strlcpy(_cfg.pixFile, "", sizeof(_cfg.pixFile));
         saveRuntimeConfig();
     }
-    LittleFS.remove(path);
-    renumberPrograms(&_cfg);
+    _programStorage.fs().remove(path);
+    renumberPrograms(_programStorage.fs(), &_cfg);
     saveRuntimeConfig();
     _server.send(200, "text/plain", "OK");
 }
 
 void WifiControl::handleProgramReorder() {
-    if (!_fsMounted) {
+    if (!storageReady()) {
         _server.send(503, "text/plain", "Storage unavailable");
         return;
     }
@@ -1599,7 +2364,7 @@ void WifiControl::handleProgramReorder() {
     int slot = doc["slot"] | 0;
     int direction = doc["direction"] | 0;
     ProgramEntry entries[32];
-    int count = collectPrograms(entries, 32);
+    int count = collectPrograms(_programStorage.fs(), entries, 32);
     int idx = slot - 1;
     int target = idx + (direction < 0 ? -1 : 1);
     if (idx < 0 || idx >= count || target < 0 || target >= count || direction == 0) {
@@ -1609,7 +2374,7 @@ void WifiControl::handleProgramReorder() {
     ProgramEntry tmp = entries[idx];
     entries[idx] = entries[target];
     entries[target] = tmp;
-    if (!applyProgramOrder(entries, count, &_cfg)) {
+    if (!applyProgramOrder(_programStorage.fs(), entries, count, &_cfg)) {
         _server.send(500, "text/plain", "Reorder failed");
         return;
     }
@@ -1619,7 +2384,7 @@ void WifiControl::handleProgramReorder() {
 
 void WifiControl::handleProgramStart() {
     int64_t requestUs = esp_timer_get_time();
-    if (!_fsMounted) {
+    if (!storageReady()) {
         _server.send(503, "text/plain", "Storage unavailable");
         return;
     }
@@ -1633,7 +2398,7 @@ void WifiControl::handleProgramStart() {
     bool relay = doc["relay"] | true;
     if (ageMs > 30000) ageMs = 30000;
     String path;
-    if (!programPathForSlot(slot, path)) {
+    if (!programPathForSlot(_programStorage.fs(), slot, path)) {
         _server.send(404, "text/plain", "Program slot not found");
         return;
     }
@@ -1732,7 +2497,7 @@ void WifiControl::handlePower() {
             _effectPlayer.start(p);
         }
     } else {
-        uint16_t slot = slotForProgramPath(_cfg.pixFile);
+        uint16_t slot = slotForProgramPath(_programStorage.fs(), _cfg.pixFile);
         if (!validateProgramForPlay(String(_cfg.pixFile))) return;
         int64_t startUs = requestUs - (int64_t)ageMs * 1000;
         if (_sync && relay) {
@@ -1767,7 +2532,7 @@ void WifiControl::handleSyncNow() {
         }
     } else {
         if (!validateProgramForPlay(String(_cfg.pixFile))) return;
-        uint8_t slot = (uint8_t)slotForProgramPath(_cfg.pixFile);
+        uint8_t slot = (uint8_t)slotForProgramPath(_programStorage.fs(), _cfg.pixFile);
         int64_t startUs = esp_timer_get_time();
         if (_sync && relay) {
             int err = _sync->broadcastPlay(_cfg.pixFile, _cfg.endBehavior, 0, slot);
@@ -1803,6 +2568,11 @@ void WifiControl::handleStatus() {
     String json = "{";
     json += "\"playing\":"          + String(_player.isLoaded() ? "true" : "false") + ",";
     json += "\"effect_running\":"   + String(_effectPlayer.isRunning() ? "true" : "false") + ",";
+    json += "\"audio_reactive\":"   + String(_audioReactiveActive ? "true" : "false") + ",";
+    json += "\"audio_packets_x10\":" + String(_audioReactiveActive ? _audioReceiver.packetRateX10(millis()) : 0) + ",";
+    json += "\"audio_group_role\":\"" + String(_groupMaster ? "sender" : _groupFollower ? "receiver" : "none") + "\",";
+    json += "\"audio_group_tx_frames\":" + String(_groupFramesSent) + ",";
+    json += "\"audio_group_channel\":" + String(_sync ? _sync->wifiChannel() : 0) + ",";
     json += "\"power_on\":"         + String((_player.isLoaded() || _effectPlayer.isRunning()) ? "true" : "false") + ",";
     json += "\"commands\":"         + String(_player.numCommands()) + ",";
     json += "\"file\":\""           + jsonEscape(String(_cfg.pixFile)) + "\",";
@@ -1818,7 +2588,10 @@ void WifiControl::handleStatus() {
     json += "\"wifi_channel\":"     + String(wifiChannel) + ",";
     json += "\"ap_ssid\":\""        + jsonEscape(apSsid) + "\",";
     json += "\"ap_mode\":"          + String(_apMode ? "true" : "false") + ",";
-    json += "\"storage_mounted\":"  + String(_fsMounted ? "true" : "false") + ",";
+    json += "\"storage_mounted\":"  + String(storageReady() ? "true" : "false") + ",";
+    json += "\"storage_type\":\""    + String(_programStorage.typeName()) + "\",";
+    json += "\"external_storage_detected\":" + String(_programStorage.externalDetected() ? "true" : "false") + ",";
+    json += "\"external_storage\":" + String(_programStorage.externalMounted() ? "true" : "false") + ",";
     json += "\"partition_layout\":\"" + partitionLayoutName() + "\",";
     json += "\"fw_version\":\""     + String(AURAX_FW_VERSION) + "\",";
     json += "\"fw_build\":"         + String(AURAX_FW_BUILD) + ",";
@@ -1841,9 +2614,9 @@ void WifiControl::handleStatus() {
     json += "\"sync_ready\":"       + String((_sync && _sync->isReady()) ? "true" : "false") + ",";
     json += "\"sync_if\":\""        + String(_sync ? _sync->wifiInterfaceName() : "-") + "\",";
     json += "\"rssi\":"             + String(_apMode ? 0 : WiFi.RSSI()) + ",";
-    json += "\"fs\":{\"u\":" + String(_fsMounted ? (unsigned long)LittleFS.usedBytes() : 0);
-    json += ",\"t\":" + String(_fsMounted ? (unsigned long)LittleFS.totalBytes() : 0);
-    json += ",\"mounted\":" + String(_fsMounted ? "true" : "false") + "}";
+    json += "\"fs\":{\"u\":" + String((unsigned long)_programStorage.usedBytes());
+    json += ",\"t\":" + String((unsigned long)_programStorage.totalBytes());
+    json += ",\"mounted\":" + String(storageReady() ? "true" : "false") + "}";
     json += "}";
     _server.send(200, "application/json", json);
 }
@@ -1921,8 +2694,8 @@ String WifiControl::wledInfoJson() {
     json += ",\"wifi\":{\"bssid\":\"\",\"rssi\":" + String(rssi);
     json += ",\"signal\":" + String(signal);
     json += ",\"channel\":" + String(WiFi.channel()) + "}";
-    json += ",\"fs\":{\"u\":" + String(_fsMounted ? (unsigned long)LittleFS.usedBytes() : 0);
-    json += ",\"t\":" + String(_fsMounted ? (unsigned long)LittleFS.totalBytes() : 0);
+    json += ",\"fs\":{\"u\":" + String((unsigned long)_programStorage.usedBytes());
+    json += ",\"t\":" + String((unsigned long)_programStorage.totalBytes());
     json += ",\"pmt\":0}";
     json += ",\"ndc\":0,\"platform\":\"esp32\"}";
     return json;
@@ -2040,7 +2813,7 @@ void WifiControl::handleWledStatePost() {
                 if (!validateProgramForPlay(String(_cfg.pixFile))) return;
                 int64_t startUs = esp_timer_get_time();
                 if (_sync) {
-                    uint8_t slot = (uint8_t)slotForProgramPath(_cfg.pixFile);
+                    uint8_t slot = (uint8_t)slotForProgramPath(_programStorage.fs(), _cfg.pixFile);
                     int errPlay = _sync->broadcastPlay(_cfg.pixFile, _cfg.endBehavior, 0, slot);
                     if (errPlay) {
                         _server.send(500, "text/plain", playerLoadErrorText(errPlay));
@@ -2204,6 +2977,11 @@ bool WifiControl::checkFirmwareManifest(bool force) {
 
 void WifiControl::handleFirmwareCheck() {
     sendCorsHeaders();
+    if (_audioReactiveActive) {
+        _server.send(409, "application/json",
+                     "{\"error\":\"Stop Audio Reactive before checking for updates.\"}");
+        return;
+    }
     bool force = _server.arg("force") == "1";
     bool ok = checkFirmwareManifest(force);
     _server.send(ok ? 200 : 503, "application/json", firmwareStatusJson());
@@ -2237,12 +3015,18 @@ void WifiControl::handleRescue() {
 }
 
 void WifiControl::handleConfigGet() {
-    StaticJsonDocument<2048> doc;
+    DynamicJsonDocument doc(2560);
     doc["ledType"]  = _cfg.ledType;
     doc["numLeds"]  = _cfg.numLeds;
     doc["dataPin"]  = _cfg.dataPin;
     doc["clkPin"]   = _cfg.clkPin;
     doc["spiFrequencyMhz"] = _cfg.spiFrequencyMhz;
+    doc["externalStorageEnabled"] = (bool)_cfg.externalStorageEnabled;
+    doc["storageSckPin"] = _cfg.storageSckPin;
+    doc["storageMosiPin"] = _cfg.storageMosiPin;
+    doc["storageMisoPin"] = _cfg.storageMisoPin;
+    doc["storageCsPin"] = _cfg.storageCsPin;
+    doc["storageSpiFrequencyMhz"] = _cfg.storageSpiFrequencyMhz;
     doc["ssid"]     = _cfg.ssid;
     doc["password"] = _cfg.password;
     doc["pixFile"]    = _cfg.pixFile;
@@ -2329,7 +3113,7 @@ void WifiControl::handleEffectStart() {
     bool persist = doc["persist"] | true;
     bool relay = doc["relay"] | true;
 
-    // Zastavit přehrávač před zápisem do LittleFS — vyhnout se souběžnému přístupu
+    // Zastavit přehrávač před změnou trvalého stavu.
     if (_player.isLoaded()) {
         _player.stopTask();
         _player.unload();
@@ -2369,8 +3153,231 @@ void WifiControl::handleEffectStop() {
     _server.send(200, "text/plain", "OK");
 }
 
+bool WifiControl::startAudioReactiveOutput() {
+    if (_effectPlayer.isAudioReactive()) return true;
+    _audioResumeEffect = _effectPlayer.isRunning();
+    if (_player.isLoaded()) {
+        _player.stopTask();
+        _player.unload();
+    }
+    EffectParams p = effectParamsFromConfig(_cfg);
+    p.effectId = EFFECT_AUDIO_REACTIVE;
+    _effectPlayer.clearAudioReactive();
+    _effectPlayer.start(p);
+    if (_effectPlayer.isAudioReactive()) return true;
+    _audioResumeEffect = false;
+    return false;
+}
+
+void WifiControl::handleAudioReactiveStart() {
+    const String session = _server.arg("session");
+    if (session.length() != 32) {
+        _server.send(400, "text/plain", "Invalid audio session");
+        return;
+    }
+    for (unsigned int i = 0; i < session.length(); ++i) {
+        if (hexNibble(session[i]) < 0) {
+            _server.send(400, "text/plain", "Invalid audio session");
+            return;
+        }
+    }
+    if (_audioReactiveActive && _effectPlayer.isAudioReactive() &&
+        millis() - _audioLastPacketMs <= 1500 && (session != _audioSession || _groupFollower)) {
+        _server.send(409, "text/plain", "Audio Reactive is in use by another client");
+        return;
+    }
+    const bool wantsStream = _server.arg("transport") == "udp2";
+    if (wantsStream && !_audioUdpStarted) {
+        if (!_audioUdp.begin(AudioStream::Port)) {
+            _server.send(503, "text/plain", "Audio stream unavailable");
+            return;
+        }
+        _audioUdpStarted = true;
+    }
+    if (!startAudioReactiveOutput()) {
+        _audioUdp.stop();
+        _audioUdpStarted = false;
+        _server.send(503, "text/plain", "Audio Reactive could not start");
+        return;
+    }
+    endAudioGroup();
+    _groupReceiver.block();
+    _groupMayResume = false;
+    _groupFollower = false;
+    _audioReactiveActive = true;
+    _audioSession = session;
+    _audioOwnerIp = _server.client().remoteIP();
+    uint8_t token[16];
+    for (unsigned int i = 0; i < 16; ++i)
+        token[i] = (hexNibble(session[i * 2]) << 4) | hexNibble(session[i * 2 + 1]);
+    _audioReceiver.reset(token);
+    _audioLastAckMs = millis() - 200;
+    _audioLastPacketMs = millis();
+    _server.send(200, "text/plain", wantsStream ? "AXA2:4211:64" : "OK");
+}
+
+void WifiControl::receiveAudioStream() {
+    if (_groupFollower || !_audioUdpStarted || !_audioReactiveActive || !_effectPlayer.isAudioReactive()) return;
+    uint8_t packet[AudioStream::Bytes], latest[AudioStream::Bytes];
+    bool accepted = false, beat = false;
+    uint16_t replyPort = 0;
+    // Bounded work and latest-wins: a burst can never monopolize the network task.
+    for (unsigned int n = 0; n < 8; ++n) {
+        int length = _audioUdp.parsePacket();
+        if (length <= 0) break;
+        IPAddress source = _audioUdp.remoteIP();
+        uint16_t port = _audioUdp.remotePort();
+        int read = _audioUdp.read(packet, sizeof(packet));
+        _audioUdp.flush();
+        if (source != _audioOwnerIp || length != (int)sizeof(packet) || read != length ||
+            !_audioReceiver.accept(packet, read, millis())) continue;
+        memcpy(latest, packet, sizeof(latest));
+        beat |= packet[32] != 0;
+        replyPort = port;
+        accepted = true;
+    }
+    if (!accepted) return;
+    latest[32] = beat ? 255 : 0;
+    consumeAudioInput(latest + 28, latest + AudioStream::Header);
+    _audioLastPacketMs = millis();
+    if (millis() - _audioLastAckMs >= 200) {
+        latest[2] = 'K';
+        _audioUdp.beginPacket(_audioOwnerIp, replyPort);
+        _audioUdp.write(latest, AudioStream::AckBytes);
+        _audioUdp.endPacket();
+        _audioLastAckMs = millis();
+    }
+}
+
+void WifiControl::handleAudioReactiveData() {
+    if (_groupFollower || !_audioReactiveActive || !_effectPlayer.isAudioReactive() ||
+        _server.arg("session") != _audioSession) {
+        _server.send(409, "text/plain", "Audio Reactive is not active");
+        return;
+    }
+
+    String payload = _server.arg("plain");
+    payload.trim();
+    if (payload.length() != 12) {
+        _server.send(400, "text/plain", "Invalid audio frame");
+        return;
+    }
+
+    uint8_t values[6] = {};
+    for (uint8_t i = 0; i < 6; i++) {
+        int high = hexNibble(payload[i * 2]);
+        int low = hexNibble(payload[i * 2 + 1]);
+        if (high < 0 || low < 0) {
+            _server.send(400, "text/plain", "Invalid audio frame");
+            return;
+        }
+        values[i] = (uint8_t)((high << 4) | low);
+    }
+    if (values[0] != 1) {
+        _server.send(400, "text/plain", "Unsupported audio frame version");
+        return;
+    }
+
+    consumeAudioInput(values + 1, nullptr);
+    _audioLastPacketMs = millis();
+    _server.send(204, "text/plain", "");
+}
+
+void WifiControl::handleAudioReactiveStop() {
+    if (!_groupFollower && _audioReactiveActive && _server.arg("session") == _audioSession)
+        stopAudioReactive(_server.arg("restore") != "0");
+    _server.send(200, "text/plain", "OK");
+}
+
+void WifiControl::handleAudioReactiveSettings() {
+    if (_groupFollower || !_audioReactiveActive || !_effectPlayer.isAudioReactive() ||
+        _server.arg("session") != _audioSession) {
+        _server.send(409, "text/plain", "Audio Reactive is not active");
+        return;
+    }
+    StaticJsonDocument<512> doc;
+    if (deserializeJson(doc, _server.arg("plain")) != DeserializationError::Ok) {
+        _server.send(400, "text/plain", "Invalid audio settings");
+        return;
+    }
+    const char* keys[] = {"mode", "speed", "width", "decay", "brightness"};
+    for (const char* key : keys) {
+        if (!doc[key].is<int>() || doc[key].as<int>() < 0 ||
+            doc[key].as<int>() > (strcmp(key, "mode") == 0 ? 9 : 100)) {
+            _server.send(400, "text/plain", "Invalid audio parameter");
+            return;
+        }
+    }
+    if (!doc["mirror"].is<bool>() || !doc["colors"].is<JsonArray>() || doc["colors"].size() != 3) {
+        _server.send(400, "text/plain", "Invalid audio colors or mirror");
+        return;
+    }
+    AudioReactiveSettings settings;
+    if (doc.containsKey("group") && !doc["group"].is<bool>()) {
+        _server.send(400, "text/plain", "Invalid audio group setting");
+        return;
+    }
+    bool group = doc["group"] | false;
+    if (group && (!_sync || !_sync->audioGroupReady() || !_cfg.syncEnabled || !_cfg.syncMask)) {
+        _server.send(409, "text/plain", "Enable SYNC and select a group before sharing audio");
+        return;
+    }
+    if (doc.containsKey("response") && (!doc["response"].is<int>() ||
+        doc["response"].as<int>() < 0 || doc["response"].as<int>() > 3)) {
+        _server.send(400, "text/plain", "Invalid audio frequency range");
+        return;
+    }
+    settings.response = doc["response"] | 0;
+    settings.mode = doc["mode"];
+    settings.speed = doc["speed"];
+    settings.width = doc["width"];
+    settings.decay = doc["decay"];
+    settings.brightness = doc["brightness"];
+    settings.mirror = doc["mirror"];
+    for (uint8_t i = 0; i < 3; ++i) {
+        const char* color = doc["colors"][i] | "";
+        if (strlen(color) != 7 || color[0] != '#') {
+            _server.send(400, "text/plain", "Invalid audio color");
+            return;
+        }
+        uint8_t channels[3];
+        for (uint8_t n = 0; n < 3; ++n) {
+            int high = hexNibble(color[1 + n * 2]), low = hexNibble(color[2 + n * 2]);
+            if (high < 0 || low < 0) {
+                _server.send(400, "text/plain", "Invalid audio color");
+                return;
+            }
+            channels[n] = (high << 4) | low;
+        }
+        settings.colors[i] = {channels[0], channels[1], channels[2]};
+    }
+    _audioSettings = settings;
+    _effectPlayer.setAudioSettings(settings);
+    if (group && !_groupMaster) beginAudioGroup();
+    else if (!group) endAudioGroup();
+    if (_groupMaster) updateAudioGroupSettings(settings);
+    _server.send(204, "text/plain", "");
+}
+
+void WifiControl::stopAudioReactive(bool restorePreviousEffect, bool retireGroup) {
+    bool restore = restorePreviousEffect && _audioResumeEffect && _effectPlayer.isAudioReactive();
+    endAudioGroup();
+    if (retireGroup) _groupReceiver.block();
+    else _groupReceiver.expire();
+    _groupFollower = false;
+    _audioReactiveActive = false;
+    _audioResumeEffect = false;
+    _audioUdp.stop();
+    _audioUdpStarted = false;
+    if (_effectPlayer.isAudioReactive()) _effectPlayer.stop();
+    _effectPlayer.clearAudioReactive();
+    if (restore) _effectPlayer.start(effectParamsFromConfig(_cfg));
+    _groupMayResume = !retireGroup;
+    _groupResumeRevision = _effectPlayer.controlRevision();
+}
+
 void WifiControl::handleConfigPost() {
-    StaticJsonDocument<2048> doc;
+    DynamicJsonDocument doc(2560);
     if (deserializeJson(doc, _server.arg("plain")) != DeserializationError::Ok) {
         _server.send(400, "text/plain", "JSON error");
         return;
@@ -2398,6 +3405,12 @@ void WifiControl::handleConfigPost() {
     const uint8_t oldDataPin = _cfg.dataPin;
     const uint8_t oldClkPin = _cfg.clkPin;
     const uint8_t oldSpiFrequencyMhz = _cfg.spiFrequencyMhz;
+    const uint8_t oldExternalStorageEnabled = _cfg.externalStorageEnabled;
+    const uint8_t oldStorageSckPin = _cfg.storageSckPin;
+    const uint8_t oldStorageMosiPin = _cfg.storageMosiPin;
+    const uint8_t oldStorageMisoPin = _cfg.storageMisoPin;
+    const uint8_t oldStorageCsPin = _cfg.storageCsPin;
+    const uint8_t oldStorageSpiFrequencyMhz = _cfg.storageSpiFrequencyMhz;
 
     _cfg.ledType = doc["ledType"] | _cfg.ledType;
     {
@@ -2412,12 +3425,38 @@ void WifiControl::handleConfigPost() {
         if (spiMhz > 20) spiMhz = 20;
         _cfg.spiFrequencyMhz = (uint8_t)spiMhz;
     }
+    if (doc.containsKey("externalStorageEnabled")) {
+        _cfg.externalStorageEnabled = doc["externalStorageEnabled"] ? 1 : 0;
+    }
+    {
+        int pin = doc["storageSckPin"] | _cfg.storageSckPin;
+        if (pin >= 0 && pin <= 48) _cfg.storageSckPin = (uint8_t)pin;
+        pin = doc["storageMosiPin"] | _cfg.storageMosiPin;
+        if (pin >= 0 && pin <= 48) _cfg.storageMosiPin = (uint8_t)pin;
+        pin = doc["storageMisoPin"] | _cfg.storageMisoPin;
+        if (pin >= 0 && pin <= 48) _cfg.storageMisoPin = (uint8_t)pin;
+        pin = doc["storageCsPin"] | _cfg.storageCsPin;
+        if (pin >= 0 && pin <= 48) _cfg.storageCsPin = (uint8_t)pin;
+    }
+    {
+        int spiMhz = doc["storageSpiFrequencyMhz"] | _cfg.storageSpiFrequencyMhz;
+        if (spiMhz < 1) spiMhz = 1;
+        if (spiMhz > 50) spiMhz = 50;
+        _cfg.storageSpiFrequencyMhz = (uint8_t)spiMhz;
+    }
     const bool ledOutputChanged =
         _cfg.ledType != oldLedType ||
         _cfg.numLeds != oldNumLeds ||
         _cfg.dataPin != oldDataPin ||
         _cfg.clkPin != oldClkPin ||
         _cfg.spiFrequencyMhz != oldSpiFrequencyMhz;
+    const bool storageChanged =
+        _cfg.externalStorageEnabled != oldExternalStorageEnabled ||
+        _cfg.storageSckPin != oldStorageSckPin ||
+        _cfg.storageMosiPin != oldStorageMosiPin ||
+        _cfg.storageMisoPin != oldStorageMisoPin ||
+        _cfg.storageCsPin != oldStorageCsPin ||
+        _cfg.storageSpiFrequencyMhz != oldStorageSpiFrequencyMhz;
     strlcpy(_cfg.ssid,     doc["ssid"]     | _cfg.ssid,     sizeof(_cfg.ssid));
     strlcpy(_cfg.password, doc["password"] | _cfg.password, sizeof(_cfg.password));
     strlcpy(_cfg.pixFile,  doc["pixFile"]  | _cfg.pixFile,  sizeof(_cfg.pixFile));
@@ -2521,17 +3560,17 @@ void WifiControl::handleConfigPost() {
         _player.unload();
         _leds.clear();
     }
-    String configResponse = "Ulozeno";
-    if (contactPoiChanged && _fsMounted && strlen(_cfg.pixFile) && LittleFS.exists(_cfg.pixFile)) {
+    String configResponse = "Saved";
+    if (contactPoiChanged && storageReady() && strlen(_cfg.pixFile) && _programStorage.fs().exists(_cfg.pixFile)) {
         String validationError;
-        if (!programMatchesLedCount(String(_cfg.pixFile), _leds.logicalNumLeds(), validationError)) {
+        if (!programMatchesLedCount(_programStorage.fs(), String(_cfg.pixFile), _leds.logicalNumLeds(), validationError)) {
             configResponse += ". " + validationError;
         }
     }
 
     if (saveRuntimeConfig()) {
-        if (wifiChanged || ledOutputChanged) {
-            _server.send(200, "text/plain", configResponse + " - restartuji zarizeni");
+        if (wifiChanged || ledOutputChanged || storageChanged) {
+            _server.send(200, "text/plain", configResponse + " - restarting device");
             delay(750);
             esp_restart();
             return;
@@ -2539,14 +3578,14 @@ void WifiControl::handleConfigPost() {
         _server.send(200, "text/plain", configResponse);
         return;
         if (wifiChanged) {
-            _server.send(200, "text/plain", "Uloženo — restartuji WiFi");
+            _server.send(200, "text/plain", "Saved - restarting WiFi");
             delay(750);
             esp_restart();
         } else {
-            _server.send(200, "text/plain", "Uloženo");
+            _server.send(200, "text/plain", "Saved");
         }
     } else {
-        _server.send(500, "text/plain", "Chyba zápisu");
+        _server.send(500, "text/plain", "Failed to save settings");
     }
 }
 
@@ -2690,7 +3729,9 @@ void WifiControl::sortPeers() {
 
 void WifiControl::handlePeers() {
     sendCorsHeaders();
-    if (_staServicesStarted) {
+    // The normal 400 ms discovery wait must not stall the audio receiver.
+    // Passive peer discovery continues in handle(); audio requests use its cache.
+    if (_staServicesStarted && !_audioReactiveActive) {
         const char* query = "AURAX?";
         _udp.beginPacket(IPAddress(255, 255, 255, 255), DISCOVERY_PORT);
         _udp.write((const uint8_t*)query, strlen(query));

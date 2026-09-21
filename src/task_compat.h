@@ -2,6 +2,8 @@
 
 #include <Arduino.h>
 
+static constexpr UBaseType_t AURAX_STORAGE_TASK_PRIORITY = 1;
+
 #if defined(ARDUINO_ARCH_ESP32C3) || defined(CONFIG_IDF_TARGET_ESP32C3) || \
     defined(CONFIG_FREERTOS_UNICORE)
 static constexpr BaseType_t AURAX_LED_TASK_CORE = 0;

@@ -1,12 +1,17 @@
 export interface StatusResponse {
   playing: boolean
   effect_running?: boolean
+  audio_reactive?: boolean
   power_on?: boolean
   file?: string
   commands?: number
   frames_rendered?: number
   frames_expected?: number
   fps_x10?: number
+  audio_packets_x10?: number
+  audio_group_role?: 'sender' | 'receiver' | 'none'
+  audio_group_tx_frames?: number
+  audio_group_channel?: number
   ip: string
   hostname?: string
   device_name?: string
@@ -23,6 +28,10 @@ export interface StatusResponse {
   led_count?: number
   logical_led_count?: number
   contact_poi?: boolean
+  storage_mounted?: boolean
+  storage_type?: string
+  external_storage_detected?: boolean
+  external_storage?: boolean
 }
 
 export interface PeerInfo {
@@ -47,6 +56,12 @@ export interface Config {
   dataPin?: number
   clkPin?: number
   spiFrequencyMhz?: number
+  externalStorageEnabled?: boolean
+  storageSckPin?: number
+  storageMosiPin?: number
+  storageMisoPin?: number
+  storageCsPin?: number
+  storageSpiFrequencyMhz?: number
   pixFile?: string
   ssid?: string
   password?: string
@@ -96,6 +111,10 @@ export interface ProgramsResponse {
   free: number
   selected: string
   selected_slot?: number
+  storage_mounted?: boolean
+  storage_type?: string
+  external_storage_detected?: boolean
+  external_storage?: boolean
   files: ProgramFile[]
 }
 

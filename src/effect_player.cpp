@@ -15,6 +15,7 @@ EffectPlayer::~EffectPlayer() {
 static uint8_t effectFamily(uint8_t effectId) {
     if (effectId == EFFECT_SOLID) return 1;
     if (effectId == EFFECT_ANDROID) return 2;
+    if (effectId == EFFECT_AUDIO_REACTIVE) return 4;
     return 3;
 }
 
@@ -23,12 +24,14 @@ void EffectPlayer::start(const EffectParams& p) {
     delete _effect;
     _params = p;
     switch (p.effectId) {
+        case EFFECT_AUDIO_REACTIVE: _effect = new AudioReactiveEffect(_audioInput); break;
         case EFFECT_ANDROID: _effect = new AndroidEffect(); break;
         case EFFECT_SOLID:   _effect = new SolidEffect();   break;
         default:             _effect = new WledFxEffect();  break;
     }
     if (!_effect) return;  // OOM — better than crashing in reset()
     _effect->reset(p, _leds.logicalNumLeds());
+    if (p.effectId == EFFECT_AUDIO_REACTIVE && !static_cast<AudioReactiveEffect*>(_effect)->ready()) return;
     _fpsWindowFrames = 0;
     _fpsWindowStartUs = esp_timer_get_time();
     _currentFpsX10 = 0;
@@ -51,6 +54,7 @@ void EffectPlayer::apply(const EffectParams& p) {
 }
 
 void EffectPlayer::stop() {
+    ++_controlRevision;
     if (!_taskHandle) return;
     _taskRunning = false;
     while (_taskHandle) vTaskDelay(1);
@@ -60,9 +64,27 @@ void EffectPlayer::stop() {
 }
 
 void EffectPlayer::setParams(const EffectParams& p) {
+    ++_controlRevision;
     portENTER_CRITICAL(&_paramsMux);
     _params = p;
     portEXIT_CRITICAL(&_paramsMux);
+}
+
+bool EffectPlayer::isAudioReactive() {
+    EffectParams current = {};
+    portENTER_CRITICAL(&_paramsMux);
+    current = _params;
+    portEXIT_CRITICAL(&_paramsMux);
+    return _taskHandle != nullptr && current.effectId == EFFECT_AUDIO_REACTIVE;
+}
+
+void EffectPlayer::updateAudioReactive(uint8_t volume, uint8_t bass, uint8_t mid,
+                                       uint8_t treble, uint8_t beat) {
+    _audioInput.update(volume, bass, mid, treble, beat);
+}
+
+void EffectPlayer::clearAudioReactive() {
+    _audioInput.clear();
 }
 
 void EffectPlayer::taskEntry(void* arg) {

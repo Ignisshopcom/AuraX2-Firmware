@@ -9,6 +9,7 @@
 #include "wifi_control.h"
 #include "sync_control.h"
 #include "task_compat.h"
+#include "program_storage.h"
 
 #include "apa102.h"
 #include "ws281x.h"
@@ -19,6 +20,7 @@ static PixPlayer*    player       = nullptr;
 static EffectPlayer* effectPlayer = nullptr;
 static SyncControl*  syncCtrl     = nullptr;
 static WifiControl*  wifi         = nullptr;
+static ProgramStorage programStorage;
 static bool          fsMounted    = false;
 static bool          crashAutoplayDisabled = false;
 
@@ -81,11 +83,11 @@ static void startSavedOutput() {
         if (p.paletteSize == 0) { p.palette[0] = {255, 0, 0}; p.paletteSize = 1; }
         effectPlayer->start(p);
         LOG("[sys] restored effect id=%d\n", p.effectId);
-    } else if (fsMounted && LittleFS.exists(cfg.pixFile)) {
+    } else if (programStorage.ready() && programStorage.fs().exists(cfg.pixFile)) {
         int err = player->load(cfg.pixFile);
         if (err) { LOG("[pix] load failed: %d\n", err); }
         else player->startTask();
-    } else if (!fsMounted) {
+    } else if (!programStorage.ready()) {
         LOGLN("[pix] storage unavailable, autoplay skipped");
     } else {
         LOG("[pix] soubor nenalezen: %s\n", cfg.pixFile);
@@ -122,6 +124,11 @@ void setup() {
         cfg.ledType, cfg.numLeds, cfg.dataPin, cfg.clkPin,
         (unsigned)cfg.spiFrequencyMhz, cfg.pixFile);
 
+    programStorage.begin(cfg, fsMounted);
+    if (!programStorage.migrateProgramsFromLittleFs()) {
+        LOGLN("[storage] one-time LittleFS program migration was incomplete");
+    }
+
     leds = createLedDriver(cfg);
 
     leds->setBrightness(cfg.brightness);
@@ -136,12 +143,12 @@ void setup() {
     LOG("[led] current limit configured=%u effective=%u\n",
         (unsigned)cfg.mALimit, (unsigned)effectiveMALimit);
 
-    player       = new PixPlayer(*leds);
+    player       = new PixPlayer(*leds, programStorage.fs());
     player->setTempo(cfg.tempo);
     player->setEndBehavior(cfg.endBehavior);
     effectPlayer = new EffectPlayer(*leds);
-    syncCtrl     = new SyncControl(*player, *effectPlayer, *leds);
-    wifi         = new WifiControl(*player, *effectPlayer, *leds, cfg, syncCtrl, fsMounted);
+    syncCtrl     = new SyncControl(*player, *effectPlayer, *leds, programStorage.fs());
+    wifi         = new WifiControl(*player, *effectPlayer, *leds, cfg, programStorage, syncCtrl, fsMounted);
 
     // wifi_ctrl musí být vytvořen PŘED player->startTask() — pix_player běží
     // na Core 1 s prioritou 5 a při spin-loop blokuje loopTask (taky Core 1,
@@ -185,7 +192,7 @@ void setup() {
 #endif
             while (true) { syncCtrl->process(); wifi->handle(); vTaskDelay(1); }
         },
-        "wifi_ctrl", 8192, nullptr, AURAX_WIFI_TASK_PRIORITY, nullptr, 0
+        "wifi_ctrl", 12288, nullptr, AURAX_WIFI_TASK_PRIORITY, nullptr, 0
     );
 
     esp_reset_reason_t resetReason = esp_reset_reason();

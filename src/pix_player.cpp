@@ -184,6 +184,9 @@ static uint8_t* allocDecodedProgramBuffer(size_t bytes) {
 static uint8_t* allocAxpCommandCache(size_t bytes) {
     if (bytes == 0) return nullptr;
 
+    uint8_t* buf = (uint8_t*)heap_caps_malloc(bytes, MALLOC_CAP_SPIRAM);
+    if (buf) return buf;
+
     size_t largestInternal = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL);
 #if defined(ARDUINO_ARCH_ESP32C3)
     static constexpr size_t INTERNAL_HEAP_RESERVE = 64 * 1024;
@@ -200,7 +203,7 @@ static uint8_t* allocAxpCommandCache(size_t bytes) {
 
 // ── PixPlayer ─────────────────────────────────────────────────────────────────
 
-PixPlayer::PixPlayer(ILedDriver& leds) : _leds(leds) {}
+PixPlayer::PixPlayer(ILedDriver& leds, fs::FS& storage) : _leds(leds), _storage(storage) {}
 
 PixPlayer::~PixPlayer() {
     stopTask();
@@ -208,16 +211,28 @@ PixPlayer::~PixPlayer() {
 }
 
 void PixPlayer::unload() {
+    stopPrefetchTask();
     if (_file) _file.close();
     heap_caps_free(_preloadBuf); _preloadBuf = nullptr;
-#if !defined(ARDUINO_ARCH_ESP32C3)
-    heap_caps_free(_axpCmdCache); _axpCmdCache = nullptr;
+    for (int i = 0; i < 2; i++) {
+        heap_caps_free(_axpCmdCache[i]);
+        _axpCmdCache[i] = nullptr;
+        _axpCachedCmd[i] = -1;
+        _axpCacheLoading[i] = false;
+    }
     _axpCmdCacheSize = 0;
-#endif
+    if (_prefetchQueue) {
+        vQueueDelete(_prefetchQueue);
+        _prefetchQueue = nullptr;
+    }
+    if (_cacheMutex) {
+        vSemaphoreDelete(_cacheMutex);
+        _cacheMutex = nullptr;
+    }
     free(_colBuf);               _colBuf     = nullptr;
     _preloaded = false;
     _axpStreaming = false;
-    _axpCachedCmd = -1;
+    _axpConsumerCmd = -1;
     _loaded    = false;
     _format    = ProgramFormat::Pix;
     _numCmds   = 0;
@@ -356,23 +371,29 @@ int PixPlayer::loadAxp(File& f) {
 
     _preloadBuf = allocDecodedProgramBuffer(decodedBytes);
     if (!_preloadBuf) {
-        if (!_axpCmdCache || _axpCmdCacheSize < maxCommandBytes) {
-            heap_caps_free(_axpCmdCache);
-            _axpCmdCache = nullptr;
+        if (!_axpCmdCache[0] || _axpCmdCacheSize < maxCommandBytes) {
+            for (int i = 0; i < 2; i++) {
+                heap_caps_free(_axpCmdCache[i]);
+                _axpCmdCache[i] = nullptr;
+                _axpCachedCmd[i] = -1;
+            }
             _axpCmdCacheSize = 0;
-            _axpCmdCache = allocAxpCommandCache(maxCommandBytes);
-            if (!_axpCmdCache) return 6;
+            _axpCmdCache[0] = allocAxpCommandCache(maxCommandBytes);
+            if (!_axpCmdCache[0]) return 6;
+            _axpCmdCache[1] = allocAxpCommandCache(maxCommandBytes);
             _axpCmdCacheSize = maxCommandBytes;
         }
-        _file = LittleFS.open(_path, "r");
-        if (!_file) return 4;
+        _cacheMutex = xSemaphoreCreateMutex();
+        _prefetchQueue = xQueueCreate(1, sizeof(int));
+        if (!_cacheMutex || !_prefetchQueue) return 6;
         _format = ProgramFormat::Axp;
         _preloaded = false;
         _axpStreaming = true;
-        _axpCachedCmd = -1;
-        if (!decodeAxpCommand(_file, 0, _axpCmdCache)) return 2;
-        _axpCachedCmd = 0;
-        LOG("[axp] streaming command cache: %u bytes, %d commands\n", (unsigned)maxCommandBytes, _numCmds);
+        _axpConsumerCmd = 0;
+        if (!decodeAxpCommand(f, 0, _axpCmdCache[0])) return 2;
+        _axpCachedCmd[0] = 0;
+        LOG("[axp] core-0 command cache: %u bytes x %u, %d commands\n",
+            (unsigned)maxCommandBytes, _axpCmdCache[1] ? 2u : 1u, _numCmds);
         return 0;
     }
     memset(_preloadBuf, 0, decodedBytes);
@@ -465,12 +486,11 @@ int PixPlayer::load(const char* path) {
     unload();
     strncpy(_path, path, sizeof(_path) - 1);
 
-    if (!LittleFS.begin(false)) return 3;
-    if (!LittleFS.exists(path)) return 5;
+    if (!_storage.exists(path)) return 5;
 
     // Detect AuraX compressed format first. Legacy .pix starts with 0xD1 records.
     {
-        File f = LittleFS.open(path, "r");
+        File f = _storage.open(path, "r");
         if (!f) return 4;
         uint32_t magic = 0;
         if (!readDW(f, magic)) {
@@ -521,7 +541,7 @@ int PixPlayer::load(const char* path) {
     // Try to preload into PSRAM
     _preloadBuf = (uint8_t*)heap_caps_malloc(totalBytes, MALLOC_CAP_SPIRAM);
     if (_preloadBuf) {
-        File f = LittleFS.open(path, "r");
+        File f = _storage.open(path, "r");
         if (!f) { heap_caps_free(_preloadBuf); _preloadBuf = nullptr; goto streaming; }
 
         size_t bufPos = 0;
@@ -549,7 +569,7 @@ int PixPlayer::load(const char* path) {
         _colBuf = (uint8_t*)malloc(maxWidth * 4);
         if (!_colBuf) return 6;
 
-        _file = LittleFS.open(path, "r");
+        _file = _storage.open(path, "r");
         if (!_file) { free(_colBuf); _colBuf = nullptr; return 4; }
         LOG("[pix] streaming mode, %d commands\n", _numCmds);
     }
@@ -610,17 +630,28 @@ const uint8_t* PixPlayer::fetchColumn(int cmdIdx, int col) {
         return _preloadBuf + _cmdBufOffset[cmdIdx] + (size_t)col * cmd.width * 4;
     }
     if (_format == ProgramFormat::Axp && _axpStreaming) {
-        if (!_axpCmdCache || !_file) return nullptr;
+        if (!_axpCmdCache[0] || !_cacheMutex || !_prefetchQueue) return nullptr;
         size_t rawBytes = (size_t)cmd.width * cmd.height * 4;
         if (rawBytes > _axpCmdCacheSize) return nullptr;
-        if (_axpCachedCmd != cmdIdx) {
-            if (!decodeAxpCommand(_file, cmdIdx, _axpCmdCache)) {
-                LOG("[axp] command decode failed: %d\n", cmdIdx);
+
+        _axpConsumerCmd = cmdIdx;
+        int slot = cachedSlotFor(cmdIdx);
+        if (slot < 0) {
+            requestPrefetch(cmdIdx);
+            int64_t deadlineUs = esp_timer_get_time() + 3000000LL;
+            while (_taskRunning && esp_timer_get_time() < deadlineUs) {
+                ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(20));
+                slot = cachedSlotFor(cmdIdx);
+                if (slot >= 0) break;
+                requestPrefetch(cmdIdx);
+            }
+            if (slot < 0) {
+                LOG("[axp] command prefetch timeout: %d\n", cmdIdx);
                 return nullptr;
             }
-            _axpCachedCmd = cmdIdx;
         }
-        return _axpCmdCache + (size_t)col * cmd.width * 4;
+        requestPrefetch((cmdIdx + 1) % _numCmds);
+        return _axpCmdCache[slot] + (size_t)col * cmd.width * 4;
     }
     // Streaming
     uint32_t byteOffset = cmd.offset + (uint32_t)col * cmd.width * 4;
@@ -739,6 +770,112 @@ void PixPlayer::taskEntry(void* arg) {
     vTaskDelete(nullptr);
 }
 
+int PixPlayer::cachedSlotFor(int cmdIdx) {
+    if (!_cacheMutex) return -1;
+    int slot = -1;
+    xSemaphoreTake(_cacheMutex, portMAX_DELAY);
+    for (int i = 0; i < 2; i++) {
+        if (_axpCmdCache[i] && !_axpCacheLoading[i] && _axpCachedCmd[i] == cmdIdx) {
+            slot = i;
+            break;
+        }
+    }
+    xSemaphoreGive(_cacheMutex);
+    return slot;
+}
+
+void PixPlayer::requestPrefetch(int cmdIdx) {
+    if (!_prefetchQueue || !_cacheMutex || cmdIdx < 0 || cmdIdx >= _numCmds) return;
+    bool needed = true;
+    xSemaphoreTake(_cacheMutex, portMAX_DELAY);
+    for (int i = 0; i < 2; i++) {
+        if (_axpCmdCache[i] && (_axpCachedCmd[i] == cmdIdx ||
+            (_axpCacheLoading[i] && _axpCachedCmd[i] == cmdIdx))) {
+            needed = false;
+            break;
+        }
+    }
+    xSemaphoreGive(_cacheMutex);
+    if (needed) xQueueOverwrite(_prefetchQueue, &cmdIdx);
+}
+
+void PixPlayer::prefetchTaskEntry(void* arg) {
+    auto* p = static_cast<PixPlayer*>(arg);
+    p->runPrefetchTask();
+    p->_prefetchTaskHandle = nullptr;
+    vTaskDelete(nullptr);
+}
+
+void PixPlayer::runPrefetchTask() {
+    File file = _storage.open(_path, "r");
+    if (!file) {
+        LOGLN("[storage] prefetch file open failed");
+        return;
+    }
+
+    while (!_prefetchStop) {
+        int cmdIdx = -1;
+        if (xQueueReceive(_prefetchQueue, &cmdIdx, pdMS_TO_TICKS(100)) != pdTRUE) continue;
+        if (_prefetchStop || cmdIdx < 0 || cmdIdx >= _numCmds) continue;
+        if (cachedSlotFor(cmdIdx) >= 0) continue;
+
+        int slot = -1;
+        xSemaphoreTake(_cacheMutex, portMAX_DELAY);
+        for (int i = 0; i < 2; i++) {
+            if (_axpCmdCache[i] && !_axpCacheLoading[i] && _axpCachedCmd[i] != _axpConsumerCmd) {
+                slot = i;
+                break;
+            }
+        }
+        if (slot >= 0) {
+            _axpCachedCmd[slot] = cmdIdx;
+            _axpCacheLoading[slot] = true;
+        }
+        xSemaphoreGive(_cacheMutex);
+
+        if (slot < 0) {
+            vTaskDelay(pdMS_TO_TICKS(2));
+            requestPrefetch(cmdIdx);
+            continue;
+        }
+
+        bool ok = decodeAxpCommand(file, cmdIdx, _axpCmdCache[slot]);
+        xSemaphoreTake(_cacheMutex, portMAX_DELAY);
+        _axpCacheLoading[slot] = false;
+        if (!ok) _axpCachedCmd[slot] = -1;
+        xSemaphoreGive(_cacheMutex);
+        if (!ok) LOG("[storage] command prefetch failed: %d\n", cmdIdx);
+        if (_taskHandle) xTaskNotifyGive(_taskHandle);
+    }
+    file.close();
+}
+
+bool PixPlayer::startPrefetchTask() {
+    if (!_axpStreaming) return true;
+    if (_prefetchTaskHandle) return true;
+    _prefetchStop = false;
+    BaseType_t result = xTaskCreatePinnedToCore(
+        prefetchTaskEntry, "program_prefetch", 8192, this,
+        AURAX_STORAGE_TASK_PRIORITY, &_prefetchTaskHandle, 0);
+    if (result != pdPASS) {
+        _prefetchTaskHandle = nullptr;
+        LOGLN("[storage] failed to start core-0 prefetch task");
+        return false;
+    }
+    if (_numCmds > 1) requestPrefetch(1);
+    return true;
+}
+
+void PixPlayer::stopPrefetchTask() {
+    if (!_prefetchTaskHandle) return;
+    _prefetchStop = true;
+    if (_prefetchQueue) {
+        int stop = -1;
+        xQueueOverwrite(_prefetchQueue, &stop);
+    }
+    while (_prefetchTaskHandle) vTaskDelay(1);
+}
+
 void PixPlayer::runTask() {
     while (_taskRunning) {
         if (!update()) break;
@@ -764,12 +901,15 @@ void PixPlayer::runTask() {
 
 void PixPlayer::startTask(uint8_t core, uint32_t stackSize) {
     if (_taskHandle) return;
+    if (!startPrefetchTask()) return;
     _taskRunning = true;
     xTaskCreatePinnedToCore(taskEntry, "pix_player", stackSize, this, AURAX_PIX_TASK_PRIORITY, &_taskHandle, core);
 }
 
 void PixPlayer::stopTask() {
-    if (!_taskHandle) return;
-    _taskRunning = false;
-    while (_taskHandle) vTaskDelay(1);  // wait for task to signal completion
+    if (_taskHandle) {
+        _taskRunning = false;
+        while (_taskHandle) vTaskDelay(1);  // wait for task to signal completion
+    }
+    stopPrefetchTask();
 }

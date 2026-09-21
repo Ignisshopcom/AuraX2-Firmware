@@ -1,9 +1,13 @@
 import { Fragment } from 'preact'
+import { AudioReactiveController, readAudioSetting, readAudioEffect, saveAudioEffect, SILENCE, AUDIO_ENTRY_NOTICE, AUDIO_ENTRY_NOTICE_MS } from './audio-reactive'
+import { AudioPanel } from './AudioPanel'
+import { ListVideo, Palette, Sparkles, AudioLines, Settings, X } from 'lucide-preact'
+import type { AudioSource, AudioState, AudioEffectSettings } from './audio-reactive'
 import { useEffect, useRef, useState } from 'preact/hooks'
 import type { Color, Config, FirmwareStatus, PeerInfo, ProgramsResponse, StatusResponse } from './types'
 import { colorToHex, colorToHsv, hsvToColor, postJson, rssiPercent } from './utils'
 
-type Tab = 'programs' | 'colors' | 'effects' | 'settings'
+type Tab = 'programs' | 'colors' | 'effects' | 'audio' | 'settings'
 
 type EffectState = {
   effectId: number
@@ -207,6 +211,14 @@ function effectPayload(effect: EffectState, persist = true) {
   }
 }
 
+function saveAudioSetting(key: string, value: number) {
+  try {
+    window.localStorage.setItem(key, String(value))
+  } catch {
+    // Private/captive WebViews may disable storage; the live control still works.
+  }
+}
+
 export function AuraXApp() {
   const [tab, setTab] = useState<Tab>('programs')
   const [status, setStatus] = useState<StatusResponse | null>(null)
@@ -218,22 +230,30 @@ export function AuraXApp() {
   const [effect, setEffect] = useState<EffectState>(DEFAULT_EFFECT)
   const [activeColor, setActiveColor] = useState(0)
   const [message, setMessage] = useState('')
+  const [programUpload, setProgramUpload] = useState<{ label: string; percent: number } | null>(null)
   const [pressedAction, setPressedAction] = useState<'start' | 'stop' | 'power' | null>(null)
+  const [audioState, setAudioState] = useState<AudioState>({ active: false, starting: false, native: false, playback: false, levels: SILENCE })
+  const [audioSource, setAudioSource] = useState<AudioSource>('microphone')
+  const [audioEffect, setAudioEffect] = useState(readAudioEffect)
+  const [audioSensitivity, setAudioSensitivity] = useState(() => readAudioSetting('aurax-audio-sensitivity', 130, 0, 300))
+  const [audioSmoothing, setAudioSmoothing] = useState(() => readAudioSetting('aurax-audio-smoothing', 25, 0, 95))
   const effectTimerRef = useRef<number | null>(null)
   const messageTimerRef = useRef<number | null>(null)
   const pressTimerRef = useRef<number | null>(null)
   const latencyEstimateMsRef = useRef(40)
+  const audioControllerRef = useRef<AudioReactiveController | null>(null)
 
   async function refresh(includePrograms = false) {
     const statusStartedAt = performance.now()
     const [s, p] = await Promise.all([
       fetch('/status').then((r) => r.json()),
-      fetch('/peers').then((r) => r.json()).catch(() => []),
+      audioControllerRef.current?.state.active || audioControllerRef.current?.state.starting
+        ? Promise.resolve(null) : fetch('/peers').then((r) => r.json()).catch(() => []),
     ])
     const statusRttMs = performance.now() - statusStartedAt
     latencyEstimateMsRef.current = Math.max(10, Math.min(450, Math.round(statusRttMs / 2)))
     setStatus(s)
-    setPeers(p)
+    if (p !== null) setPeers(p)
     if (!includePrograms) return
     const pr = await fetch('/programs').then((r) => r.json()).catch(() => null)
     if (pr) {
@@ -284,6 +304,10 @@ export function AuraXApp() {
   }
 
   async function checkFirmware(force = false) {
+    if (audioControllerRef.current?.state.active) {
+      if (force) showMessage('Stop Audio Reactive before checking for updates.', 3500)
+      return
+    }
     if (force) showMessage('Checking firmware version...')
     const fw = await fetch(`/fw/check${force ? '?force=1' : ''}`, { method: 'POST' })
       .then((r) => r.json())
@@ -316,17 +340,59 @@ export function AuraXApp() {
   }, [])
 
   useEffect(() => {
+    const controller = new AudioReactiveController(setAudioState, text => showMessage(text))
+    audioControllerRef.current = controller
+    controller.settings(audioSensitivity, audioSmoothing)
+    controller.effectSettings(audioEffect)
+    return () => { controller.dispose(); audioControllerRef.current = null }
+  }, [])
+
+  useEffect(() => {
     if (tab !== 'settings') return
     loadFirmwareStatus()
     checkFirmware(false)
   }, [tab])
 
+  function setAudioEffectValue(settings: AudioEffectSettings) {
+    setAudioEffect(settings)
+    saveAudioEffect(settings)
+    audioControllerRef.current?.effectSettings(settings)
+  }
+
+  function selectTab(next: Tab) {
+    if (next === tab) return
+    setTab(next)
+    if (next === 'audio') showMessage(AUDIO_ENTRY_NOTICE, AUDIO_ENTRY_NOTICE_MS)
+  }
+
+  function resetAudioEffect() {
+    try { localStorage.removeItem(`aurax-audio-effect-${audioEffect.mode}`) } catch {}
+    setAudioEffectValue(readAudioEffect(audioEffect.mode))
+  }
+
+  async function stopAudioReactive(restore = true) {
+    await audioControllerRef.current?.stop(restore)
+  }
+
+  function setAudioSensitivityValue(value: number) {
+    setAudioSensitivity(value)
+    saveAudioSetting('aurax-audio-sensitivity', value)
+    audioControllerRef.current?.settings(value, audioSmoothing)
+  }
+
+  function setAudioSmoothingValue(value: number) {
+    setAudioSmoothing(value)
+    saveAudioSetting('aurax-audio-smoothing', value)
+    audioControllerRef.current?.settings(audioSensitivity, value)
+  }
+
   function applyEffect(next: EffectState, immediate = false) {
     setEffect(next)
     if (effectTimerRef.current !== null) window.clearTimeout(effectTimerRef.current)
 
-    const send = () => {
+    const send = async () => {
       effectTimerRef.current = null
+      await stopAudioReactive(false)
       postJson('/effect', effectPayload(next, immediate)).then(() => refresh(false)).catch(() => showMessage('Effect update failed'))
     }
 
@@ -357,7 +423,7 @@ export function AuraXApp() {
     setConfig((prev) => prev ? { ...prev, brightness: value } : prev)
   }
 
-  function uploadFiles(files: FileList | null) {
+  async function uploadFiles(files: FileList | null) {
     if (!files || !programs) return
     const selected = Array.from(files)
     const total = selected.reduce((sum, file) => sum + file.size, 0)
@@ -365,15 +431,72 @@ export function AuraXApp() {
       showMessage(`Not enough space. Free: ${fmtBytes(programs.free)}`)
       return
     }
-    showMessage('Uploading...')
-    selected.reduce((promise, file) => promise.then(async () => {
-      const fd = new FormData()
-      fd.append('file', file, file.name)
-      const res = await fetch('/program/upload', { method: 'POST', body: fd })
-      if (!res.ok) throw new Error(await res.text())
-    }), Promise.resolve())
-      .then(() => { showMessage('Upload complete', 1500); refresh(true) })
-      .catch((err) => showMessage(err.message || 'Upload failed'))
+
+    let completedBytes = 0
+    try {
+      for (let index = 0; index < selected.length; index++) {
+        const file = selected[index]
+        const label = `Uploading ${file.name}`
+        setProgramUpload({ label: `Preparing ${file.name}`, percent: Math.round((completedBytes / total) * 100) })
+        let uploadStarted = false
+        try {
+          const startRequest: { filename: string; size: number; numLeds?: number } = {
+            filename: file.name,
+            size: file.size,
+          }
+          if (file.size >= 16) {
+            const header = new DataView(await file.slice(0, 16).arrayBuffer())
+            if (header.getUint32(0, true) === 0x31505841) startRequest.numLeds = header.getUint32(12, true)
+          }
+          await postJsonChecked('/program/upload/start', startRequest)
+          uploadStarted = true
+          const chunkBytes = 32 * 1024
+          for (let offset = 0; offset < file.size; offset += chunkBytes) {
+            const end = Math.min(file.size, offset + chunkBytes)
+            const source = new Uint8Array(await file.slice(offset, end).arrayBuffer())
+            let binary = ''
+            for (let i = 0; i < source.length; i++) binary += String.fromCharCode(source[i])
+            const encoded = btoa(binary)
+            let response: Response | undefined
+            let lastError: unknown
+            for (let attempt = 1; attempt <= 4; attempt++) {
+              try {
+                response = await fetch(`/program/upload/chunk?offset=${offset}`, {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'text/plain' },
+                  body: encoded,
+                })
+                if (response.ok) break
+                if (![408, 429, 502, 503, 504].includes(response.status)) break
+              } catch (error) {
+                lastError = error
+              }
+              if (attempt < 4) await new Promise((resolve) => window.setTimeout(resolve, attempt * 150))
+            }
+            if (!response) throw lastError instanceof Error ? lastError : new Error('Upload connection failed')
+            const responseText = await response.text()
+            if (!response.ok) throw new Error(responseText || `Upload failed (HTTP ${response.status})`)
+            const sent = end
+            const percent = total > 0 ? Math.min(100, Math.round(((completedBytes + sent) / total) * 100)) : 100
+            setProgramUpload({ label, percent })
+            showMessage(`${label}: ${percent}%`)
+          }
+          await postJsonChecked('/program/upload/finish', {})
+          uploadStarted = false
+        } catch (error) {
+          if (uploadStarted) await fetch('/program/upload/abort', { method: 'POST' }).catch(() => undefined)
+          throw error
+        }
+        completedBytes += file.size
+      }
+      setProgramUpload({ label: 'Upload complete', percent: 100 })
+      showMessage('Upload complete', 1800)
+      await refresh(true)
+      window.setTimeout(() => setProgramUpload(null), 1800)
+    } catch (err) {
+      setProgramUpload(null)
+      showMessage(err instanceof Error ? err.message : 'Upload failed')
+    }
   }
 
   function selectProgramSlot(slot: number) {
@@ -381,16 +504,18 @@ export function AuraXApp() {
     if (programs?.files.some((file) => file.slot === slot)) postJson('/program/select', { slot }).then(() => refresh(true))
   }
 
-  function startProgram() {
+  async function startProgram() {
     const pressedAt = performance.now()
     markPressed('start')
+    await stopAudioReactive(false)
     postJsonChecked('/program/start', { slot: selectedSlot, ageMs: startAgeMs(pressedAt) })
       .then(() => refresh(false))
       .catch((err) => showMessage(err.message || 'Start failed'))
   }
 
-  function stopProgram() {
+  async function stopProgram() {
     markPressed('stop')
+    await stopAudioReactive(false)
     fetch('/stop').then(() => refresh(false)).catch(() => showMessage('Stop failed'))
   }
 
@@ -402,10 +527,11 @@ export function AuraXApp() {
     postJson('/program/reorder', { slot, direction }).then(() => refresh(true))
   }
 
-  function togglePower() {
+  async function togglePower() {
     const pressedAt = performance.now()
     const on = !(status?.power_on ?? status?.playing ?? false)
     markPressed('power')
+    await stopAudioReactive(false)
     postJsonChecked('/power', { on, ageMs: on ? startAgeMs(pressedAt) : 0 })
       .then(() => refresh(false))
       .catch((err) => showMessage(err.message || 'Power failed'))
@@ -487,10 +613,14 @@ export function AuraXApp() {
         </div>
       </header>
 
-      <nav class="tabs">
-        {(['programs', 'colors', 'effects', 'settings'] as Tab[]).map((name) => (
-          <button class={tab === name ? 'active' : ''} onClick={() => setTab(name)}>{name[0].toUpperCase() + name.slice(1)}</button>
-        ))}
+      <nav class="tabs" aria-label="Device controls">
+        {(['programs', 'colors', 'effects', 'audio', 'settings'] as Tab[]).map((name) => {
+          const Icon = { programs: ListVideo, colors: Palette, effects: Sparkles, audio: AudioLines, settings: Settings }[name]
+          return <button key={name} class={tab === name ? 'active' : ''} aria-current={tab === name ? 'page' : undefined}
+            title={name === 'audio' ? 'Audio Reactive' : name[0].toUpperCase() + name.slice(1)} onClick={() => selectTab(name)}>
+            <Icon size={18} aria-hidden="true" /><span>{name[0].toUpperCase() + name.slice(1)}</span>
+          </button>
+        })}
       </nav>
 
       <main>
@@ -512,9 +642,19 @@ export function AuraXApp() {
               </div>
             </div>
             <label class="upload-zone">
-              <input type="file" accept=".pix,.axp" multiple onChange={(e) => uploadFiles((e.currentTarget as HTMLInputElement).files)} />
+              <input type="file" accept=".pix,.axp,.apx" multiple disabled={!!programUpload} onChange={(e) => {
+                const input = e.currentTarget as HTMLInputElement
+                uploadFiles(input.files)
+                input.value = ''
+              }} />
               <strong>Upload program files</strong>
-              <span>Photon .pix and AuraX .axp files are checked against remaining LittleFS space before upload.</span>
+              <span>Photon .pix and AuraX .axp/.apx files are checked against the available program storage before upload.</span>
+              {programUpload && (
+                <div class="upload-progress" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={programUpload.percent}>
+                  <div><span>{programUpload.label}</span><b>{programUpload.percent}%</b></div>
+                  <i><span style={{ width: `${programUpload.percent}%` }} /></i>
+                </div>
+              )}
             </label>
             <div class="program-list">
               {(programs?.files ?? []).map((file) => (
@@ -609,6 +749,17 @@ export function AuraXApp() {
             </div>
           </section>
         )}
+
+        {tab === 'audio' && <AudioPanel state={audioState} source={audioSource} effect={audioEffect}
+          groupRole={status?.audio_group_role} groupChannel={status?.audio_group_channel} syncEnabled={syncEnabled}
+          leaveGroup={() => void fetch('/stop?relay=0').then(r => { if (!r.ok) throw new Error(); return refresh(false) }).catch(() => showMessage('Stop failed'))}
+          packetRate={status?.audio_packets_x10 === undefined ? undefined : status.audio_packets_x10 / 10}
+          renderFps={status?.fps_x10 === undefined ? undefined : status.fps_x10 / 10}
+          sensitivity={audioSensitivity} smoothing={audioSmoothing} setSource={setAudioSource}
+          setSensitivity={setAudioSensitivityValue} setSmoothing={setAudioSmoothingValue}
+          setEffect={setAudioEffectValue} selectEffect={mode => setAudioEffectValue(readAudioEffect(mode))}
+          start={() => void audioControllerRef.current?.start(audioSource)}
+          stop={() => void stopAudioReactive(true)} reset={resetAudioEffect} />}
 
         {tab === 'settings' && config && (
           <SettingsPanel
@@ -770,6 +921,12 @@ function SettingsPanel({
     dataPin: config.dataPin ?? 6,
     clkPin: config.clkPin ?? 5,
     spiFrequencyMhz: config.spiFrequencyMhz ?? 15,
+    externalStorageEnabled: config.externalStorageEnabled ?? true,
+    storageSckPin: config.storageSckPin ?? 7,
+    storageMosiPin: config.storageMosiPin ?? 9,
+    storageMisoPin: config.storageMisoPin ?? 44,
+    storageCsPin: config.storageCsPin ?? 43,
+    storageSpiFrequencyMhz: config.storageSpiFrequencyMhz ?? 20,
     mALimit: config.mALimit ?? 3500,
     effectReverse: config.effectReverse ?? false,
     renderMirror: config.renderMirror ?? false,
@@ -785,6 +942,9 @@ function SettingsPanel({
     batAutoOffThreshold: config.batAutoOffThreshold ?? 10,
   })
   const set = (patch: Partial<typeof form>) => setForm((prev) => ({ ...prev, ...patch }))
+  const enteredViaCaptivePortal = new URLSearchParams(window.location.search).get('aurax_captive') === '1'
+  const [showFirmwareUploadHelp, setShowFirmwareUploadHelp] = useState(false)
+  const firmwareUploadButton = useRef<HTMLButtonElement>(null)
 
   function updateFw(e: Event) {
     const input = e.currentTarget as HTMLInputElement
@@ -815,12 +975,12 @@ function SettingsPanel({
   }
 
   function formatStorage() {
-    if (!window.confirm('Format storage? This removes all programs and settings.')) return
-    setMessage('Formatting storage...')
+    if (!window.confirm('Erase all programs from the active storage? Device settings will be kept.')) return
+    setMessage('Erasing program storage...')
     fetch('/storage/format', { method: 'POST' })
       .then((res) => res.text().then((text) => {
         if (!res.ok) throw new Error(text || 'Storage format failed')
-        setMessage(text || 'Storage formatted, device rebooting...')
+        setMessage(text || 'Program storage erased')
       }))
       .catch((err) => setMessage(err.message || 'Storage format failed'))
   }
@@ -905,13 +1065,55 @@ function SettingsPanel({
 
       <div class="firmware-row">
         <button onClick={() => fetch('/reboot', { method: 'POST' })}>Reboot</button>
-        <label class="fw-button">Upload firmware file<input type="file" accept=".bin" onChange={updateFw} /></label>
+        {enteredViaCaptivePortal ? (
+          <button type="button" ref={firmwareUploadButton}
+            aria-expanded={showFirmwareUploadHelp} aria-controls="firmware-upload-help"
+            onClick={() => setShowFirmwareUploadHelp(true)}>Upload firmware file</button>
+        ) : (
+          <label class="fw-button">Upload firmware file<input type="file" accept=".bin" onChange={updateFw} /></label>
+        )}
       </div>
+      {enteredViaCaptivePortal && showFirmwareUploadHelp && (
+        <div id="firmware-upload-help" class="fw-upload-notice" role="note" aria-label="Firmware upload help">
+          <div class="fw-upload-notice-head">
+            <strong>Uploading firmware</strong>
+            <button type="button" class="fw-upload-notice-close" aria-label="Close upload help" title="Close upload help"
+              onClick={() => {
+                setShowFirmwareUploadHelp(false)
+                firmwareUploadButton.current?.focus()
+              }}><X size={18} aria-hidden="true" /></button>
+          </div>
+          <p>The automatic Wi-Fi sign-in window (captive portal) may not support file uploads.</p>
+          <p>When connected to the AuraX-XXXX Wi-Fi network, stay connected and open{' '}
+            <a href="http://192.168.4.1" target="_blank" rel="noopener noreferrer">http://192.168.4.1</a>{' '}
+            in Safari or Chrome. If the link stays in this window, enter the address directly in your browser.</p>
+          <p>Already using a regular browser or AuraX Finder? Choose your firmware file below.</p>
+          <label class="fw-button">Choose .bin file<input type="file" accept=".bin" aria-label="Choose firmware .bin file" onChange={updateFw} /></label>
+        </div>
+      )}
       <details class="advanced-settings">
         <summary>Advanced</summary>
-        <h3>Storage</h3>
+        <h3>Program storage</h3>
+        <div class="live-metrics">
+          <span class={status?.external_storage_detected ? 'detected' : ''}>
+            {status?.external_storage_detected ? 'XTSD detected' : 'XTSD not detected'}
+          </span>
+          <span>{status?.external_storage ? 'XTSD used for programs' : 'Internal LittleFS used for programs'}</span>
+        </div>
+        {status?.external_storage_detected && (
+          <>
+            <label class="check"><input type="checkbox" checked={form.externalStorageEnabled} onChange={(e) => set({ externalStorageEnabled: (e.currentTarget as HTMLInputElement).checked })} /> Use external XTSD for programs</label>
+            <div class="form-grid">
+              <label>SCK pin<input type="number" value={form.storageSckPin} min={0} max={48} onInput={(e) => set({ storageSckPin: +(e.currentTarget as HTMLInputElement).value })} /></label>
+              <label>MOSI pin<input type="number" value={form.storageMosiPin} min={0} max={48} onInput={(e) => set({ storageMosiPin: +(e.currentTarget as HTMLInputElement).value })} /></label>
+              <label>MISO pin<input type="number" value={form.storageMisoPin} min={0} max={48} onInput={(e) => set({ storageMisoPin: +(e.currentTarget as HTMLInputElement).value })} /></label>
+              <label>CS pin<input type="number" value={form.storageCsPin} min={0} max={48} onInput={(e) => set({ storageCsPin: +(e.currentTarget as HTMLInputElement).value })} /></label>
+              <label>Storage SPI MHz<input type="number" value={form.storageSpiFrequencyMhz} min={1} max={50} onInput={(e) => set({ storageSpiFrequencyMhz: +(e.currentTarget as HTMLInputElement).value })} /></label>
+            </div>
+          </>
+        )}
         <div class="firmware-row">
-          <button type="button" onClick={formatStorage}>Format storage</button>
+          <button type="button" onClick={formatStorage}>Erase all programs</button>
         </div>
 
         <h3>LED output</h3>

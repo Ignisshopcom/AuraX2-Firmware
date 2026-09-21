@@ -48,6 +48,7 @@ enum AuraXEffectId : uint8_t {
     EFFECT_TWIST         = 51,
     EFFECT_CHASE         = 52,
     EFFECT_FIRE_CLASSIC  = 53,
+    EFFECT_AUDIO_REACTIVE = 54,
 };
 
 class WledFxEffect : public IEffect {

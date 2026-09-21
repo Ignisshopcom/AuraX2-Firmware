@@ -4,14 +4,18 @@
 #include <freertos/FreeRTOS.h>
 #include <freertos/queue.h>
 #include <esp_wifi.h>
+#include <FS.h>
 #include "pix_player.h"
 #include "effect_player.h"
 #include "led_driver.h"
+#include "audio_group.h"
+#include <esp_now.h>
+#include <atomic>
 
 // ESP-NOW broadcast sync. Any device can trigger play/stop/effect.
 class SyncControl {
 public:
-    SyncControl(PixPlayer& player, EffectPlayer& effectPlayer, ILedDriver& leds);
+    SyncControl(PixPlayer& player, EffectPlayer& effectPlayer, ILedDriver& leds, fs::FS& storage);
 
     // syncMask: bit 0 = class 1, bit 9 = class 10.
     bool begin(uint16_t syncMask = 1, bool syncEnabled = true);
@@ -32,6 +36,9 @@ public:
     void broadcastEffect(const EffectParams& p);
     void broadcastBrightness(uint8_t brightness);
     void broadcastRescue(uint8_t action);
+    bool audioGroupReady() const { return _espNowReady && _audioQueue; }
+    bool sendAudioGroup(const AudioGroup::Packet& packet);
+    bool pollAudioGroup(AudioGroup::Packet& packet, uint8_t* mac, int64_t& rxUs);
 
     using RescueHandler = void (*)(uint8_t action, void* ctx);
     using PlayStateHandler = void (*)(const char* file, uint8_t endBehavior, void* ctx);
@@ -118,6 +125,13 @@ private:
         int64_t rxUs;
     };
 
+    struct AudioQueued {
+        AudioGroup::Packet packet;
+        uint8_t mac[6];
+        int64_t rxUs;
+    };
+    esp_err_t sendRaw(const uint8_t* data, size_t length);
+    static void sentCb(const uint8_t* mac, esp_now_send_status_t status);
     static void recvCb(const uint8_t* mac, const uint8_t* data, int len);
     void handlePacket(const Packet& pkt, int64_t rxUs);
     bool sendPacket(const Packet& pkt, const char* label, uint8_t repeats = DEFAULT_SEND_REPEATS);
@@ -127,7 +141,10 @@ private:
     PixPlayer&    _player;
     EffectPlayer& _effectPlayer;
     ILedDriver&   _leds;
+    fs::FS&       _storage;
     QueueHandle_t _queue    = nullptr;
+    QueueHandle_t _audioQueue = nullptr;
+    std::atomic<uint32_t> _pendingSends{0};
     uint16_t      _syncMask = 1;
     bool          _syncEnabled = true;
     bool          _espNowReady = false;
