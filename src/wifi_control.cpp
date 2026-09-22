@@ -1233,6 +1233,7 @@ bool WifiControl::begin(uint32_t timeoutMs) {
     _server.on("/off",    HTTP_GET,  [this]() {
         bool relay = requestAllowsRelay();
         if (_sync && relay) {
+            sendPhotonProgramCommand(false);
             _sync->broadcastStop();
             fanoutStop();
         } else {
@@ -1826,9 +1827,10 @@ void WifiControl::fanoutHttpPost(const char* path, const String& body) {
 #endif
 }
 
-void WifiControl::sendPhotonProgramCommand(bool start, uint16_t prefix) {
+void WifiControl::sendPhotonProgramCommand(bool start, uint16_t prefix, int64_t startUs) {
     if (!_staServicesStarted || _apMode || WiFi.status() != WL_CONNECTED ||
         !_cfg.syncEnabled || (_cfg.syncMask & 0x03ff) == 0) return;
+    if (start && prefix == 0) return;
 
     IPAddress ip = WiFi.localIP();
     IPAddress mask = WiFi.subnetMask();
@@ -1837,9 +1839,11 @@ void WifiControl::sendPhotonProgramCommand(bool start, uint16_t prefix) {
                         (uint8_t)(ip[1] | ~mask[1]),
                         (uint8_t)(ip[2] | ~mask[2]),
                         (uint8_t)(ip[3] | ~mask[3]));
+    const uint8_t packetId = ++_photonPacketId;
     for (uint8_t group = 1; group <= 10; ++group) {
         if ((_cfg.syncMask & (1u << (group - 1))) == 0) continue;
-        PhotonProtocol::Packet packet = PhotonProtocol::programCommand(group, start, prefix);
+        uint32_t ticks = start ? PhotonProtocol::elapsedTicks(esp_timer_get_time(), startUs) : 0;
+        PhotonProtocol::Packet packet = PhotonProtocol::programCommand(packetId, start, prefix, ticks);
         if (packet.size == 0) continue;
         // One datagram per selected group. Do not duplicate START on port 5000.
         uint16_t port = PhotonProtocol::BasePort + group;
@@ -1852,13 +1856,11 @@ void WifiControl::sendPhotonProgramCommand(bool start, uint16_t prefix) {
 }
 
 void WifiControl::fanoutStop() {
-    sendPhotonProgramCommand(false);
     fanoutHttpGet("/stop?relay=0");
 }
 
 void WifiControl::fanoutProgramStart(uint8_t slot, int64_t startUs) {
     if (slot == 0) return;
-    sendPhotonProgramCommand(true, slot);
     int64_t ageUs = esp_timer_get_time() - startUs;
     if (ageUs < 0) ageUs = 0;
     uint32_t ageMs = (uint32_t)(ageUs / 1000);
@@ -1902,6 +1904,7 @@ void WifiControl::handlePlay() {
     _cfg.autoStart = 0;
     saveRuntimeConfig();
     if (_sync && relay) {
+        sendPhotonProgramCommand(true, slot, requestUs);
         uint32_t totalAgeMs = (uint32_t)((esp_timer_get_time() - requestUs) / 1000);
         if (totalAgeMs > 30000) totalAgeMs = 30000;
         int err = totalAgeMs > 0
@@ -1922,6 +1925,7 @@ void WifiControl::handlePlay() {
 void WifiControl::handleStop() {
     bool relay = requestAllowsRelay();
     if (_sync && relay) {
+        sendPhotonProgramCommand(false);
         _sync->broadcastStop();
         fanoutStop();
     } else {
@@ -2571,6 +2575,7 @@ void WifiControl::handleProgramStart() {
     if (!validateProgramForPlay(path)) return;
     int64_t startUs = requestUs - (int64_t)ageMs * 1000;
     if (_sync && relay) {
+        sendPhotonProgramCommand(true, slot, startUs);
         uint32_t totalAgeMs = ageMs + (uint32_t)((esp_timer_get_time() - requestUs) / 1000);
         if (totalAgeMs > 30000) totalAgeMs = 30000;
         int err = totalAgeMs > 0
@@ -2641,6 +2646,7 @@ void WifiControl::handlePower() {
     if (ageMs > 30000) ageMs = 30000;
     if (!on) {
         if (_sync && relay) {
+            sendPhotonProgramCommand(false);
             _sync->broadcastStop();
             fanoutStop();
         } else {
@@ -2664,6 +2670,7 @@ void WifiControl::handlePower() {
         if (!validateProgramForPlay(String(_cfg.pixFile))) return;
         int64_t startUs = requestUs - (int64_t)ageMs * 1000;
         if (_sync && relay) {
+            sendPhotonProgramCommand(true, slot, startUs);
             uint32_t totalAgeMs = ageMs + (uint32_t)((esp_timer_get_time() - requestUs) / 1000);
             if (totalAgeMs > 30000) totalAgeMs = 30000;
             int err = totalAgeMs > 0
@@ -2698,6 +2705,7 @@ void WifiControl::handleSyncNow() {
         uint8_t slot = (uint8_t)slotForProgramPath(_programStorage.fs(), _cfg.pixFile);
         int64_t startUs = esp_timer_get_time();
         if (_sync && relay) {
+            sendPhotonProgramCommand(true, slot, startUs);
             int err = _sync->broadcastPlay(_cfg.pixFile, _cfg.endBehavior, 0, slot);
             if (err) { _server.send(500, "text/plain", playerLoadErrorText(err)); return; }
             fanoutProgramStart(slot, startUs);
@@ -2971,6 +2979,7 @@ void WifiControl::handleWledStatePost() {
         bool on = doc["on"] | false;
         if (!on) {
             if (_sync) {
+                sendPhotonProgramCommand(false);
                 _sync->broadcastStop();
                 fanoutStop();
             } else {
@@ -2991,6 +3000,7 @@ void WifiControl::handleWledStatePost() {
                 int64_t startUs = esp_timer_get_time();
                 if (_sync) {
                     uint8_t slot = (uint8_t)slotForProgramPath(_programStorage.fs(), _cfg.pixFile);
+                    sendPhotonProgramCommand(true, slot, startUs);
                     int errPlay = _sync->broadcastPlay(_cfg.pixFile, _cfg.endBehavior, 0, slot);
                     if (errPlay) {
                         _server.send(500, "text/plain", playerLoadErrorText(errPlay));

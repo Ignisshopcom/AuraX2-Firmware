@@ -36,6 +36,9 @@ Run `node tests/host/run_photon_udp_test.cjs` with `CXX` set as above.
 The test executes the production sender with a recording UDP stub and checks
 exact START/STOP bytes, group ports 5001..5010, directed subnet broadcast,
 multiple selected groups, invalid slots, disabled sync, AP/offline guards and
-send failures. It also checks that sending is confined to the explicit program
-fanout paths, not received ESP-NOW traffic. These tests do not confirm delivery
-or the undocumented prefix byte order on real Photon hardware.
+send failures. Timing cases cover a real Photon packet fixture, 10-us elapsed
+ticks, request age, time spent sending to each group, saturation and ID wrap.
+Source checks require sending before ESP-NOW in all explicit START/STOP paths,
+never in HTTP fanout, effects, battery handling or received ESP-NOW traffic.
+The wire format matches captured Photon broadcasts; these tests do not confirm
+radio delivery, receiver catch-up behavior or physical LED synchronization.

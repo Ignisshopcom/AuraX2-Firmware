@@ -103,7 +103,7 @@ private:
     bool shouldFanoutToPeer(const Peer& peer) const;
     void fanoutHttpGet(const char* pathAndQuery);
     void fanoutHttpPost(const char* path, const String& body);
-    void sendPhotonProgramCommand(bool start, uint16_t prefix = 0);
+    void sendPhotonProgramCommand(bool start, uint16_t prefix = 0, int64_t startUs = 0);
     void fanoutStop();
     void fanoutProgramStart(uint8_t slot, int64_t startUs);
     void fanoutEffect(const EffectParams& p);
@@ -210,6 +210,7 @@ private:
     uint32_t     _lastStaRetryMs = 0;
     uint32_t     _staDisconnectedSinceMs = 0;
     uint8_t      _staRetryCount = 0;
+    uint8_t      _photonPacketId = 0;
     bool         _runtimeSavePending = false;
     uint32_t     _runtimeSaveAtMs = 0;
     bool         _audioReactiveActive = false;

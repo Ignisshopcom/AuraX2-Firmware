@@ -8,11 +8,25 @@ const source = fs.readFileSync(path.join(root, 'src/wifi_control.cpp'), 'utf8');
 const start = source.indexOf('void WifiControl::sendPhotonProgramCommand(');
 const end = source.indexOf('void WifiControl::fanoutStop()', start);
 assert(start >= 0 && end > start);
-// Outgoing Photon commands must remain confined to explicit relay fanout.
+// Send before ESP-NOW's repeat waits and local program loading, never in fanout.
 const calls = [...source.matchAll(/sendPhotonProgramCommand\((true|false)[^;]*;/g)].map(x => x[0]);
-assert.deepEqual(calls, ['sendPhotonProgramCommand(false);', 'sendPhotonProgramCommand(true, slot);']);
-assert.match(source, /void WifiControl::fanoutStop\(\)\s*\{\s*sendPhotonProgramCommand\(false\);/);
-assert.match(source, /void WifiControl::fanoutProgramStart\([^]*?if \(slot == 0\) return;\s*sendPhotonProgramCommand\(true, slot\);/);
+assert.equal(calls.filter(x => x.includes('(true')).length, 5);
+assert.equal(calls.filter(x => x.includes('(false')).length, 4);
+assert.equal([...source.matchAll(/sendPhotonProgramCommand\(false\);\s*_sync->broadcastStop\(\);/g)].length, 4);
+assert(!source.slice(end, source.indexOf('void WifiControl::fanoutEffect(', end)).includes('sendPhotonProgramCommand('));
+for (const name of ['handlePlay', 'handleProgramStart', 'handlePower', 'handleSyncNow', 'handleWledStatePost']) {
+    const from = source.indexOf(`void WifiControl::${name}(`);
+    const to = source.indexOf('\nvoid WifiControl::', from + 1);
+    const body = source.slice(from, to < 0 ? source.length : to);
+    assert(body.indexOf('sendPhotonProgramCommand(true') >= 0, name);
+    assert(body.indexOf('sendPhotonProgramCommand(true') < body.indexOf('_sync->broadcastPlay'), name);
+}
+for (const name of ['handleEffectStart', 'handleEffectStop', 'handle']) {
+    const from = source.indexOf(`void WifiControl::${name}(`);
+    const to = source.indexOf('\nvoid WifiControl::', from + 1);
+    const body = source.slice(from, to < 0 ? source.length : to);
+    assert(!body.includes('sendPhotonProgramCommand('), name);
+}
 const sync = fs.readFileSync(path.join(root, 'src/sync_control.cpp'), 'utf8');
 assert(!sync.includes('PhotonProtocol') && !sync.includes('sendPhotonProgramCommand'));
 const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'aurax-photon-test-'));
@@ -24,7 +38,7 @@ try {
     args.push('-std=c++11', '-O0', '-I', temp, '-I', path.join(root, 'src'), path.join(__dirname, 'photon_udp_test.cpp'), '-o', exe);
     cp.execFileSync(compiler, args, {stdio: 'inherit'});
     cp.execFileSync(exe, [], {stdio: 'inherit'});
-    console.log('PASS: Photon sends only in explicit program START/STOP fanout, not ESP-NOW reception');
+    console.log('PASS: Photon sends before ESP-NOW in all START/STOP paths, never in effects, battery loop, reception or HTTP fanout');
 } finally {
     fs.rmSync(temp, {recursive: true, force: true});
 }
