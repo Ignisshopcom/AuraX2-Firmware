@@ -29,3 +29,13 @@ DHCP waiting, established connections, disabled retries, intentional disconnect,
 Arduino 2.0.6 retaining WL_CONNECTED after an AUTH_EXPIRE disconnect event.
 Radio behavior, real event concurrency, and phone compatibility require hardware
 testing; these host tests do not emulate the ESP32 Wi-Fi driver.
+
+## Photon program UDP
+
+Run `node tests/host/run_photon_udp_test.cjs` with `CXX` set as above.
+The test executes the production sender with a recording UDP stub and checks
+exact START/STOP bytes, group ports 5001..5010, directed subnet broadcast,
+multiple selected groups, invalid slots, disabled sync, AP/offline guards and
+send failures. It also checks that sending is confined to the explicit program
+fanout paths, not received ESP-NOW traffic. These tests do not confirm delivery
+or the undocumented prefix byte order on real Photon hardware.

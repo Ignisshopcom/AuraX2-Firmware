@@ -103,6 +103,7 @@ private:
     bool shouldFanoutToPeer(const Peer& peer) const;
     void fanoutHttpGet(const char* pathAndQuery);
     void fanoutHttpPost(const char* path, const String& body);
+    void sendPhotonProgramCommand(bool start, uint16_t prefix = 0);
     void fanoutStop();
     void fanoutProgramStart(uint8_t slot, int64_t startUs);
     void fanoutEffect(const EffectParams& p);

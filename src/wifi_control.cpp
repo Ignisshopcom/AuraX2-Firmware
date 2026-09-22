@@ -3,6 +3,7 @@
 #include "config.h"
 #include "version.h"
 #include "wled_fx_effect.h"
+#include "photon_protocol.h"
 #include <ArduinoJson.h>
 #include <WiFi.h>
 #include <HTTPClient.h>
@@ -1825,12 +1826,39 @@ void WifiControl::fanoutHttpPost(const char* path, const String& body) {
 #endif
 }
 
+void WifiControl::sendPhotonProgramCommand(bool start, uint16_t prefix) {
+    if (!_staServicesStarted || _apMode || WiFi.status() != WL_CONNECTED ||
+        !_cfg.syncEnabled || (_cfg.syncMask & 0x03ff) == 0) return;
+
+    IPAddress ip = WiFi.localIP();
+    IPAddress mask = WiFi.subnetMask();
+    if (ip == IPAddress(0, 0, 0, 0) || mask == IPAddress(0, 0, 0, 0)) return;
+    IPAddress broadcast((uint8_t)(ip[0] | ~mask[0]),
+                        (uint8_t)(ip[1] | ~mask[1]),
+                        (uint8_t)(ip[2] | ~mask[2]),
+                        (uint8_t)(ip[3] | ~mask[3]));
+    for (uint8_t group = 1; group <= 10; ++group) {
+        if ((_cfg.syncMask & (1u << (group - 1))) == 0) continue;
+        PhotonProtocol::Packet packet = PhotonProtocol::programCommand(group, start, prefix);
+        if (packet.size == 0) continue;
+        // One datagram per selected group. Do not duplicate START on port 5000.
+        uint16_t port = PhotonProtocol::BasePort + group;
+        bool sent = _udp.beginPacket(broadcast, port) &&
+                    _udp.write(packet.bytes, packet.size) == packet.size &&
+                    _udp.endPacket();
+        LOG("[photon] %s group=%u port=%u prefix=%u queued=%u\n",
+            start ? "start" : "stop", group, port, prefix, sent ? 1 : 0);
+    }
+}
+
 void WifiControl::fanoutStop() {
+    sendPhotonProgramCommand(false);
     fanoutHttpGet("/stop?relay=0");
 }
 
 void WifiControl::fanoutProgramStart(uint8_t slot, int64_t startUs) {
     if (slot == 0) return;
+    sendPhotonProgramCommand(true, slot);
     int64_t ageUs = esp_timer_get_time() - startUs;
     if (ageUs < 0) ageUs = 0;
     uint32_t ageMs = (uint32_t)(ageUs / 1000);
